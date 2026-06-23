@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>מעבדת סקרמבל גופנים — Roobert ↔ Secolo</title>
+    <script>
+      /* Block Live Server auto-reload loop */
+      (function () {
+        var blocked = 0;
+        location.reload = function () {
+          blocked++;
+          console.warn("[font-scramble-lab] location.reload blocked #" + blocked);
+        };
+        var NativeWS = WebSocket;
+        WebSocket = function (url, protocols) {
+          var s = String(url);
+          if (s.indexOf("/ws") !== -1) {
+            blocked++;
+            console.warn("[font-scramble-lab] livereload WebSocket blocked #" + blocked, s);
+            return {
+              close: function () {},
+              send: function () {},
+              addEventListener: function () {},
+              removeEventListener: function () {},
+              readyState: 3,
+            };
+          }
+          return new NativeWS(url, protocols);
+        };
+      })();
+    </script>
+    <style>
+      @font-face {
+        font-family: "RoobertVF";
+        src: url("../assets/fonts/RoobertHebrewCollectionVF-TRIAL.ttf") format("truetype");
+        font-weight: 300 900;
+        font-style: normal;
+        font-display: swap;
+      }
+
+      @font-face {
+        font-family: "Secolo";
+        src: url("../assets/fonts/Secolo/Secolo-19.ce0c2d9e5affd7c971e42c8ce783a1de.ttf")
+          format("truetype");
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+
+      :root {
+        --bg: #f5f5f5;
+        --ink: #111111;
+        --ink-muted: rgba(17, 17, 17, 0.45);
+        --lab-gap: 14px;
+        --lab-radius: 6px;
+        --lab-anchor-height: 144px;
+        --lab-stage-pad: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "RoobertVF", sans-serif;
+        font-variation-settings: "MONO" 0, "slnt" 0;
+        line-height: 1.4;
+      }
+
+      .lab-shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 28px 20px 56px;
+      }
+
+      .lab-header h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        font-weight: 400;
+      }
+
+      .lab-header p {
+        margin: 0;
+        max-width: 68ch;
+        color: var(--ink-muted);
+        font-size: 15px;
+      }
+
+      .lab-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin: 22px 0 18px;
+        padding: 14px 16px;
+        background: #fff;
+        border: 1px solid rgba(17, 17, 17, 0.08);
+        border-radius: var(--lab-radius);
+      }
+
+      .lab-toolbar label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+      }
+
+      .lab-toolbar input[type="text"] {
+        width: 140px;
+        font: inherit;
+        font-size: 14px;
+        padding: 6px 8px;
+        border: 1px solid rgba(17, 17, 17, 0.18);
+        border-radius: 4px;
+      }
+
+      .lab-btn {
+        appearance: none;
+        border: 1px solid rgba(17, 17, 17, 0.18);
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+        font-size: 14px;
+        padding: 7px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+
+      .lab-btn:hover {
+        background: rgba(17, 17, 17, 0.04);
+      }
+
+      .lab-btn--primary {
+        background: var(--ink);
+        color: #fff;
+        border-color: var(--ink);
+      }
+
+      .lab-btn--primary:hover {
+        background: #2a2a2a;
+      }
+
+      .lab-btn.is-active {
+        background: rgba(17, 17, 17, 0.08);
+      }
+
+      .lab-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 16px;
+      }
+
+      .lab-card {
+        background: #fff;
+        border: 1px solid rgba(17, 17, 17, 0.08);
+        border-radius: var(--lab-radius);
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .lab-card__head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 8px;
+      }
+
+      .lab-card__title {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 400;
+      }
+
+      .lab-card__badge {
+        font-size: 11px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: rgba(17, 17, 17, 0.06);
+        color: var(--ink-muted);
+      }
+
+      .lab-card__badge.is-current {
+        background: rgba(255, 0, 0, 0.1);
+        color: #a30000;
+      }
+
+      .lab-card__desc {
+        margin: 0;
+        font-size: 13px;
+        color: var(--ink-muted);
+      }
+
+      .lab-stage-wrap {
+        position: relative;
+        min-height: calc(var(--lab-anchor-height) + var(--lab-stage-pad) * 2);
+        padding: var(--lab-stage-pad) 16px;
+        background: var(--bg);
+        border-radius: 4px;
+        overflow: visible;
+        display: flex;
+        align-items: flex-end;
+        justify-content: flex-end;
+      }
+
+      .lab-baseline {
+        position: absolute;
+        bottom: calc(var(--lab-stage-pad) + var(--font-baseline-inset, 0px));
+        left: 16px;
+        right: 16px;
+        height: 2px;
+        background: #ff0000;
+        opacity: 0.9;
+        pointer-events: none;
+        z-index: 20;
+      }
+
+      .lab-stage-scale {
+        position: relative;
+        height: var(--lab-anchor-height);
+        width: 100%;
+      }
+
+      .lab-term {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        display: inline-block;
+        color: var(--ink);
+        direction: rtl;
+        white-space: nowrap;
+        line-height: 1;
+      }
+
+      .font-scramble-char {
+        color: var(--ink);
+      }
+
+      .lab-font-legend {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: var(--ink-muted);
+      }
+
+      .lab-font-legend span::before {
+        content: "";
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        margin-left: 6px;
+        border-radius: 2px;
+        background: rgba(17, 17, 17, 0.15);
+        vertical-align: middle;
+      }
+
+      .lab-font-legend .is-roobert::before {
+        background: rgba(17, 17, 17, 0.35);
+      }
+
+      .lab-font-legend .is-secolo::before {
+        background: rgba(255, 0, 0, 0.25);
+      }
+
+      .lab-font-legend .is-baseline::before {
+        background: #ff0000;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .lab-term {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="lab-shell">
+      <header class="lab-header">
+        <h1>מעבדת סקרמבל גופנים — Roobert ↔ Secolo</h1>
+        <p>
+          השוואה בין דרכים שונות להחלפת מונח מ-Roobert (30px במפה) ל-Secolo (144px בעמוד מונח).
+          כל האנימציות מהירות (~300–500ms). לחצו «הפעל» בכל כרטיס או «הפעל הכל».
+        </p>
+      </header>
+
+      <div class="lab-toolbar">
+        <button type="button" class="lab-btn lab-btn--primary" id="lab-replay-all">הפעל הכל</button>
+        <label>
+          מונח
+          <input type="text" id="lab-term-input" value="ביטחון" maxlength="24" />
+        </label>
+        <button type="button" class="lab-btn is-active" id="lab-dir-forward" data-dir="forward">
+          Roobert → Secolo
+        </button>
+        <button type="button" class="lab-btn" id="lab-dir-reverse" data-dir="reverse">
+          Secolo → Roobert
+        </button>
+        <button type="button" class="lab-btn" id="lab-reset-all">איפוס</button>
+      </div>
+
+      <div class="lab-font-legend" aria-hidden="true">
+        <span class="is-roobert">Roobert 30px</span>
+        <span class="is-secolo">Secolo 144px</span>
+        <span class="is-baseline">קו אדום = קו baseline (אותיות יושבות עליו)</span>
+      </div>
+
+      <div class="lab-grid" id="lab-grid" style="margin-top: 16px"></div>
+    </div>
+
+    <script type="module">
+      import {
+        TRANSITION_MODES,
+        playFontScrambleTransition,
+        abortFontScrambleTransition,
+        initFontScrambleTransitions,
+        getFontScrambleAnchorHeight,
+        getFontScrambleBaselineInset,
+        clearFontScrambleMetricsCache,
+        mountFontScrambleTerm,
+      } from "../js/font-scramble-transitions.js";
+
+      initFontScrambleTransitions();
+
+      let direction = "forward";
+      const termInput = document.getElementById("lab-term-input");
+      const grid = document.getElementById("lab-grid");
+
+      function getTermText() {
+        const value = termInput.value.trim();
+        return value || "ביטחון";
+      }
+
+      function getFonts() {
+        return direction === "forward"
+          ? { fromFont: "roobert", toFont: "secolo" }
+          : { fromFont: "secolo", toFont: "roobert" };
+      }
+
+      function resetTermEl(el) {
+        const text = getTermText();
+        const { fromFont } = getFonts();
+        mountFontScrambleTerm(el, text, fromFont);
+      }
+
+      function buildCard(mode) {
+        const card = document.createElement("article");
+        card.className = "lab-card";
+        card.dataset.mode = mode.id;
+
+        card.innerHTML =
+          '<div class="lab-card__head">' +
+          '<h2 class="lab-card__title">' +
+          mode.title +
+          "</h2>" +
+          '<span class="lab-card__badge' +
+          (mode.current ? " is-current" : "") +
+          '">' +
+          mode.badge +
+          "</span>" +
+          '<button type="button" class="lab-btn lab-replay">הפעל</button>' +
+          "</div>" +
+          '<p class="lab-card__desc">' +
+          mode.desc +
+          "</p>" +
+          '<div class="lab-stage-wrap">' +
+          '<span class="lab-baseline" aria-hidden="true"></span>' +
+          '<div class="lab-stage-scale">' +
+          '<span class="lab-term" data-role="term"></span>' +
+          "</div>" +
+          "</div>";
+
+        const termEl = card.querySelector('[data-role="term"]');
+        resetTermEl(termEl);
+        return card;
+      }
+
+      function replayCard(card) {
+        const mode = card.dataset.mode;
+        const termEl = card.querySelector('[data-role="term"]');
+        if (!termEl) return;
+
+        const text = getTermText();
+        const { fromFont, toFont } = getFonts();
+        playFontScrambleTransition(termEl, {
+          mode,
+          text,
+          fromFont,
+          toFont,
+        });
+      }
+
+      function replayAll() {
+        document.querySelectorAll(".lab-card").forEach(replayCard);
+      }
+
+      function resetAll() {
+        document.querySelectorAll('[data-role="term"]').forEach(resetTermEl);
+      }
+
+      function setDirection(next) {
+        direction = next;
+        document.getElementById("lab-dir-forward").classList.toggle("is-active", direction === "forward");
+        document.getElementById("lab-dir-reverse").classList.toggle("is-active", direction === "reverse");
+        resetAll();
+      }
+
+      function syncLabMetricsVars() {
+        clearFontScrambleMetricsCache();
+        document.documentElement.style.setProperty(
+          "--lab-anchor-height",
+          `${getFontScrambleAnchorHeight()}px`
+        );
+        document.documentElement.style.setProperty(
+          "--font-baseline-inset",
+          `${getFontScrambleBaselineInset()}px`
+        );
+        resetAll();
+      }
+
+      function bootLab() {
+        TRANSITION_MODES.forEach((mode) => grid.appendChild(buildCard(mode)));
+      }
+
+      if (document.fonts?.ready) {
+        document.fonts.ready.then(() => {
+          syncLabMetricsVars();
+          bootLab();
+        });
+      } else {
+        syncLabMetricsVars();
+        bootLab();
+      }
+
+      document.getElementById("lab-replay-all").addEventListener("click", replayAll);
+      document.getElementById("lab-reset-all").addEventListener("click", resetAll);
+      document.getElementById("lab-dir-forward").addEventListener("click", () => setDirection("forward"));
+      document.getElementById("lab-dir-reverse").addEventListener("click", () => setDirection("reverse"));
+
+      termInput.addEventListener("change", resetAll);
+      termInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") replayAll();
+      });
+
+      grid.addEventListener("click", (event) => {
+        const btn = event.target.closest(".lab-replay");
+        if (!btn) return;
+        replayCard(btn.closest(".lab-card"));
+      });
+    </script>
+  </body>
+</html>

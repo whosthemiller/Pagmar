@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "version": 1,
+    "note": "העדפות צבע טקסט per-term בפול בליד. תמונות bleed נשמרות בסדר images ב-term-images.json."
+  },
+  "terms": {}
+}
