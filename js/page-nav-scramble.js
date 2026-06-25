@@ -3,6 +3,9 @@ import {
   settleFromContinuousScramble,
   startContinuousScramble,
   stopContinuousScramble,
+  playLightTypewriterScrambleTo,
+  getLetterShuffleOriginal,
+  abortLetterShuffle,
 } from "./letter-shuffle.js";
 import { clearSiteNavShuffleUnderlines } from "./site-nav.js";
 import { getSunTermsIndexScrambleTargets } from "./sun-terms-index.js";
@@ -18,8 +21,8 @@ const PAGE_EXIT_MS = 75;
 const PAGE_ENTER_MS = 75;
 /** Home/index ↔ tags — longer beat so the transition reads clearly. */
 export const PAGE_TAGS_ROUTE_TIMING = {
-  exitMs: 140,
-  enterMs: 140,
+  exitMs: 95,
+  enterMs: 95,
 };
 
 /** @type {Record<string, string[]>} */
@@ -359,4 +362,47 @@ export function runNavEnterScramble(onComplete) {
   clearEnterTimer();
   startEnterNavScramble();
   scheduleEnterSettle(onComplete);
+}
+
+/** Home entrance — typewriter scramble timing for nav labels. */
+const NAV_TYPEWRITER_CONFIG = {
+  frameMs: 26,
+  scrambleFrames: 2,
+  tailLength: 5,
+};
+/** Per-label start offset so labels write in sequence, not all at once. */
+const NAV_TYPEWRITER_STAGGER_MS = 90;
+
+/**
+ * Home entrance: every nav label writes itself in with a typewriter scramble
+ * (settled prefix + scrambling tail), staggered label-by-label. Used after the
+ * splash overlay is dismissed.
+ * @param {() => void} [onComplete]
+ */
+export function runNavTypewriterEnter(onComplete) {
+  clearEnterTimer();
+  const labels = collectNavElements();
+  if (!labels.length) {
+    onComplete?.();
+    return;
+  }
+
+  let pending = labels.length;
+  const done = () => {
+    pending -= 1;
+    if (pending <= 0) {
+      clearSiteNavShuffleUnderlines();
+      onComplete?.();
+    }
+  };
+
+  labels.forEach((el, index) => {
+    const target = getLetterShuffleOriginal(el);
+    abortLetterShuffle(el);
+    // Blank the label until its turn so it visibly writes itself in.
+    el.textContent = "";
+    window.setTimeout(() => {
+      playLightTypewriterScrambleTo(el, target, done, NAV_TYPEWRITER_CONFIG);
+    }, index * NAV_TYPEWRITER_STAGGER_MS);
+  });
 }

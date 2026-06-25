@@ -26,6 +26,10 @@ const imagesEl = document.getElementById("bleed-lab-images");
 const statusEl = document.getElementById("bleed-lab-status");
 const queueEl = document.getElementById("bleed-lab-queue");
 const applyHintEl = document.getElementById("bleed-lab-apply-hint");
+const saveTermBtnEl = document.getElementById("bleed-lab-save-term");
+
+/** @type {ReturnType<typeof setTimeout> | null} */
+let saveFeedbackTimer = null;
 
 function resolveImageSrc(url) {
   if (!url) return "";
@@ -39,6 +43,50 @@ function getSelectedTerm() {
 
 function getSelectedTermName() {
   return getSelectedTerm()?.name ?? null;
+}
+
+/** Current in-panel selection for the active term. */
+function getCurrentSelectionSnapshot() {
+  return {
+    imageUrl: selectedImageUrl,
+    navText: uiPrefs.navText,
+    titleRowText: uiPrefs.titleRowText,
+  };
+}
+
+/** True when the current selection differs from what is saved in the queue. */
+function isCurrentTermDirty(termName = getSelectedTermName()) {
+  if (!termName) return false;
+  const queued = queuedByTermName.get(termName);
+  if (!queued) return true;
+  const current = getCurrentSelectionSnapshot();
+  return (
+    queued.imageUrl !== current.imageUrl ||
+    queued.navText !== current.navText ||
+    queued.titleRowText !== current.titleRowText
+  );
+}
+
+/** Reflect "save" vs "update" on the action button. */
+function updateSaveButtonLabel() {
+  if (!saveTermBtnEl || saveFeedbackTimer) return;
+  const termName = getSelectedTermName();
+  saveTermBtnEl.textContent =
+    termName && queuedByTermName.has(termName) ? "עדכן מונח" : "שמור מונח";
+  saveTermBtnEl.disabled = !termName;
+}
+
+/** Brief confirmation flash on the save button after a save/update. */
+function flashSaveFeedback(label) {
+  if (!saveTermBtnEl) return;
+  if (saveFeedbackTimer) clearTimeout(saveFeedbackTimer);
+  saveTermBtnEl.textContent = label;
+  saveTermBtnEl.classList.add("is-saved-flash");
+  saveFeedbackTimer = setTimeout(() => {
+    saveFeedbackTimer = null;
+    saveTermBtnEl.classList.remove("is-saved-flash");
+    updateSaveButtonLabel();
+  }, 1100);
 }
 
 function setSegmentValue(prefKey, value) {
@@ -119,20 +167,55 @@ function updateStatus() {
     return;
   }
   if (queuedByTermName.has(termName)) {
-    statusEl.textContent = `«${termName}» — שמור בתור, ממתין להחלה על האתר`;
-    statusEl.classList.add("is-queued");
+    if (isCurrentTermDirty(termName)) {
+      statusEl.textContent = `«${termName}» — יש שינויים שלא נשמרו. לחצי «עדכן מונח» כדי לשמור`;
+      statusEl.classList.add("is-queued", "is-dirty");
+    } else {
+      statusEl.textContent = `«${termName}» — שמור בתור, ממתין להחלה על האתר`;
+      statusEl.classList.add("is-queued");
+      statusEl.classList.remove("is-dirty");
+    }
     return;
   }
   statusEl.textContent = `«${termName}» — מציג הגדרות נוכחיות של האתר`;
-  statusEl.classList.remove("is-queued");
+  statusEl.classList.remove("is-queued", "is-dirty");
 }
 
 function updateQueueSummary() {
   if (!queueEl) return;
-  const count = queuedByTermName.size;
-  queueEl.innerHTML = count
-    ? `<strong>${count}</strong> מונחים בתור להחלה`
-    : "אין מונחים בתור";
+  const entries = [...queuedByTermName.values()];
+  if (!entries.length) {
+    queueEl.innerHTML = "אין מונחים בתור";
+    return;
+  }
+  const items = entries
+    .map((entry) => {
+      const active = entry.termName === getSelectedTermName() ? " is-active" : "";
+      return (
+        `<li class="bleed-text-lab-queue-item${active}">` +
+        `<button type="button" class="bleed-text-lab-queue-name" data-term="${escapeAttr(entry.termName)}">${escapeHtml(entry.termName)}</button>` +
+        `<button type="button" class="bleed-text-lab-queue-remove" data-remove="${escapeAttr(entry.termName)}" title="הסר מהתור" aria-label="הסר ${escapeAttr(entry.termName)} מהתור">✕</button>` +
+        `</li>`
+      );
+    })
+    .join("");
+  queueEl.innerHTML =
+    `<p class="bleed-text-lab-queue-title"><strong>${entries.length}</strong> מונחים בתור להחלה</p>` +
+    `<ul class="bleed-text-lab-queue-list">${items}</ul>`;
+}
+
+function removeQueuedTerm(termName) {
+  if (!queuedByTermName.delete(termName)) return;
+  updateStatus();
+  updateQueueSummary();
+  updateSaveButtonLabel();
+}
+
+function selectQueuedTerm(termName) {
+  const term = allTerms.find((t) => t.name === termName);
+  if (!term) return;
+  if (termSelectEl) termSelectEl.value = term.id;
+  onTermSelected(term.id);
 }
 
 function escapeHtml(value) {
@@ -163,6 +246,8 @@ function onTermSelected(termId) {
     loadPrefsIntoUi(term.name);
     renderImageGrid();
     updateStatus();
+    updateSaveButtonLabel();
+    updateQueueSummary();
     applyPreview();
   }
 }
@@ -170,6 +255,7 @@ function onTermSelected(termId) {
 function saveCurrentTerm() {
   const term = getSelectedTerm();
   if (!term) return;
+  const isUpdate = queuedByTermName.has(term.name);
   queuedByTermName.set(term.name, {
     termName: term.name,
     imageUrl: selectedImageUrl,
@@ -178,6 +264,7 @@ function saveCurrentTerm() {
   });
   updateStatus();
   updateQueueSummary();
+  flashSaveFeedback(isUpdate ? "עודכן ✓" : "נשמר ✓");
 }
 
 function downloadExportFile(exportData) {
@@ -222,6 +309,7 @@ function bindUi() {
       const btn = event.target.closest("button[data-value]");
       if (!btn || !prefKey) return;
       setSegmentValue(prefKey, btn.dataset.value);
+      updateStatus();
       applyPreview();
     });
   });
@@ -240,7 +328,20 @@ function bindUi() {
     if (!btn) return;
     selectedImageUrl = btn.dataset.url || null;
     renderImageGrid();
+    updateStatus();
     applyPreview();
+  });
+
+  queueEl?.addEventListener("click", (event) => {
+    const removeBtn = event.target.closest("[data-remove]");
+    if (removeBtn) {
+      removeQueuedTerm(removeBtn.dataset.remove);
+      return;
+    }
+    const nameBtn = event.target.closest("[data-term]");
+    if (nameBtn) {
+      selectQueuedTerm(nameBtn.dataset.term);
+    }
   });
 
   document.getElementById("bleed-lab-show")?.addEventListener("click", applyPreview);
@@ -260,6 +361,7 @@ function bootLab(api) {
     if (termSelectEl) termSelectEl.value = allTerms[0].id;
   } else {
     updateStatus();
+    updateSaveButtonLabel();
   }
 }
 

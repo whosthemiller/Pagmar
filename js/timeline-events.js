@@ -69,5 +69,5 @@ export async function loadTimelineEvents(url = dataUrl("pagmar_timeline_events.c
 export function getTimelineEventText(year) {
   const titles = eventsByYear.get(year);
   if (!titles?.length) return null;
-  return titles.join(" · ");
+  return titles.join("\n");
 }

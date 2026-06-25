@@ -1,5 +1,5 @@
 /**
- * Timeline event hint — bottom-right title display during year scroll.
+ * Timeline event hint — top-right title display during year scroll.
  */
 
 import {
@@ -10,14 +10,20 @@ import {
 import { getGridSpanBounds } from "./grid-metrics.js";
 import { getTimelineEventText } from "./timeline-events.js";
 
-const TIMELINE_HINT_COLUMNS = 6;
+const TIMELINE_HINT_COLUMNS = 10;
+const TIMELINE_HINT_LINE_HEIGHT = 80;
+const TIMELINE_HINT_COLLISION_PAD = 8;
 const TIMELINE_HINT_HIDE_MS = 120;
+const TIMELINE_SCROLL_HINT_TEXT = "גלול כדי לזוז בציר זמן";
+const TIMELINE_SCROLL_HINT_DISMISS_MS = 350;
 /** Set to true to restore letter-scramble on show/hide. */
 const TIMELINE_HINT_SCRAMBLE_ENABLED = false;
 
 let isInOverview = () => false;
 let getOverviewSubMode = () => "filter";
+let getSunCircle = () => null;
 let hintEl = null;
+let scrollHintEl = null;
 let hintHideTimer = null;
 let hintResizeBound = false;
 let lastShownText = "";
@@ -32,13 +38,109 @@ function clearHintHideTimer() {
   hintHideTimer = null;
 }
 
+function getHintBaseTop() {
+  const root = document.documentElement;
+  const navHeight =
+    parseFloat(getComputedStyle(root).getPropertyValue("--site-nav-height")) || 42;
+  const margin = parseFloat(getComputedStyle(root).getPropertyValue("--grid-margin")) || 10;
+  return navHeight + margin;
+}
+
+/**
+ * @param {DOMRect} rect
+ * @param {{ cx: number, cy: number, r: number }} circle
+ * @param {number} [pad]
+ */
+function rectIntersectsCircle(rect, circle, pad = 0) {
+  const r = circle.r + pad;
+  const closestX = Math.max(rect.left, Math.min(circle.cx, rect.right));
+  const closestY = Math.max(rect.top, Math.min(circle.cy, rect.bottom));
+  const dx = circle.cx - closestX;
+  const dy = circle.cy - closestY;
+  return dx * dx + dy * dy < r * r;
+}
+
+function avoidSunCollision() {
+  if (!hintEl || hintEl.hidden) return;
+
+  const baseTop = getHintBaseTop();
+  hintEl.style.top = `${baseTop}px`;
+
+  const sun = getSunCircle?.();
+  if (!sun) return;
+
+  const rect = hintEl.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  if (!rectIntersectsCircle(rect, sun, TIMELINE_HINT_COLLISION_PAD)) return;
+
+  // Stay anchored to the top: only drop lines while the title can remain
+  // entirely above the sun's vertical center. Pushing past that point would
+  // move the title down into / below the sun, so we keep it at the top instead.
+  const height = rect.height;
+  const maxTop = sun.cy - sun.r - TIMELINE_HINT_COLLISION_PAD - height;
+
+  let top = baseTop;
+  while (top + TIMELINE_HINT_LINE_HEIGHT <= maxTop) {
+    top += TIMELINE_HINT_LINE_HEIGHT;
+    hintEl.style.top = `${top}px`;
+    const next = hintEl.getBoundingClientRect();
+    if (!rectIntersectsCircle(next, sun, TIMELINE_HINT_COLLISION_PAD)) return;
+  }
+
+  // Could not clear the sun while staying near the top — keep it pinned to the top.
+  hintEl.style.top = `${baseTop}px`;
+}
+
 function positionTimelineHint() {
   if (!hintEl) return;
   const viewportEl = document.getElementById("sun-viewport");
   const span = getGridSpanBounds(TIMELINE_HINT_COLUMNS, 1, viewportEl || undefined);
-  hintEl.style.left = `${span.left}px`;
+  const viewportLeft = viewportEl?.getBoundingClientRect().left ?? 0;
+  hintEl.style.left = `${viewportLeft + span.left}px`;
   hintEl.style.width = `${span.width}px`;
   hintEl.style.maxWidth = `${span.width}px`;
+  avoidSunCollision();
+}
+
+export function repositionTimelineEventHint() {
+  if (!hintEl || hintEl.hidden || !isTimelineMode()) return;
+  positionTimelineHint();
+}
+
+let scrollHintDismissedForSession = false;
+let scrollHintDismissTimer = null;
+
+function clearScrollHintDismissTimer() {
+  if (scrollHintDismissTimer == null) return;
+  clearTimeout(scrollHintDismissTimer);
+  scrollHintDismissTimer = null;
+}
+
+function hideTimelineScrollHint() {
+  if (!scrollHintEl) return;
+  clearScrollHintDismissTimer();
+  scrollHintEl.hidden = true;
+  scrollHintDismissedForSession = false;
+}
+
+export function resetTimelineScrollHint() {
+  clearScrollHintDismissTimer();
+  scrollHintDismissedForSession = false;
+  syncTimelineScrollHint();
+}
+
+export function dismissTimelineScrollHint() {
+  if (scrollHintDismissedForSession || scrollHintDismissTimer != null) return;
+  scrollHintDismissTimer = window.setTimeout(() => {
+    scrollHintDismissTimer = null;
+    scrollHintDismissedForSession = true;
+    if (scrollHintEl) scrollHintEl.hidden = true;
+  }, TIMELINE_SCROLL_HINT_DISMISS_MS);
+}
+
+export function syncTimelineScrollHint() {
+  if (!scrollHintEl) return;
+  scrollHintEl.hidden = !isTimelineMode() || scrollHintDismissedForSession;
 }
 
 function hideTimelineEventHint({ immediate = false } = {}) {
@@ -50,6 +152,7 @@ function hideTimelineEventHint({ immediate = false } = {}) {
     abortLetterShuffle(hintEl);
     hintEl.hidden = true;
     hintEl.textContent = "";
+    hintEl.style.top = "";
     return;
   }
   startContinuousScramble(hintEl);
@@ -58,6 +161,7 @@ function hideTimelineEventHint({ immediate = false } = {}) {
     abortLetterShuffle(hintEl);
     hintEl.hidden = true;
     hintEl.textContent = "";
+    hintEl.style.top = "";
     hintHideTimer = null;
   }, TIMELINE_HINT_HIDE_MS);
 }
@@ -66,6 +170,18 @@ function bindHintResize() {
   if (hintResizeBound) return;
   hintResizeBound = true;
   window.addEventListener("resize", () => {
+    repositionTimelineEventHint();
+  });
+}
+
+function applyHintText(text) {
+  if (TIMELINE_HINT_SCRAMBLE_ENABLED) {
+    playLightLetterShuffleTo(hintEl, text);
+  } else {
+    abortLetterShuffle(hintEl);
+    hintEl.textContent = text;
+  }
+  requestAnimationFrame(() => {
     positionTimelineHint();
   });
 }
@@ -89,16 +205,14 @@ export function updateTimelineEventHint(year) {
   clearHintHideTimer();
   positionTimelineHint();
 
-  if (text === lastShownText && !hintEl.hidden) return;
+  if (text === lastShownText && !hintEl.hidden) {
+    avoidSunCollision();
+    return;
+  }
 
   lastShownText = text;
   hintEl.hidden = false;
-  if (TIMELINE_HINT_SCRAMBLE_ENABLED) {
-    playLightLetterShuffleTo(hintEl, text);
-  } else {
-    abortLetterShuffle(hintEl);
-    hintEl.textContent = text;
-  }
+  applyHintText(text);
 }
 
 export function syncTimelineEventHint(year) {
@@ -112,22 +226,41 @@ export function syncTimelineEventHint(year) {
 export function initSunTimelineHint({
   isInOverview: isInOverviewFn,
   getOverviewSubMode: getOverviewSubModeFn,
+  getSunCircle: getSunCircleFn,
 }) {
-  if (document.getElementById("sun-timeline-event-hint")) return;
-
   isInOverview = isInOverviewFn || (() => false);
   getOverviewSubMode = getOverviewSubModeFn || (() => "filter");
+  getSunCircle = getSunCircleFn || (() => null);
 
-  const hint = document.createElement("p");
-  hint.id = "sun-timeline-event-hint";
-  hint.className = "sun-timeline-event-hint";
-  hint.hidden = true;
-  hint.setAttribute("aria-hidden", "true");
+  const existingHint = document.getElementById("sun-timeline-event-hint");
+  if (existingHint) {
+    hintEl = existingHint;
+  } else {
+    const hint = document.createElement("p");
+    hint.id = "sun-timeline-event-hint";
+    hint.className = "sun-timeline-event-hint";
+    hint.hidden = true;
+    hint.setAttribute("aria-hidden", "true");
+    document.body.appendChild(hint);
+    hintEl = hint;
+  }
 
-  document.body.appendChild(hint);
-  hintEl = hint;
+  const existingScrollHint = document.getElementById("sun-timeline-scroll-hint");
+  if (existingScrollHint) {
+    scrollHintEl = existingScrollHint;
+  } else {
+    const scrollHint = document.createElement("p");
+    scrollHint.id = "sun-timeline-scroll-hint";
+    scrollHint.className = "sun-timeline-scroll-hint";
+    scrollHint.textContent = TIMELINE_SCROLL_HINT_TEXT;
+    scrollHint.hidden = true;
+    scrollHint.setAttribute("aria-hidden", "true");
+    document.body.appendChild(scrollHint);
+    scrollHintEl = scrollHint;
+  }
+
   bindHintResize();
   positionTimelineHint();
 }
 
-export { hideTimelineEventHint };
+export { hideTimelineEventHint, hideTimelineScrollHint };

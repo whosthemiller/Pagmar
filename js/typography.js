@@ -51,9 +51,22 @@ function ensureSentenceEnding(text) {
 }
 
 function tieHyphens(line) {
-  return line
-    .replace(new RegExp(`(?<=[\\p{L}\\d])[${HYPHEN_CHARS}](?=[\\p{L}\\d])`, "gu"), NB_HYPHEN)
-    .replace(new RegExp(`(\\S)\\s+([${SPACED_DASH_CHARS}])`, "g"), `$1${NBSP}$2`);
+  // ה-7 → ה־7 (Hebrew maqaf before digits)
+  let result = line.replace(/(?<=[\u0590-\u05FF])-(?=\d)/gu, MAQAF);
+
+  // ASCII hyphen only → non-breaking hyphen (keep Hebrew maqaf visible in UI fonts)
+  result = result.replace(/(?<=[\p{L}\d])-(?=[\p{L}\d])/gu, NB_HYPHEN);
+
+  // Prevent line break between a Hebrew letter and maqaf
+  result = result.replace(
+    new RegExp(`(?<=[\\p{Script=Hebrew}])${MAQAF}`, "gu"),
+    `\u2060${MAQAF}`
+  );
+
+  return result.replace(
+    new RegExp(`(\\S)\\s+([${SPACED_DASH_CHARS}])`, "g"),
+    `$1${NBSP}$2`
+  );
 }
 
 function preventOrphans(line) {

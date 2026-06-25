@@ -1,0 +1,241 @@
+{
+  "meta": {
+    "version": 1,
+    "exportedAt": "2026-06-25T14:06:14.392Z",
+    "note": "רשימת תמונות לעמוד הפתיחה. הסדר קובע את סדר המעבר. נוצר/מתעדכן דרך prototypes/splash-lab.html."
+  },
+  "images": [
+    {
+      "url": "assets/img/ההפיכה המשטרית/אבוקות בהפגנה בקפלן.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/אפרטהייד/פועלים פלסטינים מעזה עומדים בתור במחסום.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/קפלניסטים/מפגין מצלם את המחאה בקפלן.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/אסירים/אסיר פלסטיני נפגש עם בני משפחתו בחאן יונס.webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/עיירות פיתוח/בית מקורי מימי ראשית עיירת הפיתוח בשדרות.jpeg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/דיפ סטייט/בנימין נתניהו.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/גדר ההפרדה/גדר ההפרדה בבית לחם.webp",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/שלטון הפקידים/גלי בהרב מיארה.webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/הגדה המערבית/הגדה המערבית.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/הרג אזרחים/ההרס בקיבוץ בארי.webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/טבח ה-7 באוקטובר/ההרס בקיבוץ כפר עזה .webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/חומת ההפרדה/החומה בשכונת א־טור שבמזרח ירושלים.webp",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/חיסול/המכתש אחרי תקיפת הבונקר של נסראללה וחיסולו.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/גירוש/הפגנה נגד הגירוש .webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/ממשל צבאי/הפגנות לסיום הממשל הצבאי.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/אנרכיסטים/הפגנת המחאה נגד ההפיכה המשטרית.jpeg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/דיפ סטייט/הפגנת ימין נגד הפצ\"רית.webp",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/הרפורמה המשפטית/הפגנת תמיכה ברפורמה המשפטית בתל אביב .jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/הרתעה/הפצצות צה״ל בעיר עזה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/אש לא מידתית/הפצצה ישראלית בעיר עזה.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/טרנספר מרצון/הקהל בכנס הטרנספר .webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/ממשל צבאי/הריסת מסגד בכפר ואדי אל חליל .jpeg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/נזק אגבי/הרס מפגיעת טיל איראני ברמת גן.webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/גבול שביתת הנשק/ועדת שביתת הנשק ישראל־מצרים נפגשת בשטח לקביעת תוואי הגבול.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/התיישבויות/חוות צאן של מתנחלים ישראלים בגדה המערבית.jpeg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/שבויים/חיילי צה\"ל לצד שבויים מצרים ברפיח.webp",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/מלחמת השחרור/חיילי צה\"ל מצטיידים במקלעים שהגיעו מצ'כוסלבקיה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/הגדה המערבית/חיילים בגדה המערבית.webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/פשיטה/חיילים במהלך פשיטה צבאית בעיירה טובאס שבגדה המערבית.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/מלחמה/חיילים בעזה.webp",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/גדר הבטחון/חמאס פורץ את הגדר בגבול עזה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/מחסום/חסום צהל בכביש סמוך למטולה.jpeg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/אירוע ה-7 באוקטובר/חמושים פלסטינים מגדודי עז א-דין אל-קסאם נעים לעבר מעבר ארז בין ישראל לצפון רצועת עזה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/עקירה/ילד פלסטיני ישן בחורבות ביתו ההרוס בשכונת שג׳עייה שבעיר עזה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/חומת ההפרדה/ילד פלסטיני ליד חומת ההפרדה.jpeg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/פשיעה לאומנית/ישראלים רעולי פנים בכפר ביתא.webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/מאחזים בלתי חוקיים/מאחז בצומת טייבה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/התיישבויות/לימור סון הר מלך ביהודה ושומרון.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/בני ערובה/מבצע אנטבה, חזרת בני הערובה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/מבצע/מבצע שובר גלים.jpeg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/הפרעות סדר/מדורה שמפגינים הדליקו.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/נערי גבעות/מתנחלים במאחז שהקימו בין הכפרים דליה וקבון, מזרחית לבית אל.webp",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/שמלאנים/עצרת השלום בכיכר מלכי ישראל.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/חרבות ברזל/פינוי פצועים במהלך מלחמת \"חרבות ברזל\".jpeg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/סגר/פלסטינים ומצרים בציר פילדלפי לאחר נסיגת הצבא.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/פעולת התנגדות/פלסטינים מוחים מול כוחות ישראליים ליד גדר ההפרדה בין רצועת עזה לישראל.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/מתקפת ה-7 באוקטובר/פלסטינים מצטלמים עם טנק צה\"לי בוער ב-7 באוקטובר.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/מלחמת עזה 2023/פלסטינים על הריסות מבנה שנהרס בהפצצה ישראלית על ח'אן יונס.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/פשיטה/פשיטה על בתיהם של בכירי חמאס.jpeg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/הנכבה/צעדת השיבה של פלסטינים בישראל לציון 75 שנה לנכבה.webp",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/מלחמת עזה 2023/רחוב הרוס בח'אן יונס, בדרום רצועת עזה.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/רצועת בטחון/רצועת הבטחון בלבנון.webp",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/שמלאנים/שולמית אלוני.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/טיהור אתני/שיירה של תושבי העיר עזה נמלטים דרומה.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/רצועת בטחון/שמעון פרס ויצחק רבין בעמדת תצפית במזרח רצועת הבטחון בדרום לבנון.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/פרעות תרפ״ט/שריפת הרטוב.jpg",
+      "quoteTextColor": "dark"
+    },
+    {
+      "url": "assets/img/הרפורמה המשפטית/תומכי הרפורמה המשפטית מפגינים בקריית הממשלה בירושלים.jpg",
+      "quoteTextColor": "light"
+    },
+    {
+      "url": "assets/img/נפל/הלוויה צבאית.jpg",
+      "quoteTextColor": "dark"
+    }
+  ]
+}

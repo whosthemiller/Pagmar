@@ -801,6 +801,173 @@ async function runMode(state, mode) {
  * }} [options]
  * @returns {boolean}
  */
+/** @param {Element} root @param {string} text @param {FontKind} fontKind */
+function prepareTextSwitchState(root, text, fontKind) {
+  const savedStyles = {
+    minWidth: root.style.minWidth,
+    minHeight: root.style.minHeight,
+    height: root.style.height,
+    display: root.style.display,
+    position: root.style.position,
+    boxSizing: root.style.boxSizing,
+    lineHeight: root.style.lineHeight,
+    alignItems: root.style.alignItems,
+    verticalAlign: root.style.verticalAlign,
+    direction: root.style.direction,
+  };
+
+  const mounted = mountTermChars(root, text, fontKind);
+
+  return {
+    root,
+    originalText: text,
+    graphemes: mounted.graphemes,
+    chars: mounted.chars,
+    fontKind,
+    widthSets: mounted.widthSets,
+    savedStyles,
+    timerId: null,
+    intervalId: null,
+    onComplete: null,
+    mode: "text-switch",
+  };
+}
+
+function finishTextSwitchState(state, fontKind) {
+  if (!isActiveState(state)) return;
+  clearTimer(state);
+  state.chars.forEach(({ glyph, cell }, index) => {
+    applyCharForFont(glyph, fontKind, state.widthSets, index);
+    glyph.textContent = state.graphemes[index];
+    cell.style.opacity = "1";
+  });
+  syncTermLockWidth(state.root, state.chars);
+  state.onComplete?.();
+  activeStates.delete(state.root);
+  delete state.root.dataset.fontScrambleActive;
+}
+
+/** @param {object} state @param {string} fromText @param {FontKind} fontKind */
+async function runTextSwitchErase(state, fromText, fontKind) {
+  const n = [...fromText].length;
+  if (!n) return;
+
+  const mounted = mountTermChars(state.root, fromText, fontKind);
+  state.graphemes = mounted.graphemes;
+  state.chars = mounted.chars;
+  state.widthSets = mounted.widthSets;
+  state.originalText = fromText;
+
+  for (let step = n; step >= 0; step--) {
+    if (!isActiveState(state)) return;
+    state.chars.forEach(({ glyph, cell, final }, index) => {
+      applyCharForFont(glyph, fontKind, state.widthSets, index);
+      if (index < step) {
+        glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
+        cell.style.opacity = "1";
+      } else {
+        glyph.textContent = final;
+        cell.style.opacity = "0";
+      }
+    });
+    syncTermLockWidth(state.root, state.chars);
+    await new Promise((resolve) => {
+      state.timerId = window.setTimeout(resolve, TIMING.charStepMs);
+    });
+  }
+}
+
+/** @param {object} state @param {string} toText @param {FontKind} fontKind */
+async function runTextSwitchWrite(state, toText, fontKind) {
+  const graphemes = [...toText];
+  const n = graphemes.length;
+  if (!n) {
+    finishTextSwitchState(state, fontKind);
+    return;
+  }
+
+  const mounted = mountTermChars(state.root, toText, fontKind);
+  state.graphemes = mounted.graphemes;
+  state.chars = mounted.chars;
+  state.widthSets = mounted.widthSets;
+  state.originalText = toText;
+
+  for (let step = 0; step <= n; step++) {
+    if (!isActiveState(state)) return;
+    state.chars.forEach(({ glyph, cell, final }, index) => {
+      applyCharForFont(glyph, fontKind, state.widthSets, index);
+      if (index < step) {
+        glyph.textContent = final;
+        cell.style.opacity = "1";
+      } else {
+        glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
+        cell.style.opacity = index === step ? "1" : "0";
+      }
+    });
+    syncTermLockWidth(state.root, state.chars);
+    await new Promise((resolve) => {
+      state.timerId = window.setTimeout(resolve, TIMING.charStepMs);
+    });
+  }
+
+  if (isActiveState(state)) finishTextSwitchState(state, fontKind);
+}
+
+/** @param {object} state @param {string} fromText @param {string} toText @param {FontKind} fontKind */
+async function runTextSwitchMode(state, fromText, toText, fontKind) {
+  await runTextSwitchErase(state, fromText, fontKind);
+  if (!isActiveState(state)) return;
+  await runTextSwitchWrite(state, toText, fontKind);
+}
+
+/**
+ * Secolo→Secolo (or same-font) heading switch: erase `fromText`, then type `toText`.
+ * @param {Element | null | undefined} root
+ * @param {{
+ *   fromText?: string,
+ *   toText?: string,
+ *   font?: FontKind,
+ *   onComplete?: () => void,
+ * }} [options]
+ * @returns {boolean}
+ */
+export function playFontScrambleTextSwitch(root, options = {}) {
+  if (!root) {
+    options.onComplete?.();
+    return false;
+  }
+
+  const {
+    fromText = "",
+    toText = "",
+    font = "secolo",
+    onComplete,
+  } = options;
+
+  if (!fromText.trim() && !toText.trim()) {
+    onComplete?.();
+    return false;
+  }
+
+  abortFontScrambleTransition(root);
+
+  if (reducedMotion) {
+    if (toText.trim()) mountFontScrambleTerm(root, toText, font);
+    onComplete?.();
+    return false;
+  }
+
+  const initialText = fromText.trim() ? fromText : toText;
+  const state = prepareTextSwitchState(root, initialText, font);
+  state.onComplete = onComplete ?? null;
+  root.dataset.fontScrambleActive = "1";
+  activeStates.set(root, state);
+
+  runTextSwitchMode(state, fromText, toText, font);
+
+  return true;
+}
+
 export function playFontScrambleTransition(root, options = {}) {
   if (!root) {
     options.onComplete?.();

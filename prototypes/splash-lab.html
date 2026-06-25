@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>מעבדת עמוד פתיחה</title>
+    <link rel="stylesheet" href="sun-map/sun-map.css" />
+    <link rel="stylesheet" href="../css/splash.css" />
+    <link rel="stylesheet" href="splash-lab.css" />
+  </head>
+  <body class="splash-lab">
+    <section class="splash-lab-preview" id="splash-lab-preview" aria-label="תצוגה מקדימה">
+      <div class="splash splash--preview is-quote-dark" id="splash-lab-preview-splash">
+        <div class="splash__image-band">
+          <img class="splash__image" alt="" decoding="async" referrerpolicy="no-referrer" />
+        </div>
+        <div class="splash__band" aria-hidden="true"></div>
+        <blockquote class="splash__quote">
+          „המאבק האמיתי מתרחש על המילון …<br />
+          מי שמנצח בשדה המילים – מנצח, לעיתים, גם בשדה הזיכרון."
+        </blockquote>
+        <p class="splash__intro" id="splash-lab-preview-intro"></p>
+        <p class="splash__scroll-hint">גללו כדי להתחיל לחקור</p>
+      </div>
+      <p class="splash-lab-preview__empty" id="splash-lab-preview-empty">
+        בחרי תמונה מהבר כדי לראות אותה כאן
+      </p>
+    </section>
+
+    <aside class="splash-lab-panel" aria-label="בקרת מעבדה">
+      <button
+        type="button"
+        class="splash-lab-collapse"
+        id="splash-lab-collapse"
+        title="הסתר/הצג בר"
+        aria-label="הסתר או הצג את הבר"
+      >
+        ⟨
+      </button>
+      <div class="splash-lab-panel__body">
+        <h1>מעבדת עמוד פתיחה</h1>
+        <p class="splash-lab-panel__intro">
+          בחרי תמונות, סדר וצבע ציטוט לכל תמונה — והורידי את הקובץ.
+        </p>
+
+        <div class="splash-lab-field">
+          <label>תמונות שנבחרו <span id="splash-lab-selected-count">(0)</span></label>
+          <p class="splash-lab-empty" id="splash-lab-selected-empty">
+            עדיין לא נבחרו תמונות. לחצי על תמונה למטה.
+          </p>
+          <ol class="splash-lab-selected" id="splash-lab-selected"></ol>
+        </div>
+
+        <div class="splash-lab-actions">
+          <button type="button" class="splash-lab-btn splash-lab-btn--primary" id="splash-lab-apply">
+            הורד splash-images.json
+          </button>
+        </div>
+
+        <p class="splash-lab-hint" id="splash-lab-hint" hidden></p>
+
+        <div class="splash-lab-field">
+          <label>תמונות שמתאימות לפול בליד <span class="splash-lab-grid-progress" id="splash-lab-progress"></span></label>
+          <div class="splash-lab-grid" id="splash-lab-grid"></div>
+        </div>
+
+        <p class="splash-lab-status" id="splash-lab-status">טוען קטלוג תמונות…</p>
+      </div>
+    </aside>
+
+    <script type="module" src="../js/splash-lab.js"></script>
+  </body>
+</html>

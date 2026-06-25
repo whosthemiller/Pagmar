@@ -39,11 +39,12 @@ const TERM_DEF_MENTION_CONFIG = {
   maxSpread: 24,
 };
 
-/** Term-page label panels (משתמשים / נפוץ / בשימוש) — fast typewriter scramble. */
+/** Term-page paragraphs + label panels — 2 chars per step typewriter scramble. */
 const LABEL_PANEL_TYPEWRITER_CONFIG = {
-  frameMs: 3,
+  frameMs: 6,
   scrambleFrames: 2,
-  tailLength: 8,
+  tailLength: 6,
+  charsPerStep: 2,
 };
 
 /** @type {WeakMap<Element, object>} */
@@ -104,6 +105,7 @@ function isLightHoverShuffleEl(root) {
     root.classList.contains("sun-filter-bar__label") ||
     root.classList.contains("sun-term-hover-caption__line") ||
     root.classList.contains("site-nav__label") ||
+    root.classList.contains("splash__intro-link") ||
     root.classList.contains("sun-term-meta__tag") ||
     root.classList.contains("sun-term-meta__value")
   );
@@ -347,6 +349,7 @@ function isCompactShuffleLabel(root) {
   return (
     root.classList.contains("sun-terms-index__term-label") ||
     root.classList.contains("site-nav__label") ||
+    root.classList.contains("splash__intro-link") ||
     root.classList.contains("sun-term-page__label-nav-text")
   );
 }
@@ -591,8 +594,10 @@ function abortState(state) {
       state.colorStyles,
       state.original
     );
-  } else if (state.mode === "light") {
+  } else if (state.mode === "light" || state.mode === "light-typewriter") {
     root.textContent = state.original;
+  } else if (state.mode === "annotated-typewriter") {
+    root.innerHTML = state.original;
   } else if (state.mode === "svg") {
     root.removeAttribute("textLength");
     root.removeAttribute("lengthAdjust");
@@ -628,6 +633,8 @@ function restoreState(state) {
       state.colorStyles,
       state.original
     );
+  } else if (state.mode === "annotated-typewriter") {
+    root.innerHTML = state.original;
   } else if (state.mode === "svg") {
     root.removeAttribute("textLength");
     root.removeAttribute("lengthAdjust");
@@ -719,6 +726,7 @@ function isLightScrambleEl(root) {
     root.classList.contains("sun-filter-dim-hint") ||
     root.classList.contains("sun-timeline-event-hint") ||
     root.classList.contains("site-nav__label") ||
+    root.classList.contains("splash__intro-link") ||
     root.classList.contains("sun-term-page__label-nav-text") ||
     root.classList.contains("sun-term-page__label-nav-panel-text") ||
     root.classList.contains("sun-term-similar-label") ||
@@ -909,6 +917,134 @@ export function playLightTypewriterScrambleTo(root, targetText, onComplete, opti
     if (state.frame >= state.scrambleFrames) {
       state.frame = 0;
       state.step += 1;
+    }
+    state.timerId = window.setTimeout(tick, state.frameMs);
+  };
+
+  root.dataset.letterShuffleActive = "1";
+  activeStates.set(root, state);
+  tick();
+  return true;
+}
+
+/** Ordered text nodes inside `root`, each with its grapheme list and global offset. */
+function collectAnnotatedTextNodes(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  let total = 0;
+  let node;
+  while ((node = walker.nextNode())) {
+    const graphemes = [...(node.textContent ?? "")];
+    if (!graphemes.length) continue;
+    nodes.push({ node, graphemes, start: total });
+    total += graphemes.length;
+    node.textContent = "";
+  }
+  return { nodes, total };
+}
+
+function renderAnnotatedTypewriterFrame(state) {
+  const { nodes, step, tailLength, total } = state;
+  const tailEnd = tailLength > 0 ? step + tailLength : total;
+  for (const entry of nodes) {
+    let out = "";
+    for (let i = 0; i < entry.graphemes.length; i++) {
+      const globalIndex = entry.start + i;
+      if (globalIndex >= tailEnd) break;
+      const ch = entry.graphemes[i];
+      if (globalIndex < step) {
+        out += ch;
+      } else {
+        out += ch === " " || ch === "\u00a0" ? ch : randomGlyph();
+      }
+    }
+    entry.node.textContent = out;
+  }
+}
+
+function finishAnnotatedTypewriter(state) {
+  for (const entry of state.nodes) {
+    entry.node.textContent = entry.graphemes.join("");
+  }
+  state.timerId = null;
+  activeStates.delete(state.root);
+  delete state.root.dataset.letterShuffleActive;
+  state.onComplete?.();
+}
+
+/**
+ * Annotation-aware typewriter reveal.
+ *
+ * Unlike {@link playLightTypewriterScrambleTo} (which writes flat text and only
+ * swaps in styled markup once it finishes), this builds the annotated `html`
+ * into `root` first — so mention spans exist from the very first frame. The
+ * effect: words that live in FrankRuhl are written in FrankRuhl from their first
+ * character, and a censored (same-object) word grows under its black rectangle
+ * as it is typed, with no font/censor pop or reflow when the write completes.
+ *
+ * @param {Element | null | undefined} root
+ * @param {string} html annotated markup (e.g. from renderAnnotatedTermText)
+ * @param {() => void} [onComplete]
+ * @param {{ frameMs?: number, scrambleFrames?: number, tailLength?: number, charsPerStep?: number }} [options]
+ * @returns {boolean}
+ */
+export function playAnnotatedTypewriterScrambleTo(root, html, onComplete, options = {}) {
+  if (!root) {
+    onComplete?.();
+    return false;
+  }
+  const source = html ?? "";
+  if (!source.trim()) {
+    root.innerHTML = "";
+    onComplete?.();
+    return false;
+  }
+  if (reducedMotion) {
+    root.innerHTML = source;
+    onComplete?.();
+    return false;
+  }
+
+  abortLetterShuffle(root);
+
+  root.innerHTML = source;
+  const { nodes, total } = collectAnnotatedTextNodes(root);
+  if (!total) {
+    root.innerHTML = source;
+    onComplete?.();
+    return false;
+  }
+
+  const state = {
+    root,
+    original: source,
+    mode: "annotated-typewriter",
+    nodes,
+    total,
+    step: 0,
+    frame: 0,
+    timerId: null,
+    onComplete,
+    frameMs: options.frameMs ?? LABEL_PANEL_TYPEWRITER_CONFIG.frameMs,
+    scrambleFrames: options.scrambleFrames ?? LABEL_PANEL_TYPEWRITER_CONFIG.scrambleFrames,
+    tailLength: options.tailLength ?? LABEL_PANEL_TYPEWRITER_CONFIG.tailLength,
+    charsPerStep: Math.max(1, options.charsPerStep ?? LABEL_PANEL_TYPEWRITER_CONFIG.charsPerStep ?? 1),
+  };
+
+  const tick = () => {
+    if (!isActiveShuffleState(state)) return;
+
+    renderAnnotatedTypewriterFrame(state);
+
+    if (state.step >= state.total) {
+      finishAnnotatedTypewriter(state);
+      return;
+    }
+
+    state.frame += 1;
+    if (state.frame >= state.scrambleFrames) {
+      state.frame = 0;
+      state.step += state.charsPerStep;
     }
     state.timerId = window.setTimeout(tick, state.frameMs);
   };

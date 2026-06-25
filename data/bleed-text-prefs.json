@@ -3,5 +3,522 @@
     "version": 1,
     "note": "העדפות צבע טקסט per-term בפול בליד. תמונות bleed נשמרות בסדר images ב-term-images.json."
   },
-  "terms": {}
+  "terms": {
+    "0מאלנים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "אזור חיץ": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "אירוע ה־7 באוקטובר": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "אנרכיסטים": {
+      "navText": "light",
+      "titleRowText": "dark"
+    },
+    "אסירים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "אספקה לאויב": {
+      "navText": "dark",
+      "titleRowText": "auto"
+    },
+    "אפרטהייד": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "אש לא מידתית": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "בוגדים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "ביביסטים": {
+      "navText": "dark",
+      "titleRowText": "auto"
+    },
+    "בני ערובה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "ג׳יהאד": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "גבול שביתת הנשק": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "גבולות אושוויץ": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "גדר הבטחון": {
+      "navText": "auto",
+      "titleRowText": "dark"
+    },
+    "גדר ההפרדה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "גזירת הגיוס": {
+      "navText": "light",
+      "titleRowText": "auto"
+    },
+    "גירוש": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "דיפ סטייט": {
+      "navText": "dark",
+      "titleRowText": "dark"
+    },
+    "הגדה המערבית": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "ההפיכה המשטרית": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הוצאה להורג": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הכיבוש": {
+      "navText": "light",
+      "titleRowText": "light"
+    },
+    "המגזר הערבי": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "המרד הערבי הגדול": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הנכבה": {
+      "navText": "auto",
+      "titleRowText": "dark"
+    },
+    "הסברה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הסכסוך": {
+      "navText": "auto",
+      "titleRowText": "dark"
+    },
+    "הסלמה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הפגנות": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הפרעות סדר": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הקו הירוק": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הרג אזרחים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "הרפורמה המשפטית": {
+      "navText": "light",
+      "titleRowText": "dark"
+    },
+    "הרתעה": {
+      "navText": "light",
+      "titleRowText": "light"
+    },
+    "השטחים הכבושים": {
+      "navText": "auto",
+      "titleRowText": "dark"
+    },
+    "התיישבויות": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "התנחלויות": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "התנקשות": {
+      "navText": "dark",
+      "titleRowText": "auto"
+    },
+    "התנתקות": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "חומת ההפרדה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "חוסל": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "חוק הגיוס": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "חטופים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "חיסול": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "חסם הומניטרי": {
+      "navText": "auto",
+      "titleRowText": "dark"
+    },
+    "טבח": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "טבח דיר יאסין": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "טבח ה־7 באוקטובר": {
+      "navText": "light",
+      "titleRowText": "light"
+    },
+    "טיהור אתני": {
+      "navText": "light",
+      "titleRowText": "light"
+    },
+    "טרור מתנחלים": {
+      "navText": "light",
+      "titleRowText": "light"
+    },
+    "טרנספר": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "טרנספר מרצון": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "יהודה ושומרון": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "יודונאצים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "ימנים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "כיבוש": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "כיבוש דיר יאסין": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "כיבוש צבאי": {
+      "navText": "light",
+      "titleRowText": "auto"
+    },
+    "כליאה ללא משפט": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "כניסה קרקעית": {
+      "navText": "light",
+      "titleRowText": "auto"
+    },
+    "מאורעות תרפ״ט": {
+      "navText": "auto",
+      "titleRowText": "light"
+    },
+    "מאורעות תרצ״ו–תרצ”ט": {
+      "navText": "dark",
+      "titleRowText": "light"
+    },
+    "מאחזים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מאחזים בלתי חוקיים": {
+      "navText": "light",
+      "titleRowText": "light"
+    },
+    "מבצע": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מבקשי מקלט": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מהגרים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מחאות": {
+      "navText": "light",
+      "titleRowText": "auto"
+    },
+    "מחסום": {
+      "navText": "light",
+      "titleRowText": "auto"
+    },
+    "מלחמה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מלחמת ה־7 באוקטובר": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מלחמת העצמאות": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מלחמת השחרור": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מלחמת התקומה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מלחמת עזה 2023": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "ממשל צבאי": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מסתננים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מעבר": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מעצר מנהלי": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מפונים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מצור": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "מתקפת ה־7 באוקטובר": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "נהרג": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "נוטרל": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "נזק אגבי": {
+      "navText": "light",
+      "titleRowText": "light"
+    },
+    "נספה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "נערי גבעות": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "נפל": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "נרצח": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "סגר": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "סיוע הומניטרי": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "סיכול ממוקד": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "סילוואן": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "עולים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "עיירות פיתוח": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "עיירות פריפריה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "עיר דוד": {
+      "navText": "light",
+      "titleRowText": "auto"
+    },
+    "ענישה": {
+      "navText": "light",
+      "titleRowText": "dark"
+    },
+    "עקורים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "עקירה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "ערבים ישראליים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פגיעה בבלתי מעורבים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פיגוע": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פינוי": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פליטים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פלישה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פלסטין": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פלסטינים אזרחי ישראל": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פעולה מבצעית": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פעולת התנגדות": {
+      "navText": "light",
+      "titleRowText": "auto"
+    },
+    "פעולת טרור": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פרעות תרפ״ט": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פרשת דיר יאסין": {
+      "navText": "dark",
+      "titleRowText": "light"
+    },
+    "פשיטה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "פשיעה לאומנית": {
+      "navText": "dark",
+      "titleRowText": "light"
+    },
+    "קו העימות": {
+      "navText": "dark",
+      "titleRowText": "light"
+    },
+    "קפלניסטים": {
+      "navText": "auto",
+      "titleRowText": "light"
+    },
+    "רצועת הבטחון": {
+      "navText": "dark",
+      "titleRowText": "light"
+    },
+    "רצח עם": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "שבויים": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "שוויון בנטל": {
+      "navText": "auto",
+      "titleRowText": "light"
+    },
+    "שטח כבוש": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "שלטון החוק": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "שלטון הפקידים": {
+      "navText": "auto",
+      "titleRowText": "light"
+    },
+    "שמאלנים": {
+      "navText": "auto",
+      "titleRowText": "light"
+    },
+    "תגובה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "תמרון קרקעי": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    },
+    "תעמולה": {
+      "navText": "auto",
+      "titleRowText": "auto"
+    }
+  }
 }

@@ -753,6 +753,14 @@ export function getPreloadedTermImage(url) {
   return preloadedImageCache.get(url) ?? null;
 }
 
+/** Register a loaded bitmap so layout, pixelation, and term pages can reuse it. */
+export function registerPreloadedTermImage(url, img) {
+  if (!url || !(img instanceof HTMLImageElement) || img.naturalWidth <= 0) return false;
+  if (preloadedImageCache.has(url)) return true;
+  preloadedImageCache.set(url, img);
+  return true;
+}
+
 /** Unique image URLs from a term-images map. */
 export function collectTermImageUrls(termImages) {
   const urls = new Set();
@@ -875,6 +883,93 @@ export async function preloadTermImages(urls, onProgress, options = {}) {
   onProgress?.(loaded / total, loaded, total);
 
   return { loaded, failed: pending.length, total, failedUrls: pending };
+}
+
+/** @type {string[]} */
+let bgPreloadQueue = [];
+/** @type {Set<string>} */
+let bgPreloadQueued = new Set();
+let bgPreloadCursor = 0;
+let bgPreloadWorkers = 0;
+/** @type {{ decode?: boolean, concurrency?: number, retries?: number } | null} */
+let bgPreloadOptions = null;
+
+function takeNextBackgroundPreloadUrl() {
+  while (bgPreloadCursor < bgPreloadQueue.length) {
+    const url = bgPreloadQueue[bgPreloadCursor++];
+    bgPreloadQueued.delete(url);
+    if (!preloadedImageCache.has(url)) return url;
+  }
+  return null;
+}
+
+function ensureBackgroundPreloadWorkers() {
+  const concurrency = bgPreloadOptions?.concurrency ?? 8;
+  while (bgPreloadWorkers < concurrency && bgPreloadCursor < bgPreloadQueue.length) {
+    bgPreloadWorkers += 1;
+    void runBackgroundPreloadWorker();
+  }
+}
+
+async function runBackgroundPreloadWorker() {
+  try {
+    let url = takeNextBackgroundPreloadUrl();
+    while (url) {
+      await loadImageElement(url, bgPreloadOptions?.retries ?? 1, bgPreloadOptions);
+      url = takeNextBackgroundPreloadUrl();
+    }
+  } finally {
+    bgPreloadWorkers -= 1;
+    ensureBackgroundPreloadWorkers();
+  }
+}
+
+/**
+ * Queue term images for background preload (deduped, skips already cached).
+ * @param {string[]} urls — earlier entries load first.
+ */
+export function enqueueTermImagePreload(urls, options = {}) {
+  if (!urls.length) return;
+  bgPreloadOptions = {
+    decode: false,
+    concurrency: 8,
+    retries: 1,
+    ...bgPreloadOptions,
+    ...options,
+  };
+
+  for (const url of urls) {
+    if (!url || preloadedImageCache.has(url) || bgPreloadQueued.has(url)) continue;
+    bgPreloadQueue.push(url);
+    bgPreloadQueued.add(url);
+  }
+
+  ensureBackgroundPreloadWorkers();
+}
+
+/** Move still-pending URLs to the front of the queue (e.g. after scroll). */
+export function boostTermImagePreloadPriority(priorityUrls) {
+  if (!priorityUrls.length || bgPreloadCursor >= bgPreloadQueue.length) return;
+
+  const pending = bgPreloadQueue.slice(bgPreloadCursor);
+  const pendingSet = new Set(pending);
+  const boosted = [];
+  const seen = new Set();
+
+  for (const url of priorityUrls) {
+    if (pendingSet.has(url) && !seen.has(url)) {
+      boosted.push(url);
+      seen.add(url);
+    }
+  }
+  for (const url of pending) {
+    if (!seen.has(url)) {
+      boosted.push(url);
+      seen.add(url);
+    }
+  }
+
+  bgPreloadQueue = [...bgPreloadQueue.slice(0, bgPreloadCursor), ...boosted];
 }
 
 export async function loadSemanticData(url = dataUrl("sheet-data.json")) {

@@ -1,0 +1,202 @@
+/* Splash entry overlay — full-bleed image + typography on 24-col grid */
+
+body.is-splash-active .sun-app {
+  pointer-events: none;
+}
+
+:root {
+  --splash-band: clamp(110px, 15vh, 180px);
+  --splash-quote-lh: 120px;
+  --splash-col: calc(
+    (100vw - 2 * var(--grid-margin) - (var(--grid-columns) - 1) * var(--grid-gutter)) /
+      var(--grid-columns)
+  );
+  --splash-span-19: calc(19 * var(--splash-col) + 18 * var(--grid-gutter));
+  --splash-span-15: calc(15 * var(--splash-col) + 14 * var(--grid-gutter));
+  --splash-span-14: calc(14 * var(--splash-col) + 13 * var(--grid-gutter));
+  --splash-dismiss-duration: 0.55s;
+}
+
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+  color: var(--ink);
+  direction: rtl;
+  overflow: hidden;
+  transition:
+    opacity var(--splash-dismiss-duration) ease,
+    transform var(--splash-dismiss-duration) ease;
+}
+
+.splash.is-dismissed {
+  opacity: 0;
+  transform: translateY(-2vh);
+  pointer-events: none;
+}
+
+.splash[hidden] {
+  display: none !important;
+}
+
+/* Full-bleed image band (cut at bottom like term page) */
+.splash__image-band {
+  position: absolute;
+  inset: 0 0 var(--splash-band) 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.splash__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  opacity: var(--bleed-backdrop-image-opacity, 0.9);
+}
+
+.splash__image.is-pixelation-hidden {
+  opacity: 0;
+}
+
+.splash__pixel-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+  opacity: var(--bleed-backdrop-image-opacity, 0.9);
+}
+
+.splash__pixel-canvas[hidden] {
+  display: none;
+}
+
+/* Bottom band (page background) */
+.splash__band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--splash-band);
+  background: var(--bg);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Quote — top-right, Secolo 144, 19 columns */
+.splash__quote {
+  position: absolute;
+  top: var(--grid-margin);
+  right: var(--grid-margin);
+  width: var(--splash-span-19);
+  margin: 0;
+  padding: 0;
+  font-family: "Secolo", serif;
+  font-size: 144px;
+  line-height: var(--splash-quote-lh);
+  font-weight: normal;
+  text-align: right;
+  /* Hanging opening quote: continuation lines align with body text, not with „ */
+  --splash-quote-mark-indent: 0.45em;
+  padding-inline-start: var(--splash-quote-mark-indent);
+  text-indent: calc(-1 * var(--splash-quote-mark-indent));
+  z-index: 3;
+  pointer-events: none;
+}
+
+.splash.is-quote-dark .splash__quote {
+  color: var(--ink);
+}
+
+.splash.is-quote-light .splash__quote {
+  color: #f5f5f5;
+}
+
+/* Intro paragraph — bottom-right, Roobert regular 24/30, 14 columns */
+.splash__intro {
+  position: absolute;
+  right: var(--grid-margin);
+  bottom: calc(var(--grid-margin) + 8px);
+  width: var(--splash-span-15);
+  margin: 0;
+  padding: 0;
+  font-family: var(--sun-prose-font);
+  font-variation-settings: "MONO" 0, "slnt" 0;
+  font-weight: 400;
+  font-size: 24px;
+  line-height: 30px;
+  text-align: right;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.splash__intro-link {
+  font-family: var(--sun-mono-font);
+  font-variation-settings: "MONO" 100, "slnt" 0;
+  font-weight: 400;
+  position: relative;
+  display: inline;
+  line-height: inherit;
+  cursor: default;
+  pointer-events: auto;
+  text-decoration: underline;
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.12em;
+}
+
+.splash__intro-space {
+  font-family: var(--sun-mono-font);
+  font-variation-settings: "MONO" 100, "slnt" 0;
+  font-weight: 400;
+  white-space: pre;
+}
+
+/* Scroll hint — bottom-left, Roobert mono 14 */
+.splash__scroll-hint {
+  position: absolute;
+  left: var(--grid-margin);
+  bottom: calc(var(--grid-margin) + 8px);
+  margin: 0;
+  padding: 0;
+  font-family: var(--sun-mono-font);
+  font-variation-settings: "MONO" 100, "slnt" 0;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  direction: ltr;
+  color: var(--ink);
+  z-index: 3;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash {
+    transition: opacity 0.01ms linear;
+  }
+}
+
+@media (max-width: 900px) {
+  .splash__quote {
+    font-size: clamp(64px, 12vw, 144px);
+    line-height: 1;
+    --splash-quote-lh: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .splash__quote {
+    width: calc(100% - 2 * var(--grid-margin));
+    font-size: clamp(48px, 14vw, 96px);
+  }
+
+  .splash__intro {
+    width: calc(100% - 2 * var(--grid-margin));
+    font-size: 20px;
+    line-height: 26px;
+  }
+}

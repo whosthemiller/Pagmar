@@ -142,6 +142,11 @@ body.bleed-text-lab {
   background: rgba(37, 99, 235, 0.08);
 }
 
+.bleed-text-lab-status.is-dirty {
+  background: rgba(217, 119, 6, 0.12);
+  color: #92400e;
+}
+
 .bleed-text-lab-actions {
   display: flex;
   flex-direction: column;
@@ -174,6 +179,17 @@ body.bleed-text-lab {
   background: #2a2a2a;
 }
 
+.bleed-text-lab-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bleed-text-lab-btn.is-saved-flash {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #fff;
+}
+
 .bleed-text-lab-hint {
   margin: 10px 0 0;
   font-size: 11px;
@@ -191,6 +207,66 @@ body.bleed-text-lab {
 
 .bleed-text-lab-queue strong {
   color: var(--bleed-lab-ink);
+}
+
+.bleed-text-lab-queue-title {
+  margin: 0 0 8px;
+}
+
+.bleed-text-lab-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bleed-text-lab-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(17, 17, 17, 0.04);
+}
+
+.bleed-text-lab-queue-item.is-active {
+  background: rgba(37, 99, 235, 0.1);
+}
+
+.bleed-text-lab-queue-name {
+  flex: 1;
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--bleed-lab-ink);
+  text-align: right;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.bleed-text-lab-queue-name:hover {
+  text-decoration: underline;
+}
+
+.bleed-text-lab-queue-remove {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--bleed-lab-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.bleed-text-lab-queue-remove:hover {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
 }
 
 @media (max-width: 720px) {

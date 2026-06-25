@@ -1,12 +1,14 @@
 import {
   buildDefinitionMentionPatterns,
   collectTermImageUrls,
+  enqueueTermImagePreload,
+  boostTermImagePreloadPriority,
   getPreloadedTermImage,
   groupTermsByObject,
   swapGroupsByObjectId,
   loadSemanticData,
   loadTermImages,
-  preloadTermImages,
+  registerPreloadedTermImage,
 } from "./data-model.js";
 import {
   getTermTextPrefs,
@@ -26,14 +28,20 @@ import { buildTermYearIndex, getTimelineBounds, getTermOpacity } from "./term-ye
 import { createYearScrollController, isWheelNotch } from "./sun-year-scroll.js";
 import { loadTimelineEvents } from "./timeline-events.js";
 import {
+  dismissTimelineScrollHint,
   hideTimelineEventHint,
+  hideTimelineScrollHint,
   initSunTimelineHint,
+  repositionTimelineEventHint,
+  resetTimelineScrollHint,
   syncTimelineEventHint,
+  syncTimelineScrollHint,
 } from "./sun-timeline-hint.js";
 import {
   bindLetterShuffleDelegation,
   getLetterShuffleOriginal,
   initLetterShuffle,
+  playAnnotatedTypewriterScrambleTo,
   playLightLetterShuffleTo,
   playLightTypewriterScrambleTo,
   settleFromContinuousScramble,
@@ -60,8 +68,8 @@ import {
   isPageNavTransitionActive,
   isIndexEnterScrambleActive,
   cancelPageNavScramble,
-  runLoadingBarExitScramble,
   runNavEnterScramble,
+  runNavTypewriterEnter,
   PAGE_TAGS_ROUTE_TIMING,
 } from "./page-nav-scramble.js";
 import {
@@ -80,6 +88,7 @@ import {
   getMountedTermScreenBaselineY,
   initFontScrambleTransitions,
   mountFontScrambleTerm,
+  playFontScrambleTextSwitch,
   playFontScrambleTransition,
 } from "./font-scramble-transitions.js";
 import {
@@ -145,6 +154,8 @@ const LOADING_ESTIMATE_MS = {
 };
 
 const LOADING_BAR_CAP_BEFORE_DONE = 0.94;
+/** Minimum time the censor intro stays visible before revealing the splash. */
+const LOADING_MIN_VISIBLE_MS = 2200;
 
 const loadingWork = {
   total: 1,
@@ -154,6 +165,7 @@ const loadingWork = {
   label: "טוען נתונים…",
   raf: 0,
   rafLastTime: 0,
+  startedAt: 0,
 };
 
 function computeLoadingEstimatedMs(setupSteps = 2) {
@@ -235,6 +247,30 @@ function stopLoadingDisplayTick() {
   loadingWork.rafLastTime = 0;
 }
 
+/** Keep the censor intro visible for at least LOADING_MIN_VISIBLE_MS. */
+function waitForLoadingMinimum() {
+  const start = loadingWork.startedAt || performance.now();
+  stopLoadingDisplayTick();
+
+  return new Promise((resolve) => {
+    const step = (now) => {
+      const elapsed = now - start;
+      const t = Math.min(1, elapsed / LOADING_MIN_VISIBLE_MS);
+      loadingWork.display = t;
+      updateLoadingProgress(t);
+
+      if (elapsed < LOADING_MIN_VISIBLE_MS) {
+        requestAnimationFrame(step);
+      } else {
+        loadingWork.display = 1;
+        updateLoadingProgress(1);
+        resolve();
+      }
+    };
+    requestAnimationFrame(step);
+  });
+}
+
 function ensureLoadingDisplayTick() {
   if (loadingWork.raf) return;
 
@@ -284,7 +320,7 @@ function getLetterShuffleTarget(el) {
 const LAYOUT = {
   arcRadiusScale: 1.245,
   rayCount: 0, // set after load — used for fixed arc spacing
-  termGap: 30,
+  termGap: 22,
   fontSize: 30,
   charWidth: 20,
   scrollSensitivity: 0.014,
@@ -336,6 +372,13 @@ const LAYOUT = {
   termPageTitleBandHeight: 230,
   /** Distance from the top of the title band to the shared term baseline (px). */
   termPageTitleBaselineInset: 198,
+  /** Small downward nudge for the whole Secolo title row (animation + settled). */
+  termPageTitleBaselineNudgePx: 0,
+  /**
+   * Downward nudge applied ONLY to the Secolo title glyphs (animation + settled),
+   * without moving the censored sibling bars / similar-terms label. Positive = down.
+   */
+  termPageSecoloTitleNudgePx: 12,
   /** Extra height below pinned title + nav backdrop (px). */
   termPageHeaderBackdropBottomExtra: 20,
   /** Extra downward offset when the title group pins below site nav (px). */
@@ -362,8 +405,14 @@ const LAYOUT = {
   termPageCensoredPushSlack: 28,
   /** Duration for censored-row push during the Secolo phase of font scramble (ms). */
   termPageCensoredPushMs: 480,
+  /** Width of the censored-sibling band — same grid span as the title-row image columns. */
+  termPageCensoredRowColumns: 2,
+  /** Vertical gap between wrapped censored-sibling rows (px). */
+  termPageCensoredWrapRowGap: 8,
   focusRiseMs: 600,
   focusExitMs: 800,
+  /** Re-pack the title row back to even arc spacing before the rise starts (ms). */
+  focusUnfocusReflowMs: 300,
   focusReorderMs: 720,
   focusReorderMsFew: 520,
   focusReorderMsMultiFew: 400,
@@ -490,6 +539,8 @@ const LAYOUT = {
   titleRowImageSwapPixelMaxFactor: 38,
   /** Hold beat at max glitch (0–1 of transition) before resolving. */
   titleRowImageSwapGlitchHold: 0.38,
+  /** Term-page entry bleed reveal — slower smooth resolve (not the hover glitch hold). */
+  termPageBleedRevealTransitionMs: 450,
 };
 
 /** Ray position swaps — [objectIdA, objectIdB] exchange slots on the sun. */
@@ -500,6 +551,14 @@ const SUN_GROUP_POSITION_SWAPS = [
   ["OBJ-3", "OBJ-44"], // פלסטין/יהודה ושומרון ↔ סגר/מצור
   ["OBJ-30", "OBJ-40"], // שמאלנים… ↔ הקו הירוק…
 ];
+
+/** Compressed timings for term-page → home unfocus. */
+const UNFOCUS_TIMING = {
+  reflowMs: 140,
+  riseMs: 380,
+  exitMs: 480,
+  backCircleFadeMs: 520,
+};
 
 /** Compressed timings for in-page term-to-term navigation. */
 const TERM_NAV_TIMING = {
@@ -603,6 +662,8 @@ let activeIndex = 0;
 let scrollOffset = 0;
 let overviewSpinOffset = 0;
 let wheelBound = false;
+/** Wheel delta from splash dismiss, applied once the arc scroll handler is ready. */
+let pendingSplashWheelDelta = null;
 let currentLayout = null;
 let isSnapping = false;
 let snapAnimFrame = null;
@@ -777,6 +838,9 @@ function getTermPageScrollRisePx(
 let termPageScreenZ = null;
 /** Similar-label top (screen) captured at scrollTop = 0. */
 let termSimilarLabelRestTop = null;
+/** Cleared after switch — forces similar-label rest anchor to remeasure. */
+let termPageSimilarLabelAnchorStale = false;
+
 /** Vertical screen shift for censored siblings + similar label during scroll. */
 let termPageCensoredScrollShiftY = 0;
 /** Whether the similar label is clamped at its pinned floor. */
@@ -791,6 +855,22 @@ let termPageCensoredScrollRef = null;
 let termPageCensoredPushTarget = null;
 /** 0–1 progress for censored-row push during font scramble. */
 let termPageCensoredPushProgress = 0;
+/** Timing for the sibling censor middle→baseline vertical ramp during scramble. */
+let termPageSiblingBaselineRampStartMs = null;
+let termPageSiblingBaselineRampDurationMs = 0;
+/** Per-sibling screen deltas for column-wrap repack (term index → { screenDx, screenDy }). */
+/** @type {Map<number, { screenDx: number, screenDy: number }> | null} */
+let termPageCensoredWrapOffsets = null;
+/** Extra page rise when censored siblings wrap to a second row (screen px). */
+let termPageCensoredWrapExtraPx = 0;
+/** Skip column-wrap repack for one settle — preserves scramble end positions. */
+let termPageDeferCensoredWrapRepack = false;
+/** Censored-row screen align frozen at scramble end — reapplied after render. */
+let termPageCensoredFrozenScreenAlign = null;
+/** Skip sibling censor barY refresh for one frame after scramble handoff. */
+let termPageCensoredPreserveBarsAfterHandoff = false;
+/** Secolo baseline (screen Y) frozen at scramble handoff — matches overlay ink. */
+let termPageFrozenSecoloBaselineScreenY = null;
 /** @type {SVGSVGElement | null} */
 let termDisplayMeasureSvg = null;
 let termPageLayoutAnimFrame = null;
@@ -1093,11 +1173,14 @@ function updateActiveFromScroll(arc) {
   const lockedSnap = snapAnimTargetIndex ?? settleSnapIndex;
   if (lockedSnap !== null) {
     activeIndex = activeIndexForSnapIndex(lockedSnap, arc);
+    scheduleTermImagePreloadBoost();
     return;
   }
   const count = LAYOUT.rayCount || 1;
   const hU = horizontalArcU(arc);
+  const prevIndex = activeIndex;
   activeIndex = ((Math.round(scrollOffset + hU) % count) + count) % count;
+  if (prevIndex !== activeIndex) scheduleTermImagePreloadBoost();
 }
 
 /** Active ray index — while focused, the locked group can differ from wheel scroll. */
@@ -1427,7 +1510,8 @@ function getTermPageScrollContentTopPx(viewportHeight) {
     getFocusRowTopPx(viewportHeight) +
     LAYOUT.termPageSelectedFontSize * 0.12 +
     LAYOUT.termPageGapBelowTitle +
-    getTermPageScrollContentOffsetYpx(viewportHeight)
+    getTermPageScrollContentOffsetYpx(viewportHeight) +
+    termPageCensoredWrapExtraPx
   );
 }
 
@@ -1486,7 +1570,9 @@ function getPinnedSelectedMinTopPx() {
 }
 
 function captureTermPageHeaderRowRestTopIfNeeded() {
-  if (termPageHeaderRowRestTop != null || (viewport?.scrollTop ?? 0) > 0) return;
+  if (termPageHeaderRowRestTop != null) return;
+  const scrollTop = viewport?.scrollTop ?? 0;
+  if (scrollTop > 0.5) return;
   if (
     !termPageSelectedFontSettled ||
     !isTermPageFocusVisual() ||
@@ -1498,7 +1584,84 @@ function captureTermPageHeaderRowRestTopIfNeeded() {
   const selectedText = getSelectedTermTextEl();
   if (!rayGroup || !selectedText) return;
   const bounds = getTermTextScreenBounds(rayGroup, selectedText);
-  if (bounds) termPageHeaderRowRestTop = bounds.minY;
+  if (!bounds) return;
+  termPageHeaderRowRestTop = bounds.minY;
+}
+
+/** Derive scroll=0 header Y from the live selected-term screen position (term switch while scrolled). */
+function captureTermPageHeaderRowRestTopFromScroll() {
+  if (
+    !termPageSelectedFontSettled ||
+    !isTermPageFocusVisual() ||
+    viewport?.classList.contains("is-term-font-scrambling")
+  ) {
+    return;
+  }
+  const rayGroup = getFocusRayGroup();
+  const selectedText = getSelectedTermTextEl();
+  if (!rayGroup || !selectedText) return;
+  const bounds = getTermTextScreenBounds(rayGroup, selectedText);
+  if (!bounds) return;
+  const scrollTop = viewport?.scrollTop ?? 0;
+  if (scrollTop <= 0.5) {
+    termPageHeaderRowRestTop = bounds.minY;
+    return;
+  }
+  const viewportHeight = getLiveViewportHeight();
+  const rise = getTermPageScrollRisePx(scrollTop, viewportHeight);
+  const pinnedMinY = getPinnedSelectedMinTopPx();
+  const provisionalThreshold = Math.max(0, bounds.minY + rise - pinnedMinY);
+  const lift = Math.min(rise, provisionalThreshold);
+  termPageHeaderRowRestTop = bounds.minY + lift;
+}
+
+function resyncTermPageScrollHeaderAfterSwitch(layout = currentLayout) {
+  if (
+    !layout ||
+    !Number.isFinite(layout.viewportWidth) ||
+    !Number.isFinite(layout.viewportHeight)
+  ) {
+    refreshMapLayoutFromViewport();
+    layout = currentLayout;
+  }
+  if (!layout) return;
+
+  const group = groups[focusState?.activeIndex];
+  if (!group || group.terms.length < 2) return;
+
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const viewportHeight = layout.viewportHeight ?? getLiveViewportHeight();
+
+  termPageFrozenSecoloBaselineScreenY = null;
+  termSimilarLabelRestTop = null;
+  termPageSimilarLabelAnchorStale = true;
+
+  if (isTermPageScrollBgMode()) {
+    if (isViewportTermScrollable() || scrollTop > 0.5) {
+      termPageCensoredScrollShiftY = getTermCensoredGroupScreenShiftY(
+        scrollTop,
+        viewportHeight
+      );
+    }
+    applyFocusRayScrollAnchor(layout);
+    applyTermPageScrollLiftTransform();
+  }
+
+  const rayGroup = getFocusRayGroup();
+  if (rayGroup && termPageScreenZ != null) {
+    termPageDeferCensoredWrapRepack = true;
+    applyTermPageCensoredBaselineAlign(rayGroup, { refreshBars: false });
+    termPageDeferCensoredWrapRepack = false;
+  }
+
+  if (scrollTop > 0.5) {
+    captureTermPageHeaderRowRestTopFromScroll();
+  } else {
+    termPageHeaderRowRestTop = null;
+    captureTermPageHeaderRowRestTopIfNeeded();
+  }
+
+  updateTermPageSimilarLabel(layout);
 }
 
 function getTermHeaderPinThresholdPx(viewportHeight) {
@@ -2093,7 +2256,8 @@ function getTermPageBottomFocusRowTopPx(viewportHeight) {
   return (
     viewportHeight -
     getTermPageTitleBandHeightPx(viewportHeight) +
-    getTermPageTitleBaselineInsetPx(viewportHeight)
+    getTermPageTitleBaselineInsetPx(viewportHeight) +
+    LAYOUT.termPageTitleBaselineNudgePx
   );
 }
 
@@ -2107,9 +2271,17 @@ function applyFocusRayScrollAnchor(layout = currentLayout) {
   if (!rayGroup || !focusState) return;
   const transform = getFocusRayGroupScrollTransform(layout);
   if (!transform) return;
+  const { anchor, rotation } = transform;
+  if (
+    !Number.isFinite(anchor?.x) ||
+    !Number.isFinite(anchor?.y) ||
+    !Number.isFinite(rotation)
+  ) {
+    return;
+  }
   rayGroup.setAttribute(
     "transform",
-    `translate(${transform.anchor.x}, ${transform.anchor.y}) rotate(${transform.rotation})`
+    `translate(${anchor.x}, ${anchor.y}) rotate(${rotation})`
   );
 }
 
@@ -2119,7 +2291,13 @@ function getTermScrollLiftGroup() {
 }
 
 function applyTermPageScrollLiftTransform() {
-  if (!isTermPageScrollBgMode() || !isViewportTermScrollable()) {
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const canLift =
+    isViewportTermScrollable() ||
+    (isTermPageScrollBgMode() &&
+      focusState?.phase === "locked" &&
+      scrollTop > 0.5);
+  if (!isTermPageScrollBgMode() || !canLift) {
     getTermScrollLiftGroup()?.removeAttribute("transform");
     svgEl?.style.removeProperty("transform");
     return;
@@ -2170,19 +2348,23 @@ function clearTermHeaderScrollVisuals() {
   termPageHeaderRowRestTop = null;
   if (currentLayout && focusState) {
     applyFocusRayScrollAnchor(currentLayout);
-    applyTermPageCensoredRayOffset();
+    applyTermPageCensoredBaselineAlign();
   }
 }
 
 function syncTermHeaderScrollTransform(layout = currentLayout) {
-  if (!svgEl || !isTermPageScrollBgMode() || !isViewportTermScrollable()) {
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const canSync =
+    isViewportTermScrollable() ||
+    (focusState?.phase === "locked" && scrollTop > 0.5);
+
+  if (!svgEl || !isTermPageScrollBgMode() || !canSync) {
     clearTermHeaderScrollVisuals();
     return;
   }
 
   syncTermScrollBgPosition(layout);
   const viewportHeight = layout?.viewportHeight ?? getLiveViewportHeight();
-  const scrollTop = viewport?.scrollTop ?? 0;
 
   termPageCensoredScrollShiftY = getTermCensoredGroupScreenShiftY(
     scrollTop,
@@ -2190,7 +2372,7 @@ function syncTermHeaderScrollTransform(layout = currentLayout) {
   );
   applyFocusRayScrollAnchor(layout);
   applyTermPageScrollLiftTransform();
-  applyTermPageCensoredRayOffset();
+  // Wrap transforms are settled at scrollTop=0; scroll lift moves the whole SVG.
   syncTermHeaderBackdrop(layout);
 
   if (
@@ -2225,9 +2407,57 @@ function getFocusRowTopPx(viewportHeight) {
   );
 }
 
+/** Cached ratio: glyph shift when switching dominant-baseline middle→alphabetic, per font px. */
+let termMiddleToAlphabeticRatio = null;
+
+/**
+ * Measure the exact vertical glyph shift between `dominant-baseline:middle` and
+ * `:alphabetic` for the term font, normalized per font pixel. Measuring (instead of
+ * hardcoding) keeps the rise anchor and the locked alphabetic baseline continuous, so
+ * the title doesn't jump when the focus rise hands off to the term-page scramble.
+ */
+function measureTermMiddleToAlphabeticRatio() {
+  if (!svgEl) return null;
+  const probeSize = 100;
+  const makeBboxY = (baseline) => {
+    const t = document.createElementNS(SVG_NS, "text");
+    t.setAttribute("class", "sun-term");
+    t.setAttribute("x", "0");
+    t.setAttribute("y", "0");
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("dominant-baseline", baseline);
+    t.setAttribute("style", `font-size:${probeSize}px`);
+    t.setAttribute("visibility", "hidden");
+    t.textContent = "מבחןAQ";
+    svgEl.appendChild(t);
+    let y = NaN;
+    try {
+      y = t.getBBox().y;
+    } catch {
+      y = NaN;
+    }
+    t.remove();
+    return y;
+  };
+  const midY = makeBboxY("middle");
+  const alphaY = makeBboxY("alphabetic");
+  if (!Number.isFinite(midY) || !Number.isFinite(alphaY)) return null;
+  return (midY - alphaY) / probeSize;
+}
+
 /** Anchor Y delta so middle- and alphabetic-baseline text share the same visual band. */
 function getTermMiddleToAlphabeticAnchorOffset(fontSizePx = LAYOUT.fontSize) {
-  return fontSizePx * 0.36;
+  if (termMiddleToAlphabeticRatio == null) {
+    termMiddleToAlphabeticRatio = measureTermMiddleToAlphabeticRatio() ?? 0.252;
+  }
+  return fontSizePx * termMiddleToAlphabeticRatio;
+}
+
+// Re-measure once the real fonts load — fallback metrics differ from RoobertVF.
+if (typeof document !== "undefined" && document.fonts?.ready) {
+  document.fonts.ready.then(() => {
+    termMiddleToAlphabeticRatio = null;
+  });
 }
 
 function usesTermPageAlphabeticBaseline() {
@@ -2442,7 +2672,12 @@ function syncTermPageBleedClipForScroll() {
 }
 
 function syncTermHeaderPinState(layout = currentLayout) {
-  if (!viewport || !isViewportTermScrollable()) {
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const keepScrollHeader =
+    isViewportTermScrollable() ||
+    (isTermPageScrollBgMode() && focusState?.phase === "locked" && scrollTop > 0.5);
+
+  if (!viewport || !keepScrollHeader) {
     viewport?.classList.remove(
       "is-term-header-pinned",
       "is-term-bleed-scroll-active",
@@ -2481,6 +2716,9 @@ function syncTermHeaderPinState(layout = currentLayout) {
 
   syncTermPageBleedClipForScroll();
   applyTermPageBleedCaptionVisibility(layout);
+  if (shouldApplyMediaCensorPlaceholder()) {
+    syncMediaCensorFrame(layout);
+  }
 
   if (pinned !== wasPinned && currentLayout) {
     if (isTermPageScrollBgMode()) {
@@ -2508,7 +2746,15 @@ function applyViewportTermScrollBounds(viewportHeight) {
     totalHeight = getTermContentBottom();
     scrollContentBottom = totalHeight;
   }
-  const needsScroll = totalHeight > viewportHeight + 1;
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const preserveScrollMode =
+    isTermPageScrollBgMode() &&
+    focusState?.phase === "locked" &&
+    scrollTop > 0.5;
+  if (preserveScrollMode) {
+    totalHeight = Math.max(totalHeight, viewportHeight + scrollTop + 1);
+  }
+  const needsScroll = totalHeight > viewportHeight + 1 || preserveScrollMode;
   const headerBottom = getTermFixedHeaderBottomPx(viewportHeight);
 
   if (viewport) {
@@ -2546,7 +2792,16 @@ function applyViewportTermScrollBounds(viewportHeight) {
 
   viewport?.classList.toggle("is-term-scrollable", needsScroll);
   if (needsScroll) {
-    syncTermHeaderPinState({ viewportHeight });
+    if (
+      currentLayout &&
+      Number.isFinite(currentLayout.viewportWidth) &&
+      Number.isFinite(currentLayout.viewportHeight)
+    ) {
+      syncTermHeaderPinState(currentLayout);
+    } else {
+      refreshMapLayoutFromViewport();
+      syncTermHeaderPinState(currentLayout);
+    }
   }
 }
 
@@ -2642,15 +2897,13 @@ function findTermLocation(termId) {
 }
 
 function getUnfocusRiseMs() {
-  return termNavState?.phase === "exiting"
-    ? TERM_NAV_TIMING.exitRiseMs
-    : LAYOUT.focusRiseMs;
+  if (termNavState?.phase === "exiting") return TERM_NAV_TIMING.exitRiseMs;
+  return UNFOCUS_TIMING.riseMs;
 }
 
 function getUnfocusExitMs() {
-  return termNavState?.phase === "exiting"
-    ? TERM_NAV_TIMING.exitFadeMs
-    : LAYOUT.focusExitMs;
+  if (termNavState?.phase === "exiting") return TERM_NAV_TIMING.exitFadeMs;
+  return UNFOCUS_TIMING.exitMs;
 }
 
 function getFocusExitMs() {
@@ -2674,18 +2927,29 @@ function getReorderTimeScale() {
   return termNavState?.phase === "entering" ? TERM_NAV_TIMING.reorderScale : 1;
 }
 
+/** Title-row re-pack happens before any rise/exit — skipped for term-nav exits. */
+function getUnfocusReflowMs() {
+  if (termNavState?.phase === "exiting") return 0;
+  return UNFOCUS_TIMING.reflowMs;
+}
+
 function getUnfocusAnimDuration() {
+  const reflowMs = getUnfocusReflowMs();
   const backCircleMs = getBackCircleAnimMs();
   const riseMs = getUnfocusRiseMs();
   const exitMs = getUnfocusExitMs();
-  // rise ("row" motion) starts immediately,
-  // while the main arc exit starts only after the mini/back circle finishes.
-  return Math.max(riseMs, backCircleMs + exitMs);
+  // The row first re-packs to even spacing (reflowMs), then the rise ("row"
+  // motion) starts, while the main arc exit starts only after the mini/back
+  // circle finishes.
+  return reflowMs + Math.max(riseMs, backCircleMs + exitMs);
 }
 
 function getBackCircleAnimMs() {
   if (termNavState?.phase === "exiting") {
     return TERM_NAV_TIMING.backCircleFadeMs;
+  }
+  if (focusState?.phase === "unfocusing") {
+    return UNFOCUS_TIMING.backCircleFadeMs;
   }
   return LAYOUT.backCircleFadeMs;
 }
@@ -2756,7 +3020,11 @@ function tickBackCircle(now) {
   const eased = easeOutCubic(t);
   focusState.backCircleT = 1;
   focusState.backMiniExitT = 1 - eased;
-  render(currentLayout);
+  if (isTermPageFocusVisual() && termPageSelectedFontSettled) {
+    updateBackFixedOverlay(currentLayout);
+  } else {
+    render(currentLayout);
+  }
   if (t < 1) {
     backCircleAnimFrame = requestAnimationFrame(tickBackCircle);
   } else {
@@ -2845,9 +3113,23 @@ function startUnfocusAnimation(options = {}) {
   focusState.exitT = 1;
   focusState.backMiniExitT = 0;
   focusState.backCircleT = 1;
+  focusState.unfocusReflowT = 0;
 
   cancelFocusAnimation();
   render(currentLayout);
+
+  // Target the even arc-row layout the title row re-packs to before the rise.
+  if (getUnfocusReflowMs() > 0 && focusState) {
+    const widths = measureTermWidths(focusState.activeIndex);
+    const { xs, anchor } = computeArcRowHomeXs(
+      focusState.activeIndex,
+      focusState.clickedIndex,
+      widths
+    );
+    focusState.termHomeXs = xs;
+    focusState.termHomeAnchor = anchor;
+  }
+
   tickUnfocus(now);
   if (focusState?.phase === "unfocusing") {
     focusAnimFrame = requestAnimationFrame(tickUnfocus);
@@ -2859,17 +3141,24 @@ function tickUnfocus(now) {
 
   const elapsed = now - focusState.startTime;
   const totalMs = getUnfocusAnimDuration();
+  const reflowMs = getUnfocusReflowMs();
   const riseMs = getUnfocusRiseMs();
   const exitMs = getUnfocusExitMs();
   const backCircleMs = getBackCircleAnimMs();
 
-  const scatterT = clamp(elapsed / backCircleMs, 0, 1);
+  // Phase 1: re-pack the title row to even arc spacing in place.
+  focusState.unfocusReflowT =
+    reflowMs > 0 ? easeInOutCubic(clamp(elapsed / reflowMs, 0, 1)) : 1;
+
+  // Phase 2 (after the reflow): rise/scatter back to the arc.
+  const postReflow = Math.max(0, elapsed - reflowMs);
+  const scatterT = clamp(postReflow / backCircleMs, 0, 1);
   focusState.backMiniExitT = easeOutCubic(scatterT);
   focusState.backCircleT = scatterT < 1 ? 1 : 0;
   // Allow the term row to move during the mini back-circle exit,
   // but delay the main arc exit until the mini is fully gone.
-  focusState.riseT = 1 - clamp(elapsed / riseMs, 0, 1);
-  focusState.exitT = 1 - clamp((elapsed - backCircleMs) / exitMs, 0, 1);
+  focusState.riseT = 1 - clamp(postReflow / riseMs, 0, 1);
+  focusState.exitT = 1 - clamp((postReflow - backCircleMs) / exitMs, 0, 1);
 
   render(currentLayout);
 
@@ -2890,8 +3179,8 @@ function tickUnfocus(now) {
   arcTermLayout = {
     groupIndex: focusState.activeIndex,
     clickedIndex: focusState.clickedIndex,
-    termXs: focusState.termEndXs.slice(),
-    textAnchor: focusState.textAnchor,
+    termXs: (focusState.termHomeXs ?? focusState.termEndXs).slice(),
+    textAnchor: focusState.termHomeAnchor ?? focusState.textAnchor,
   };
   focusState = null;
   focusAnimFrame = null;
@@ -2985,6 +3274,72 @@ function getTermPageContentTermIndex() {
   return focusState.clickedIndex;
 }
 
+function settleTermPageAfterSameGroupSwitch(layout) {
+  const rayGroup = getFocusRayGroup();
+  const selectedText = getSelectedTermTextEl();
+
+  resetTermPageCensoredRowTransforms();
+  termPageCensoredLayoutRef = null;
+  termPageCensoredScrollRef = null;
+  termPageCensoredRayOffset = null;
+  termPageCensoredFrozenScreenAlign = null;
+  clearTermPageCensoredWrapState();
+  termPageSiblingLayoutApplied = false;
+
+  applyFocusTermPageLayout();
+  refineTermPagePositions();
+  freezeTermPageSiblingLayout();
+
+  termPageCensoredFrozenScreenAlign = null;
+  termPageCensoredPushProgress = 1;
+  termPageCensoredPushTarget = null;
+  termSimilarLabelRestTop = null;
+  termPageSimilarLabelAnchorStale = true;
+
+  const Z =
+    selectedText && rayGroup ? getSecoloTitleScreenZ(rayGroup, selectedText) : null;
+  if (Z != null) {
+    termPageScreenZ = Z;
+    captureTermPageCensoredLayoutRef(rayGroup, Z);
+  }
+
+  const frozenBaseline = getLiveSecoloBaselineScreenY(rayGroup);
+  if (frozenBaseline != null) {
+    termPageFrozenSecoloBaselineScreenY = frozenBaseline;
+    termPageSimilarLabelAnchorStale = false;
+  }
+
+  termPageDeferCensoredWrapRepack = true;
+  applyTermPageCensoredBaselineAlign(rayGroup, { refreshBars: false });
+  termPageDeferCensoredWrapRepack = false;
+
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const viewportHeight = layout?.viewportHeight ?? getLiveViewportHeight();
+  if (isViewportTermScrollable() || scrollTop > 0.5) {
+    captureTermPageHeaderRowRestTopFromScroll();
+    termPageCensoredScrollShiftY = getTermCensoredGroupScreenShiftY(
+      scrollTop,
+      viewportHeight
+    );
+    applyFocusRayScrollAnchor(layout);
+    applyTermPageScrollLiftTransform();
+  } else {
+    termPageHeaderRowRestTop = null;
+    termPageCensoredScrollShiftY = 0;
+    captureTermPageHeaderRowRestTopIfNeeded();
+  }
+
+  holdSiblingTermCensors();
+  termPageSiblingLayoutApplied = true;
+
+  termSimilarLabelScrambleStarted = true;
+  if (termSimilarLabelEl) {
+    stopLetterShuffle(termSimilarLabelEl);
+    termSimilarLabelEl.textContent = TERM_SIMILAR_LABEL_TEXT;
+  }
+  updateTermPageSimilarLabel(layout);
+}
+
 function instantSettleSelectedTermAfterCut(layout) {
   const group = groups[focusState?.activeIndex];
   const selectedIndex = focusState?.clickedIndex ?? -1;
@@ -3004,19 +3359,24 @@ function instantSettleSelectedTermAfterCut(layout) {
   }
 
   termPageSelectedFontSettled = true;
-  freezeTermPageSiblingLayout();
-  applyFocusTermPageLayout();
 
-  if (selectedTerm) {
-    captureTermPageCensoredPushTarget(applyTypographyRules(selectedTerm.name));
-    termPageCensoredPushProgress = 1;
-    if (termPageCensoredPushTarget) {
-      applyTermPageCensoredPushFromTarget(termPageCensoredPushTarget, 1);
-    }
+  if (termPageInlineTermSwitch) {
+    settleTermPageAfterSameGroupSwitch(layout);
+    return;
   }
 
-  snapOverlayToSettledSvgBaseline();
-  settleTermPageAfterFontScramble(layout, textEl?.getBoundingClientRect().left);
+  freezeTermPageSiblingLayout();
+  applyFocusTermPageLayout();
+  refreshTermPageSiblingCensorBars();
+
+  const settledZ =
+    (textEl && getSecoloTitleScreenZ(getFocusRayGroup(), textEl)) ??
+    textEl?.getBoundingClientRect().left;
+  if (settledZ != null) termPageScreenZ = settledZ;
+
+  termPageCensoredPushProgress = 1;
+  settleTermPageAfterFontScramble(layout, settledZ);
+  termPageCensoredPushTarget = null;
 
   termSimilarLabelScrambleStarted = true;
   if (termSimilarLabelEl) {
@@ -3026,76 +3386,214 @@ function instantSettleSelectedTermAfterCut(layout) {
   updateTermPageSimilarLabel(layout);
 }
 
+function updateSameGroupTitleRowSelection(selectedIndex) {
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup) return;
+  rayGroup.querySelectorAll(".sun-term-wrap").forEach((wrap) => {
+    const termIndex = Number.parseInt(wrap.dataset.termIndex ?? "", 10);
+    const isSelected = termIndex === selectedIndex;
+    wrap.classList.toggle("is-selected", isSelected);
+    if (!isSelected) {
+      wrap.classList.remove("is-display-font");
+      const textEl = wrap.querySelector(".sun-term");
+      if (textEl) clearSelectedTermDisplayFont(textEl);
+    }
+    wrap.removeAttribute("transform");
+  });
+}
+
+function refreshSameGroupTermPageContent(layout, term) {
+  if (!termPageEl || !termDefinitionEl || !term) return;
+  if (isTermPageScrollBgMode()) {
+    updateTermMeta(layout);
+    updateTermPageBleed(layout);
+    updateTermScrollBg(layout);
+    layoutTermPageScrollContent(layout, term, true, {
+      skipAsyncReveal: termPageInlineTermSwitch,
+    });
+    applyViewportTermScrollBounds(layout.viewportHeight);
+    return;
+  }
+  updateTermPage(layout);
+}
+
 function applyInstantSameGroupTermSwitch(newTermIndex) {
   if (!focusState || focusState.phase !== "locked") return;
 
   const group = groups[focusState.activeIndex];
-  const termCount = group.terms.length;
   if (focusState.clickedIndex === newTermIndex) return;
 
   const layout = currentLayout;
   if (!layout) return;
 
-  termPageHeaderRowRestTop = null;
-
-  if (isViewportTermScrollable() && viewport) {
-    cancelTermScrollReset();
-    viewport.scrollTop = 0;
-    termPagePrevScrollTop = 0;
-    termPageCensoredScrollShiftY = 0;
-    svgEl?.style.removeProperty("transform");
-    getTermScrollLiftGroup()?.removeAttribute("transform");
-    syncTermScrollBgPosition(layout);
-    syncTermHeaderPinState(layout);
-  }
+  const preserveScrollTop = viewport?.scrollTop ?? 0;
+  const resumeWithFontScramble =
+    !termPageSelectedFontSettled ||
+    termPageLayoutAnimActive ||
+    viewport?.classList.contains("is-term-font-scrambling");
+  const preservedBarBottoms = captureCensoredBarScreenBottoms(getFocusRayGroup());
+  const oldText = applyTypographyRules(group.terms[focusState.clickedIndex]?.name ?? "");
 
   clearSameObjectMentionHover();
   armSameObjectHoverReenterGate();
+  if (group.terms.length > 1) {
+    holdSiblingTermCensors();
+  }
   disableTermEnterSiblingCensor();
   clearMediaCensorPlaceholder();
 
   termPageFontScrambleToken++;
   clearTermFontScrambleAnimation();
+  termPageRevealToken++;
   clearTermPageSiblingFreeze();
+  clearTermPageCensoredWrapState();
+  resetTermPageCensoredRowTransforms();
   termPageSelectedFontSettled = false;
   termPageCensoredPushTarget = null;
   termPageCensoredPushProgress = 0;
+  termPageSiblingBaselineRampStartMs = null;
+  termPageSiblingBaselineRampDurationMs = 0;
   termPageScreenZ = null;
+  termSimilarLabelScrambleStarted = false;
+  termSimilarLabelRestTop = null;
+  termPageSimilarLabelAnchorStale = true;
 
   focusState.switchTargetIndex = undefined;
   focusState.switchCarouselSteps = undefined;
   focusState.switchFromSlots = undefined;
   focusState.clickedIndex = newTermIndex;
 
+  updateSameGroupTitleRowSelection(newTermIndex);
   focusState.termWidths = measureTermWidths(focusState.activeIndex);
-  focusState.termEndXs = computeTermEndXs(
-    focusState.termWidths,
-    focusState.termGap,
-    focusState.outwardSign,
-    newTermIndex,
-    termCount
-  );
-  focusState.termStartXs = focusState.termEndXs.slice();
+  termPageSiblingRepackedForSwitch = group.terms.length > 1;
+  repackTermPageSiblingsForSwitch(newTermIndex);
 
-  render(layout);
-  instantSettleSelectedTermAfterCut(layout);
+  const term = group.terms[newTermIndex];
+  const newText = applyTypographyRules(term.name);
+  lastTermPageRenderedId = term.id;
+  refreshSameGroupTermPageContent(layout, term);
 
-  if (group.terms.length > 1) {
+  const afterSwitch = () => {
+    if (group.terms.length > 1) {
+      holdSiblingTermCensors();
+    }
+
+    if (viewport && Math.abs(viewport.scrollTop - preserveScrollTop) > 0.5) {
+      viewport.scrollTop = preserveScrollTop;
+      termPagePrevScrollTop = preserveScrollTop;
+    }
+
+    updateTermPageBleed(layout);
+    applyViewportTermScrollBounds(layout.viewportHeight);
+    syncTermHeaderPinState(layout);
+    resyncTermPageScrollHeaderAfterSwitch(layout);
+    bindSameObjectMentionElements();
     holdSiblingTermCensors();
+
+    if (lastPointer.known) {
+      syncSameObjectHoverAtPointer(lastPointer.x, lastPointer.y);
+    }
+  };
+
+  if (resumeWithFontScramble) {
+    runSelectedTermFontScramble(afterSwitch);
+    return;
   }
 
-  updateTermPageBleed(layout);
-  applyViewportTermScrollBounds(layout.viewportHeight);
-  syncTermHeaderPinState(layout);
-  captureTermPageHeaderRowRestTopIfNeeded();
-  bindSameObjectMentionElements();
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const shouldAnimateTextSwitch =
+    !prefersReducedMotion && oldText.trim() && newText.trim() && oldText !== newText;
 
-  if (lastPointer.known) {
-    syncSameObjectHoverAtPointer(lastPointer.x, lastPointer.y);
+  const runInstantSameGroupSettle = () => {
+    termPageInlineTermSwitch = true;
+    try {
+      instantSettleSelectedTermAfterCut(layout);
+      restoreCensoredBarScreenBottoms(getFocusRayGroup(), preservedBarBottoms);
+      afterSwitch();
+    } finally {
+      termPageInlineTermSwitch = false;
+    }
+  };
+
+  if (!shouldAnimateTextSwitch) {
+    runInstantSameGroupSettle();
+    const settleToken = termPageFontScrambleToken;
+    requestAnimationFrame(() => {
+      if (settleToken !== termPageFontScrambleToken) return;
+      if (!focusState || focusState.phase !== "locked" || !currentLayout) return;
+      if (!termPageSelectedFontSettled) return;
+      resyncTermPageScrollHeaderAfterSwitch(currentLayout);
+      syncTermHeaderPinState(currentLayout);
+    });
+    return;
   }
+
+  const scrambleToken = termPageFontScrambleToken;
+  runInstantSameGroupSettle();
+  const overlayShown = showTermFontScrambleOverlay();
+
+  if (!overlayShown) {
+    const settleToken = termPageFontScrambleToken;
+    requestAnimationFrame(() => {
+      if (settleToken !== termPageFontScrambleToken) return;
+      if (!focusState || focusState.phase !== "locked" || !currentLayout) return;
+      if (!termPageSelectedFontSettled) return;
+      resyncTermPageScrollHeaderAfterSwitch(currentLayout);
+      syncTermHeaderPinState(currentLayout);
+    });
+    return;
+  }
+
+  // Freeze the overlay's vertical anchor against the FINAL Secolo content so the
+  // handoff to the real SVG title at the end lands with no baseline jump. The
+  // empty-overlay freeze done by showTermFontScrambleOverlay() skips the mounted
+  // baseline-drift correction in computeTermFontOverlayTop().
+  termFontOverlayFrozenTop = null;
+  mountFontScrambleTerm(termFontOverlayTermEl, newText, "secolo");
+  syncTermFontOverlayPosition();
+  const syncedOverlayTop = parseFloat(termFontOverlayEl.style.top);
+  if (Number.isFinite(syncedOverlayTop)) termFontOverlayFrozenTop = syncedOverlayTop;
+
+  playFontScrambleTextSwitch(termFontOverlayTermEl, {
+    fromText: oldText,
+    toText: newText,
+    font: "secolo",
+    onComplete: () => {
+      if (scrambleToken !== termPageFontScrambleToken) return;
+      clearTermFontScrambleOverlay();
+      // The earlier rAF resync ran while `is-term-font-scrambling` was set, so it
+      // nulled the header rest anchor without being able to recapture it. Now that
+      // the overlay (and scramble class) is cleared and the page is still at scroll
+      // origin, recapture so later scrolling pins the group at the correct spot.
+      if (
+        focusState?.phase === "locked" &&
+        currentLayout &&
+        termPageSelectedFontSettled
+      ) {
+        resyncTermPageScrollHeaderAfterSwitch(currentLayout);
+        syncTermHeaderPinState(currentLayout);
+      }
+    },
+  });
+
+  const settleToken = termPageFontScrambleToken;
+  requestAnimationFrame(() => {
+    if (settleToken !== termPageFontScrambleToken) return;
+    if (!focusState || focusState.phase !== "locked" || !currentLayout) return;
+    if (!termPageSelectedFontSettled) return;
+    resyncTermPageScrollHeaderAfterSwitch(currentLayout);
+    syncTermHeaderPinState(currentLayout);
+  });
 }
 
 function startSameGroupTermSwitch(newTermIndex) {
+  if (viewport && viewport.scrollTop > 0.5) {
+    animateViewportScrollToTop(() => {
+      applyInstantSameGroupTermSwitch(newTermIndex);
+      setNavigatingUI(false);
+    });
+    return;
+  }
   applyInstantSameGroupTermSwitch(newTermIndex);
 }
 
@@ -3201,6 +3699,10 @@ function bindMetaFilterNavigation() {
 }
 
 let pageCensorLayer = null;
+/** Fixed-position media placeholders — above the SVG, sized to visible image slices. */
+let mediaPlaceholderLayer = null;
+/** @type {HTMLElement[]} */
+let mediaCensorFrameEls = [];
 let hoveredSameObjectMention = null;
 let hoveredSameObjectMentionId = null;
 /** Title-row hover only — does not include definition mentions. */
@@ -3233,6 +3735,10 @@ let sameObjectHoverScrollAnchor = { x: 0, y: 0 };
 /** @type {ReturnType<typeof setTimeout> | null} */
 let sameObjectHoverScrollSettleTimer = null;
 let lastTermPageRenderedId = null;
+/** Same-group term switch — skip hide/scroll reset in updateTermPage. */
+let termPageInlineTermSwitch = false;
+/** Siblings were repacked on same-group switch — layout anim moves only the selected term. */
+let termPageSiblingRepackedForSwitch = false;
 let termPageRevealToken = 0;
 /** @type {Set<string>} */
 let termPageScrollRevealedKeys = new Set();
@@ -3255,6 +3761,7 @@ const PAGE_CENSOR_LINE_SELECTORS = [
   ".sun-term-page__definition",
   ".sun-term-page__side-text",
   ".sun-term-page__label-row-text",
+  ".sun-term-page__label-nav-panel-text",
 ];
 
 function ensurePageCensorLayer() {
@@ -3279,7 +3786,17 @@ function getBlockLineHeight(el) {
 /** Tuned on definition (32px / 38px line-height → 33px bar). */
 const DEFINITION_CENSOR_LINE_HEIGHT = 38;
 const DEFINITION_CENSOR_BAR_HEIGHT = 33;
-const DEFINITION_CENSOR_TOP_OFFSET = 2;
+/** Definition body letters drop deeper descenders (sofit ך ף ן ץ + ק) that were
+ *  escaping below the centered bar, so give the definition bar a touch more
+ *  height and bias it slightly downward. */
+const DEFINITION_CENSOR_BAR_EXTRA = 3;
+const DEFINITION_CENSOR_TOP_OFFSET = 3;
+/** מדגיש / מטשטש side body: its FrankRuhl mentions ride lower (deeper descenders
+ *  + underline) than the generic block censor, which sits high (top offset -3)
+ *  and left a sliver of underline showing below the bar. Bias the bar down so it
+ *  reaches the bottom of the line — keeping the default bar height so the gap
+ *  between wrapped lines stays intact. */
+const SIDE_TEXT_CENSOR_TOP_OFFSET = 2;
 /** Tuned on image captions (12px / 16px line-height). */
 const CAPTION_CENSOR_LINE_HEIGHT = 16;
 const CAPTION_CENSOR_BAR_HEIGHT = 14;
@@ -3292,7 +3809,7 @@ const MENTION_CENSOR_HEIGHT_RATIO = 40 / LAYOUT.fontSize;
 const TERM_CENSOR_BAR_HEIGHT = LAYOUT.fontSize * MENTION_CENSOR_HEIGHT_RATIO;
 const TERM_DISPLAY_CENSOR_BAR_HEIGHT = 90;
 const MENTION_CENSOR_WIDTH_PAD = 1;
-const MENTION_CENSOR_TOP_OFFSET = -1;
+const MENTION_CENSOR_TOP_OFFSET = 0;
 /** Extra vertical clearance for carousel gate masks over censored sibling bars. */
 const FOCUS_CAROUSEL_MASK_PAD = 4;
 /** Secolo title row: keep the censor band compact instead of scaling with display size. */
@@ -3302,16 +3819,24 @@ const TERM_DISPLAY_CENSOR_BOTTOM_EXTEND = 4;
 /** Censor draw speed: duration and step count scale with bar width (px). */
 const CENSOR_WRITE_MS_PER_PX = 0.95;
 const CENSOR_WRITE_MIN_S = 0.15;
-const CENSOR_WRITE_MAX_S = 0.95;
+const CENSOR_WRITE_MAX_S = 0.78;
 const CENSOR_WRITE_PX_PER_STEP = 8;
 const CENSOR_WRITE_MIN_STEPS = 6;
 const CENSOR_WRITE_MAX_STEPS = 40;
+/** Sublinear width exponent — wide bars grow slower than linear (keeps short lines similar). */
+const CENSOR_WRITE_WIDTH_POWER = 0.84;
+const CENSOR_WRITE_REF_WIDTH = 360;
 
 function getCensorWriteTiming(widthPx) {
   const width = Math.max(1, widthPx);
+  const refDurationMs =
+    Math.pow(CENSOR_WRITE_REF_WIDTH, 1 - CENSOR_WRITE_WIDTH_POWER) * CENSOR_WRITE_MS_PER_PX;
   const durationS = Math.min(
     CENSOR_WRITE_MAX_S,
-    Math.max(CENSOR_WRITE_MIN_S, (width * CENSOR_WRITE_MS_PER_PX) / 1000)
+    Math.max(
+      CENSOR_WRITE_MIN_S,
+      (refDurationMs * Math.pow(width, CENSOR_WRITE_WIDTH_POWER)) / 1000
+    )
   );
   const steps = Math.min(
     CENSOR_WRITE_MAX_STEPS,
@@ -3338,9 +3863,12 @@ function getCensorBarHeight(el) {
   if (isCaptionCensorElement(el)) {
     return CAPTION_CENSOR_BAR_HEIGHT;
   }
-  return Math.round(
-    lineHeight * (DEFINITION_CENSOR_BAR_HEIGHT / DEFINITION_CENSOR_LINE_HEIGHT)
-  );
+  const base =
+    Math.round(lineHeight * (DEFINITION_CENSOR_BAR_HEIGHT / DEFINITION_CENSOR_LINE_HEIGHT)) + 1;
+  if (isDefinitionCensorElement(el)) {
+    return base + DEFINITION_CENSOR_BAR_EXTRA;
+  }
+  return base;
 }
 
 function getCensorBarLayout(el) {
@@ -3353,7 +3881,7 @@ function getCensorBarLayout(el) {
       interLineGap: 0,
     };
   }
-  const interLineGap = Math.max(lineHeight - barHeight, 2);
+  const interLineGap = Math.max(Math.round(lineHeight) - barHeight, 0);
   return { lineHeight, barHeight, interLineGap };
 }
 
@@ -3361,8 +3889,15 @@ function isDefinitionCensorElement(el) {
   return el?.classList.contains("sun-term-page__definition");
 }
 
+function isSideTextCensorElement(el) {
+  return el?.classList.contains("sun-term-page__side-text");
+}
+
 function isLabelNavCensorElement(el) {
-  return el?.classList.contains("sun-term-page__label-nav-trigger");
+  return (
+    el?.classList.contains("sun-term-page__label-nav-trigger") ||
+    el?.classList.contains("sun-term-page__label-nav-panel-text")
+  );
 }
 
 function getCensorBarTopOffset(el) {
@@ -3371,6 +3906,9 @@ function getCensorBarTopOffset(el) {
   }
   if (isDefinitionCensorElement(el)) {
     return DEFINITION_CENSOR_TOP_OFFSET;
+  }
+  if (isSideTextCensorElement(el)) {
+    return SIDE_TEXT_CENSOR_TOP_OFFSET;
   }
   if (isLabelNavCensorElement(el)) {
     return LABEL_NAV_CENSOR_TOP_OFFSET;
@@ -3436,6 +3974,19 @@ function enforceCensorBandGap(span, prevBottom, interLineGap) {
   return span;
 }
 
+/**
+ * Place a line's censor bar on a uniform grid derived from the first line.
+ * Snapping each bar to firstBarTop + round(offset / pitch) * pitch keeps the
+ * spacing between consecutive bars identical, instead of inheriting the
+ * sub-pixel jitter in each line's measured top (which made gaps look uneven —
+ * sometimes touching, sometimes spaced).
+ */
+function getUniformCensorLineSpan(group, firstAnchorTop, baseBarTop, pitch, barHeight) {
+  const lineIndex = pitch > 0 ? Math.max(0, Math.round((group.anchorTop - firstAnchorTop) / pitch)) : 0;
+  const top = Math.round(baseBarTop + lineIndex * pitch);
+  return { top, bottom: top + barHeight, height: barHeight };
+}
+
 function isTextNodeRevealedForTerm(node, termId) {
   if (!termId || !node) return false;
   const mention = node.parentElement?.closest?.(".sun-def-mention--same-object");
@@ -3484,12 +4035,15 @@ function collectTextLineBands(element, excludeTermId) {
   const bands = [];
   let prevBottom = null;
 
+  const pitch = Math.round(lineHeight);
+  const firstAnchorTop = groups.length ? groups[0].anchorTop : 0;
+  const baseBarTop = getCensorLineSpan(firstAnchorTop, lineHeight, barHeight, topOffset).top;
+
   for (const group of groups) {
     if (group.minLeft === Infinity || group.maxRight === -Infinity) continue;
 
-    const lineTop = group.anchorTop;
     const span = enforceCensorBandGap(
-      getCensorLineSpan(lineTop, lineHeight, barHeight, topOffset),
+      getUniformCensorLineSpan(group, firstAnchorTop, baseBarTop, pitch, barHeight),
       prevBottom,
       interLineGap
     );
@@ -3811,13 +4365,19 @@ function collectElementCensorBands(el) {
   const bands = [];
   let prevBottom = null;
 
+  const pitch = Math.round(lineHeight);
+  const firstAnchorTop = groups.length ? groups[0].anchorTop : 0;
+  const baseBarTop = useCaptionLayout
+    ? 0
+    : getCensorLineSpan(firstAnchorTop, lineHeight, barHeight, topOffset).top;
+
   for (const group of groups) {
     if (group.minLeft === Infinity || group.maxRight === -Infinity) continue;
 
     const span = enforceCensorBandGap(
       useCaptionLayout
         ? getCaptionCensorLineSpan(group, topOffset)
-        : getCensorLineSpan(group.anchorTop, lineHeight, barHeight, topOffset),
+        : getUniformCensorLineSpan(group, firstAnchorTop, baseBarTop, pitch, barHeight),
       prevBottom,
       interLineGap
     );
@@ -3834,6 +4394,34 @@ function collectElementCensorBands(el) {
   return bands;
 }
 
+/**
+ * Client rects of a mention's own text, ignoring the letter-shuffle overlay.
+ * The overlay is an absolutely positioned, white-space:nowrap copy of the term
+ * that the shuffle animation lays over the text; selecting the whole element
+ * would mix in its (single-line) geometry and punch spurious holes in the
+ * surrounding censor bands. We measure only the element's own text/content.
+ */
+function collectMentionCutoutRects(el, range) {
+  const rects = [];
+  for (const node of el.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      if (!node.textContent) continue;
+      range.selectNodeContents(node);
+    } else if (
+      node.nodeType === Node.ELEMENT_NODE &&
+      !node.classList.contains("letter-shuffle-inline-overlay")
+    ) {
+      range.selectNode(node);
+    } else {
+      continue;
+    }
+    for (const rect of range.getClientRects()) {
+      if (rect.width > 0 && rect.height > 0) rects.push(rect);
+    }
+  }
+  return rects;
+}
+
 function getRevealedMentionCutouts() {
   const viewportRect = viewport.getBoundingClientRect();
   const scrollTop = viewport.scrollTop;
@@ -3841,9 +4429,7 @@ function getRevealedMentionCutouts() {
   const range = document.createRange();
 
   for (const el of viewport.querySelectorAll(".sun-def-mention--same-object.is-mention-revealed")) {
-    range.selectNodeContents(el);
-    for (const rect of range.getClientRects()) {
-      if (rect.width <= 0 || rect.height <= 0) continue;
+    for (const rect of collectMentionCutoutRects(el, range)) {
       cutouts.push({
         left: rect.left - viewportRect.left,
         right: rect.right - viewportRect.left,
@@ -3865,9 +4451,7 @@ function getTermMentionCutouts(termId) {
   const selector = `.sun-def-mention--same-object[data-term-id="${CSS.escape(termId)}"]`;
 
   for (const el of viewport.querySelectorAll(selector)) {
-    range.selectNodeContents(el);
-    for (const rect of range.getClientRects()) {
-      if (rect.width <= 0 || rect.height <= 0) continue;
+    for (const rect of collectMentionCutoutRects(el, range)) {
       cutouts.push({
         left: rect.left - viewportRect.left,
         right: rect.right - viewportRect.left,
@@ -3886,7 +4470,17 @@ function splitBandAroundCutouts(band, cutouts) {
   const bandBottom = band.top + band.height;
 
   for (const cutout of cutouts) {
-    if (bandBottom <= cutout.top || bandTop >= cutout.bottom) continue;
+    // Require a real vertical overlap, not just edge-touching. A revealed
+    // mention's cutout sits flush against the band on the line below it; with
+    // sub-pixel rounding that edge-touch would otherwise punch a hole directly
+    // beneath the revealed word, leaking the neighbouring (censored) line.
+    const overlap =
+      Math.min(bandBottom, cutout.bottom) - Math.max(bandTop, cutout.top);
+    const minOverlap = Math.max(
+      2,
+      Math.min(band.height, cutout.bottom - cutout.top) * 0.3
+    );
+    if (overlap < minOverlap) continue;
 
     const pad = 2;
     const cutLeft = cutout.left - pad;
@@ -3972,14 +4566,17 @@ function clipPageCensorBandsBelowHeaderBackdrop(band) {
 }
 
 function appendPageCensorLine(layer, band, { instant = false } = {}) {
+  // Horizontal overlap only: it hides sub-pixel seams between segments split
+  // around cutouts. Applying it vertically would eat the inter-line gap and
+  // make stacked bars touch, so the height/top are left untouched.
   const overlap = 1;
   const width = band.width + overlap * 2;
   const line = document.createElement("div");
   line.className = instant ? "sun-page-censor-line is-instant" : "sun-page-censor-line";
-  line.style.top = `${band.top - overlap}px`;
+  line.style.top = `${band.top}px`;
   line.style.left = `${band.left - overlap}px`;
   line.style.width = `${width}px`;
-  line.style.height = `${band.height + overlap * 2}px`;
+  line.style.height = `${band.height}px`;
   if (!instant) applyCensorWriteTiming(line, width);
   layer.appendChild(line);
 }
@@ -4090,6 +4687,213 @@ function disableTermEnterSiblingCensor() {
   }
 }
 
+function getCensorHeaderBottomScreenY(viewportHeight = getLiveViewportHeight()) {
+  const backdropBottom = getPageCensorHeaderBackdropBottomScreenY();
+  if (backdropBottom != null) return backdropBottom;
+  const viewportRect = viewport?.getBoundingClientRect();
+  if (!viewportRect) return null;
+  return viewportRect.top + getTermFixedHeaderBottomPx(viewportHeight);
+}
+
+function getTermPageImageHeightPx(el, figure = el?.closest?.(".sun-term-page__figure")) {
+  if (!el) return 0;
+
+  const fromVar = figure
+    ? parseFloat(figure.style.getPropertyValue("--term-page-image-censor-height"))
+    : NaN;
+  if (Number.isFinite(fromVar) && fromVar > 0) return fromVar;
+
+  const fromStyle = parseFloat(el.style.height);
+  if (Number.isFinite(fromStyle) && fromStyle > 0) return fromStyle;
+
+  const computed = parseFloat(getComputedStyle(el).height);
+  if (Number.isFinite(computed) && computed > 0) return computed;
+
+  return el.getBoundingClientRect().height || el.offsetHeight || 0;
+}
+
+/** Intersect a term-page image box with viewport + pinned header. */
+function getElementVisibleImageScreenSpan(el, viewportHeight = getLiveViewportHeight()) {
+  if (!viewport || !el || el.hidden) return null;
+  if (el.closest("[hidden]")) return null;
+  if (el instanceof HTMLImageElement && !el.classList.contains("is-loaded")) return null;
+
+  const figure = el.closest(".sun-term-page__figure");
+  const viewportRect = viewport.getBoundingClientRect();
+  const headerBottom = getCensorHeaderBottomScreenY(viewportHeight);
+  const viewportBottom = viewportRect.top + viewportHeight;
+
+  let left;
+  let width;
+  let screenTop;
+  let screenBottom;
+
+  if (figure) {
+    const figureRect = figure.getBoundingClientRect();
+    if (figureRect.width < 1) return null;
+
+    const imageHeight = getTermPageImageHeightPx(el, figure);
+    if (imageHeight < 1) return null;
+
+    left = figureRect.left;
+    width = figureRect.width;
+    screenTop = figureRect.top;
+    screenBottom = figureRect.top + imageHeight;
+  } else {
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    left = rect.left;
+    width = rect.width;
+    screenTop = rect.top;
+    screenBottom = rect.bottom;
+  }
+
+  screenTop = Math.max(
+    screenTop,
+    viewportRect.top,
+    headerBottom ?? viewportRect.top
+  );
+  screenBottom = Math.min(screenBottom, viewportBottom);
+  const height = screenBottom - screenTop;
+  if (height < 1) return null;
+
+  return {
+    top: screenTop,
+    left,
+    width,
+    height,
+  };
+}
+
+/** Visible bleed slice in screen px — matches what is on screen, not full backdrop. */
+function getTermPageMainImageVisibleScreenRect(
+  viewportHeight = getLiveViewportHeight(),
+  scrollTop = viewport?.scrollTop ?? 0
+) {
+  if (!viewport || !bleedBackdropEl || bleedBackdropEl.hidden) return null;
+  if (!bleedBackdropEl.classList.contains("is-visible")) return null;
+  if (!bleedBackdropEl.classList.contains("is-term-page")) return null;
+  if (!isTermPageBleedImageInFrame(viewportHeight, scrollTop)) return null;
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const bleedRect = bleedBackdropEl.getBoundingClientRect();
+  if (bleedRect.width < 1 || bleedRect.height < 1) return null;
+
+  const clipPx = getTermPageBleedImageClipPx(viewportHeight);
+  let screenTop = bleedRect.top;
+  let screenBottom = bleedRect.bottom - clipPx;
+
+  if (isTermPageScrollBgMode() && isViewportTermScrollable()) {
+    screenBottom = Math.min(
+      screenBottom,
+      getTermScrollBgOverlapTopPx(viewportHeight, scrollTop)
+    );
+  }
+
+  screenTop = Math.max(screenTop, viewportRect.top);
+  screenBottom = Math.min(screenBottom, viewportRect.top + viewportHeight);
+
+  const height = screenBottom - screenTop;
+  if (height < 1) return null;
+
+  return {
+    top: screenTop,
+    left: bleedRect.left,
+    width: bleedRect.width,
+    height,
+  };
+}
+
+/** Every on-screen image slice in screen px. */
+function collectTermPageVisibleImageScreenRects(
+  viewportHeight = getLiveViewportHeight(),
+  scrollTop = viewport?.scrollTop ?? 0
+) {
+  const rects = [];
+  const main = getTermPageMainImageVisibleScreenRect(viewportHeight, scrollTop);
+  if (main) rects.push(main);
+  for (const imageEl of viewport?.querySelectorAll(".sun-term-page__image") ?? []) {
+    if (
+      imageEl instanceof HTMLImageElement &&
+      !imageEl.classList.contains("is-loaded")
+    ) {
+      continue;
+    }
+    const span = getElementVisibleImageScreenSpan(imageEl, viewportHeight);
+    if (span) rects.push(span);
+  }
+  return rects;
+}
+
+function ensureMediaPlaceholderLayer() {
+  if (!mediaPlaceholderLayer && viewport) {
+    mediaPlaceholderLayer = document.createElement("div");
+    mediaPlaceholderLayer.id = "sun-media-placeholder-layer";
+    mediaPlaceholderLayer.className = "sun-media-placeholder-layer";
+    mediaPlaceholderLayer.setAttribute("aria-hidden", "true");
+    mediaPlaceholderLayer.hidden = true;
+    viewport.appendChild(mediaPlaceholderLayer);
+  }
+  return mediaPlaceholderLayer;
+}
+
+function applyVisibleImageScreenRect(el, screenRect) {
+  el.hidden = false;
+  el.style.position = "fixed";
+  el.style.top = `${screenRect.top}px`;
+  el.style.left = `${screenRect.left}px`;
+  el.style.width = `${screenRect.width}px`;
+  el.style.height = `${screenRect.height}px`;
+}
+
+function ensureMediaCensorFrameEl(index) {
+  const layer = ensureMediaPlaceholderLayer();
+  if (!layer) return null;
+  while (mediaCensorFrameEls.length <= index) {
+    const el = document.createElement("div");
+    el.className = "sun-page-censor-media-frame";
+    el.setAttribute("aria-hidden", "true");
+    el.hidden = true;
+    layer.appendChild(el);
+    mediaCensorFrameEls.push(el);
+  }
+  return mediaCensorFrameEls[index];
+}
+
+function clearMediaCensorFrames() {
+  for (const el of mediaCensorFrameEls) el.hidden = true;
+  if (mediaPlaceholderLayer) mediaPlaceholderLayer.hidden = true;
+}
+
+function syncMediaCensorFrame(layout = currentLayout) {
+  if (!shouldApplyMediaCensorPlaceholder()) {
+    clearMediaCensorFrames();
+    return;
+  }
+
+  const layer = ensureMediaPlaceholderLayer();
+  if (!layer) return;
+
+  const viewportHeight = layout?.viewportHeight ?? getLiveViewportHeight();
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const screenRects = collectTermPageVisibleImageScreenRects(viewportHeight, scrollTop);
+  if (!screenRects.length) {
+    clearMediaCensorFrames();
+    return;
+  }
+
+  layer.hidden = false;
+  for (let i = 0; i < screenRects.length; i++) {
+    const el = ensureMediaCensorFrameEl(i);
+    if (!el) continue;
+    applyVisibleImageScreenRect(el, screenRects[i]);
+  }
+
+  for (let i = screenRects.length; i < mediaCensorFrameEls.length; i++) {
+    mediaCensorFrameEls[i].hidden = true;
+  }
+}
+
 function shouldApplyMediaCensorPlaceholder() {
   return Boolean(
     hoveredSameObjectMentionId ||
@@ -4103,11 +4907,13 @@ function applyMediaCensorPlaceholder() {
 
 function clearMediaCensorPlaceholder() {
   bleedBackdropEl?.classList.remove("is-censor-placeholder");
+  clearMediaCensorFrames();
 }
 
 function syncMediaCensorPlaceholder() {
   if (shouldApplyMediaCensorPlaceholder()) {
     applyMediaCensorPlaceholder();
+    syncMediaCensorFrame();
   } else {
     clearMediaCensorPlaceholder();
   }
@@ -4195,6 +5001,10 @@ function setSameObjectTermHover(termId, sourceEl = null) {
   }
   syncMediaCensorPlaceholder();
   rebuildPageCensorOverlays();
+  requestAnimationFrame(() => {
+    syncMediaCensorFrame();
+    rebuildPageCensorOverlays();
+  });
 }
 
 function setSameObjectMentionHover(mention) {
@@ -4243,6 +5053,7 @@ function bindSameObjectMentionHover() {
       if (focusState?.phase !== "locked" || isTermNavigating()) return;
       markSameObjectHoverScrollActivity();
       syncSameObjectHoverDuringScroll();
+      if (shouldApplyMediaCensorPlaceholder()) syncMediaCensorFrame();
     },
     { passive: true }
   );
@@ -5024,6 +5835,106 @@ function resolveTermImageUrl(url) {
   }
 }
 
+/** @type {string[]} */
+let termImagePreloadAllUrls = [];
+let termImagePreloadBoostIndex = -1;
+let termImagePreloadBoostTimer = 0;
+
+function getTermImagePreloadConcurrency() {
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const type = conn?.effectiveType;
+  if (type === "slow-2g" || type === "2g") return 4;
+  if (type === "3g") return 6;
+  return 10;
+}
+
+function groupRingDistance(groupIndex, centerIndex, count) {
+  const diff = Math.abs(groupIndex - centerIndex);
+  return Math.min(diff, count - diff);
+}
+
+function collectGroupTermImageUrls(groupIndex) {
+  const group = groups[groupIndex];
+  if (!group?.terms?.length) return [];
+  const urls = [];
+  const seen = new Set();
+  for (const term of group.terms) {
+    for (const image of termImagesByName.get(term.name) || []) {
+      if (!image?.url) continue;
+      const resolved = resolveTermImageUrl(image.url);
+      if (!resolved || seen.has(resolved)) continue;
+      seen.add(resolved);
+      urls.push(resolved);
+    }
+  }
+  return urls;
+}
+
+function collectTermImageUrlsForTerm(termName) {
+  if (!termName) return [];
+  return (termImagesByName.get(termName) || [])
+    .map((image) => (image?.url ? resolveTermImageUrl(image.url) : ""))
+    .filter(Boolean);
+}
+
+function buildPriorityTermImageUrlOrder(centerGroupIndex) {
+  const count = groups.length;
+  if (!count || !termImagePreloadAllUrls.length) return [...termImagePreloadAllUrls];
+
+  const tiers = new Map();
+  for (let groupIndex = 0; groupIndex < count; groupIndex += 1) {
+    const dist = groupRingDistance(groupIndex, centerGroupIndex, count);
+    const urls = collectGroupTermImageUrls(groupIndex);
+    if (!urls.length) continue;
+    if (!tiers.has(dist)) tiers.set(dist, []);
+    tiers.get(dist).push(...urls);
+  }
+
+  const ordered = [];
+  const seen = new Set();
+  const maxDist = Math.floor(count / 2);
+  for (let dist = 0; dist <= maxDist; dist += 1) {
+    for (const url of tiers.get(dist) || []) {
+      if (seen.has(url)) continue;
+      seen.add(url);
+      ordered.push(url);
+    }
+  }
+  for (const url of termImagePreloadAllUrls) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    ordered.push(url);
+  }
+  return ordered;
+}
+
+function scheduleTermImagePreloadBoost(centerGroupIndex = getDisplayActiveIndex()) {
+  if (!termImagePreloadAllUrls.length) return;
+  window.clearTimeout(termImagePreloadBoostTimer);
+  termImagePreloadBoostTimer = window.setTimeout(() => {
+    termImagePreloadBoostTimer = 0;
+    if (centerGroupIndex === termImagePreloadBoostIndex) return;
+    termImagePreloadBoostIndex = centerGroupIndex;
+    boostTermImagePreloadPriority(buildPriorityTermImageUrlOrder(centerGroupIndex));
+  }, 100);
+}
+
+function boostTermImagePreloadForTerm(termName) {
+  const urls = collectTermImageUrlsForTerm(termName);
+  if (urls.length) boostTermImagePreloadPriority(urls);
+}
+
+function startBackgroundTermImagePreload(urls, centerGroupIndex = 0) {
+  if (!urls.length) return;
+  termImagePreloadAllUrls = urls;
+  termImagePreloadBoostIndex = centerGroupIndex;
+  enqueueTermImagePreload(buildPriorityTermImageUrlOrder(centerGroupIndex), {
+    decode: false,
+    concurrency: getTermImagePreloadConcurrency(),
+    retries: 1,
+  });
+}
+
 function termImageSrcMatches(imgEl, url) {
   if (!(imgEl instanceof HTMLImageElement) || !url) return false;
   const resolved = resolveTermImageUrl(url);
@@ -5053,6 +5964,10 @@ function assignPreloadedTermImage(img, url) {
     } catch {
       // decoded bitmap may still be usable
     }
+    if (shouldApplyMediaCensorPlaceholder()) {
+      syncMediaCensorFrame();
+      rebuildPageCensorOverlays();
+    }
   };
 
   if (getPreloadedTermImage(src)) {
@@ -5063,6 +5978,7 @@ function assignPreloadedTermImage(img, url) {
   }
 
   if (img.src === src && img.complete && img.naturalWidth > 0) {
+    registerPreloadedTermImage(src, img);
     img.classList.add("is-loaded");
     img.removeAttribute("data-pending-src");
     return finish();
@@ -5084,6 +6000,9 @@ function assignPreloadedTermImage(img, url) {
     const apply = async () => {
       if (termImageLoadToken.get(img) !== token) return;
       img.removeAttribute("data-pending-src");
+      if (loader.naturalWidth > 0) {
+        registerPreloadedTermImage(src, loader);
+      }
       img.src = src;
       img.classList.add("is-loaded");
       await finish();
@@ -5113,19 +6032,23 @@ function collectTermPageScrollRevealTargets(term) {
   /** @type {{ key: string, el: Element, text: string, postApply?: () => void }[]} */
   const targets = [];
   let index = 0;
-  const push = (el, text, postApply) => {
+  const push = (el, text, postApply, html) => {
     const trimmed = text?.trim() || "";
     if (!el || !trimmed) return;
     targets.push({
       key: `scroll-reveal-${index++}`,
       el,
       text: applyTypographyRules(trimmed),
+      html,
       postApply,
     });
   };
 
-  push(termDefinitionEl, term.definition, () =>
-    setAnnotatedTermText(termDefinitionEl, term.definition, term)
+  push(
+    termDefinitionEl,
+    term.definition,
+    () => setAnnotatedTermText(termDefinitionEl, term.definition, term),
+    renderAnnotatedTermText(term.definition, term)
   );
 
   const metaRows = [
@@ -5144,11 +6067,17 @@ function collectTermPageScrollRevealTargets(term) {
     );
   });
 
-  push(termEmphasizesTextEl, term.emphasizes, () =>
-    setAnnotatedTermText(termEmphasizesTextEl, term.emphasizes, term)
+  push(
+    termEmphasizesTextEl,
+    term.emphasizes,
+    () => setAnnotatedTermText(termEmphasizesTextEl, term.emphasizes, term),
+    renderAnnotatedTermText(term.emphasizes, term)
   );
-  push(termObscuresTextEl, term.obscures, () =>
-    setAnnotatedTermText(termObscuresTextEl, term.obscures, term)
+  push(
+    termObscuresTextEl,
+    term.obscures,
+    () => setAnnotatedTermText(termObscuresTextEl, term.obscures, term),
+    renderAnnotatedTermText(term.obscures, term)
   );
 
   termImagesEl?.querySelectorAll(".sun-term-page__caption").forEach((captionEl, captionIndex) => {
@@ -5231,13 +6160,18 @@ function syncTermPageScrollReveal(layout = currentLayout) {
     if (!revealAll && !isTermPageScrollBlockVisible(target.el, viewportHeight)) continue;
 
     termPageScrollRevealedKeys.add(target.key);
-    playLightTypewriterScrambleTo(target.el, target.text, () => {
+    const done = () => {
       target.postApply?.();
       bindSameObjectMentionElements();
       if (hoveredSameObjectMentionId && !isTermNavigating()) {
         rebuildPageCensorOverlays();
       }
-    });
+    };
+    if (target.html) {
+      playAnnotatedTypewriterScrambleTo(target.el, target.html, done);
+    } else {
+      playLightTypewriterScrambleTo(target.el, target.text, done);
+    }
   }
 }
 
@@ -5252,6 +6186,14 @@ function revealTermPageContent(termId, revealToken) {
   if (currentLayout) {
     applyViewportTermScrollBounds(currentLayout.viewportHeight);
     syncTermHeaderPinState(currentLayout);
+    if (isTermPageScrollBgMode()) {
+      applyFocusRayScrollAnchor(currentLayout);
+      applyTermPageScrollLiftTransform();
+      termPageDeferCensoredWrapRepack = true;
+      applyTermPageCensoredBaselineAlign(getFocusRayGroup(), { refreshBars: false });
+      termPageDeferCensoredWrapRepack = false;
+      updateTermPageSimilarLabel(currentLayout);
+    }
   }
   syncTermPageScrollReveal(currentLayout);
   if (lastPointer.known) {
@@ -5368,12 +6310,14 @@ function playTermLabelPanelTypewriter(panelTextEl, content, term) {
     panelTextEl.style.minHeight = `${fullHeight}px`;
   }
 
-  playLightTypewriterScrambleTo(panelTextEl, content, () => {
+  playAnnotatedTypewriterScrambleTo(panelTextEl, renderAnnotatedTermText(content, term), () => {
     panelTextEl.style.removeProperty("min-height");
     setAnnotatedTermText(panelTextEl, content, term);
+    bindSameObjectMentionElements();
     if (termPageScrollLayout.labelNavStacked) {
       refreshTermPageLabelNavLayout();
     }
+    syncActivePageCensorOverlays();
   });
 }
 
@@ -5616,6 +6560,8 @@ function bindTermPageLabelNav() {
         .forEach((panelTextEl) => clearTermLabelPanelTextAnimation(panelTextEl));
     }
     refreshTermPageLabelNavLayout();
+    syncActivePageCensorOverlays();
+    requestAnimationFrame(() => syncActivePageCensorOverlays());
   });
 }
 
@@ -7275,6 +8221,12 @@ function getPixelGlitchOpenProgress(t, hold = LAYOUT.titleRowImageSwapGlitchHold
   return revealT * (2 - revealT);
 }
 
+/** Smooth ease-out across the full duration — no glitch hold at max pixel size. */
+function getTermPageBleedRevealOpenProgress(t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  return clamped * (2 - clamped);
+}
+
 function startActiveRowImageGlitch(imageKey) {
   if (!imageKey) return;
   activeRowImageGlitch = { key: imageKey, start: performance.now() };
@@ -7425,11 +8377,13 @@ function runBleedBackdropPixelationAnimation() {
   runBleedBackdropPixelGlitchAnimation();
 }
 
-function runBleedBackdropPixelGlitchAnimation() {
+function runBleedBackdropPixelGlitchAnimation(options = {}) {
+  const durationMs = options.durationMs ?? LAYOUT.titleRowImageSwapTransitionMs;
+  const progressFn = options.progressFn ?? getPixelGlitchOpenProgress;
+  const maxFactor = options.maxFactor ?? LAYOUT.titleRowImageSwapPixelMaxFactor;
   stopBleedPixelAnimation();
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const duration = reducedMotion ? 0 : LAYOUT.titleRowImageSwapTransitionMs;
-  const maxFactor = LAYOUT.titleRowImageSwapPixelMaxFactor;
+  const duration = reducedMotion ? 0 : durationMs;
 
   if (duration <= 0) {
     clearBleedBackdropPixelation();
@@ -7440,7 +8394,7 @@ function runBleedBackdropPixelGlitchAnimation() {
   const start = performance.now();
   function frame(now) {
     const t = Math.min(1, (now - start) / duration);
-    const openProgress = getPixelGlitchOpenProgress(t);
+    const openProgress = progressFn(t);
     applyBleedBackdropPixelation(openProgress, { maxFactor });
     if (t < 1) {
       bleedPixelAnimFrame = requestAnimationFrame(frame);
@@ -7622,6 +8576,9 @@ function showBleedBackdrop(url, shouldAnimate, options = {}) {
   if (!bleedBackdropEl || !bleedBackdropImgEl || !url) return;
 
   const mode = options.mode ?? (hoveredTitleRowTermId ? "hover" : "idle");
+  if (mode !== "termPage") {
+    applyBleedObjectPositionForUrl(url);
+  }
   const seamlessTermPage =
     mode === "termPage" &&
     isBleedBackdropLoaded() &&
@@ -7690,7 +8647,15 @@ function showBleedBackdrop(url, shouldAnimate, options = {}) {
     }
 
     if (shouldAnimate) {
-      runBleedBackdropPixelGlitchAnimation();
+      if (mode === "termPage") {
+        runBleedBackdropPixelGlitchAnimation({
+          durationMs: LAYOUT.termPageBleedRevealTransitionMs,
+          progressFn: getTermPageBleedRevealOpenProgress,
+          maxFactor: LAYOUT.titleRowInlinePixelMaxFactor,
+        });
+      } else {
+        runBleedBackdropPixelGlitchAnimation();
+      }
       if (isImageSwap) {
         markBleedBackdropVisible();
       } else {
@@ -7932,6 +8897,8 @@ function setTitleRowTermHover(termId) {
   titleRowHoverMode = null;
   clearTitleRowHoverImage();
   titleRowHoverSessionId += 1;
+  const term = findTermById(termId);
+  if (term?.name) boostTermImagePreloadForTerm(term.name);
   if (currentLayout) {
     updateTitleRowImage(currentLayout);
     if (!titleRowBleedRevealPending) {
@@ -8347,7 +9314,7 @@ function updateTermPageScrollImages(
   return { imagesHeight, imageBottom };
 }
 
-function layoutTermPageScrollContent(layout, term, termChanged) {
+function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   if (!termPageEl || !termDefinitionEl) return;
 
   const { viewportWidth, viewportHeight } = layout;
@@ -8416,7 +9383,7 @@ function layoutTermPageScrollContent(layout, term, termChanged) {
   termPageEl.classList.add("is-visible");
   termMetaEl?.classList.add("is-visible");
 
-  if (termChanged) {
+  if (termChanged && !options.skipAsyncReveal) {
     const revealToken = ++termPageRevealToken;
     const imageContainers = [termImagesEl, termDetailsImageEl].filter(Boolean);
     Promise.all(imageContainers.map((container) => loadTermPageImages(container))).then(
@@ -8641,6 +9608,12 @@ function clearTermFontScrambleAnimation() {
   termPageCensoredPushTarget = null;
   termPageCensoredPushProgress = 0;
   termPageCensoredPushSecoloStartMs = 0;
+  termPageCensoredFrozenScreenAlign = null;
+  termPageFrozenSecoloBaselineScreenY = null;
+  termPageCensoredPreserveBarsAfterHandoff = false;
+  if (isTermPageFocusVisual()) {
+    resetTermPageCensoredRowTransforms();
+  }
   clearTermFontScrambleOverlay();
 }
 
@@ -8739,7 +9712,7 @@ function applyTermPageCensoredPushFromTarget(
   // Roobert phase — keep censored siblings frozen; push only during Secolo.
   if (t <= 0) {
     termPageScreenZ = null;
-    applyTermPageCensoredRayOffset(0);
+    applyTermPageCensoredRayOffset(0, 0);
     return;
   }
 
@@ -8759,7 +9732,7 @@ function applyTermPageCensoredPushFromTarget(
   termPageScreenZ = clearanceZ;
 
   if (target.initialCensoredMaxX == null) {
-    applyTermPageCensoredRayOffset(0);
+    applyTermPageCensoredRayOffset(0, 0);
     return;
   }
 
@@ -8767,7 +9740,314 @@ function applyTermPageCensoredPushFromTarget(
   const targetRight = clearanceZ - gap;
   const fullDeltaX = targetRight - target.initialCensoredMaxX;
   const screenDeltaX = fullDeltaX * t;
-  applyTermPageCensoredRayOffset(screenDeltaX);
+  applyTermPageCensoredRayOffset(screenDeltaX, 0);
+  if (t >= 0.999) {
+    freezeTermPageCensoredScreenAlign(screenDeltaX, 0);
+  }
+}
+
+function freezeTermPageCensoredScreenAlign(screenDx, screenDy) {
+  termPageCensoredFrozenScreenAlign = {
+    dx: Math.abs(screenDx) < 0.25 ? 0 : screenDx,
+    dy: Math.abs(screenDy) < 0.25 ? 0 : screenDy,
+  };
+}
+
+function applyFrozenTermPageCensoredScreenAlign() {
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup || termPageScreenZ == null) return false;
+
+  if (!termPageCensoredLayoutRef) {
+    captureTermPageCensoredLayoutRef(rayGroup, termPageScreenZ);
+  }
+
+  if (termPageCensoredFrozenScreenAlign) {
+    applyTermPageCensoredRayOffset(
+      termPageCensoredFrozenScreenAlign.dx,
+      termPageCensoredFrozenScreenAlign.dy
+    );
+    return true;
+  }
+
+  const censored = withCensoredWrapTransformsSuspended(rayGroup, () =>
+    getCensoredTermsScreenRight(rayGroup)
+  );
+  if (!censored) return false;
+
+  applyTermPageCensoredBaselineAlign(rayGroup);
+  return true;
+}
+
+function getSecoloTitleBaselineScreenY(rayGroup) {
+  return getSettledSecoloBaselineScreenY(rayGroup);
+}
+
+/** Secolo ink baseline from settled SVG bounds — matches overlay mount math. */
+function getSettledSecoloBaselineScreenY(rayGroup) {
+  const textEl = getSelectedTermTextEl();
+  if (!rayGroup || !textEl) return null;
+  // The title glyphs carry a title-only downward nudge; strip it so the censored
+  // sibling bars keep resting on the shared (un-nudged) baseline.
+  const nudge = getSecoloTitleNudgePx();
+  const glyphBaseline = getRenderedTermBaselineScreenY(rayGroup, textEl);
+  if (glyphBaseline != null) return glyphBaseline - nudge;
+  const bounds = getTermTextScreenBounds(rayGroup, textEl);
+  if (!bounds) return null;
+  return bounds.maxY - getFontScrambleBaselineInset() - nudge;
+}
+
+function shouldUseSvgSecoloBaseline() {
+  return (
+    Boolean(getSelectedTermWrap()?.classList.contains("is-display-font")) &&
+    Boolean(termFontOverlayEl?.hidden)
+  );
+}
+
+/**
+ * True ink baseline (screen Y) of the selected term, derived deterministically
+ * from the ray anchor. While the focus row rises into the term page the term is
+ * drawn with `dominant-baseline:middle`, so its visible baseline sits
+ * `middle→alphabetic` below the y=0 anchor. Computing it via the anchor (instead
+ * of `getStartPositionOfChar`, which is browser-inconsistent for middle text)
+ * lets the sibling censor bars rest on the same line throughout the rise.
+ */
+function getSelectedTermInkBaselineScreenY(rayGroup = getFocusRayGroup()) {
+  const textEl = getSelectedTermTextEl();
+  if (!rayGroup || !textEl) return null;
+  const x = parseFloat(textEl.getAttribute("x"));
+  if (!Number.isFinite(x)) return null;
+  const offset = usesTermPageAlphabeticBaseline()
+    ? 0
+    : getTermMiddleToAlphabeticAnchorOffset(getTermFontSize(textEl));
+  return rayLocalPointToViewport(rayGroup, x, offset)?.y ?? null;
+}
+
+/** Entering a term page: rise in progress, before the font-scramble overlay shows. */
+function isTermPageEnterRisePhase() {
+  return (
+    focusState?.phase === "animating" &&
+    !termPageSelectedFontSettled &&
+    Boolean(termFontOverlayEl?.hidden) &&
+    Boolean(viewport?.classList.contains("is-term-enter-censor"))
+  );
+}
+
+function getLiveSecoloBaselineScreenY(rayGroup) {
+  if (
+    termPageSelectedFontSettled &&
+    termPageFrozenSecoloBaselineScreenY != null &&
+    !termPageSimilarLabelAnchorStale
+  ) {
+    return termPageFrozenSecoloBaselineScreenY;
+  }
+  if (isTermPageEnterRisePhase()) {
+    const ink = getSelectedTermInkBaselineScreenY(rayGroup);
+    if (ink != null) return ink;
+  }
+  if (!shouldUseSvgSecoloBaseline()) {
+    const overlayTerm = termFontOverlayTermEl;
+    if (!termFontOverlayEl?.hidden && overlayTerm) {
+      const overlayBaseline = getMountedTermScreenBaselineY(overlayTerm);
+      // The overlay sits at the nudged title baseline; strip the title-only nudge
+      // so sibling bars stay on the shared line during the scramble.
+      if (overlayBaseline != null) return overlayBaseline - getSecoloTitleNudgePx();
+    }
+  }
+  return getSettledSecoloBaselineScreenY(rayGroup);
+}
+
+/** Screen Y of each sibling censor bar bottom (includes wrap transforms). */
+function captureCensoredBarScreenBottoms(rayGroup = getFocusRayGroup()) {
+  /** @type {Map<Element, number>} */
+  const bottoms = new Map();
+  if (!rayGroup) return bottoms;
+  for (const wrap of rayGroup.querySelectorAll(".sun-term-wrap:not(.is-selected)")) {
+    const censorEl = wrap.querySelector(".sun-term-censor");
+    if (!censorEl) continue;
+    const rect = censorEl.getBoundingClientRect();
+    if (rect.height > 0.5) bottoms.set(wrap, rect.bottom);
+  }
+  return bottoms;
+}
+
+function restoreCensoredBarScreenBottoms(rayGroup, preservedBottoms) {
+  if (!rayGroup || !preservedBottoms?.size) return;
+  for (const [wrap, targetBottom] of preservedBottoms) {
+    const censorEl = wrap.querySelector(".sun-term-censor");
+    const textEl = wrap.querySelector(".sun-term");
+    if (!censorEl || !textEl) continue;
+    const currentBottom = censorEl.getBoundingClientRect().bottom;
+    const screenDelta = targetBottom - currentBottom;
+    if (Math.abs(screenDelta) < 0.25) continue;
+    const x = parseFloat(textEl.getAttribute("x"));
+    if (!Number.isFinite(x)) continue;
+    const anchor = rayLocalPointToViewport(rayGroup, x, 0);
+    if (!anchor) continue;
+    const localNudge = viewportScreenPointDeltaToRayLocalDelta(
+      rayGroup,
+      anchor.x,
+      anchor.y,
+      0,
+      screenDelta
+    ).dy;
+    const barY = parseFloat(censorEl.getAttribute("y"));
+    if (!Number.isFinite(barY)) continue;
+    censorEl.setAttribute("y", barY + localNudge);
+    const textY = parseFloat(textEl.getAttribute("y"));
+    if (Number.isFinite(textY)) {
+      textEl.setAttribute("y", textY + localNudge);
+    }
+  }
+}
+
+function getTermCensorBaselineBarY(
+  textEl,
+  barHeight,
+  rayGroup = getFocusRayGroup(),
+  screenYOverride = null
+) {
+  const screenY =
+    screenYOverride != null
+      ? screenYOverride
+      : getLiveSecoloBaselineScreenY(rayGroup);
+  if (screenY == null || !rayGroup || !textEl) return null;
+  const x = parseFloat(textEl.getAttribute("x"));
+  if (!Number.isFinite(x)) return null;
+  const anchor = rayLocalPointToViewport(rayGroup, x, 0);
+  if (!anchor) return null;
+  const baselineLocalY = viewportScreenPointDeltaToRayLocalDelta(
+    rayGroup,
+    anchor.x,
+    anchor.y,
+    0,
+    screenY - anchor.y
+  ).dy;
+  return baselineLocalY - barHeight;
+}
+
+/** Apply settled SVG Secolo while preserving censored-row screen position from animation. */
+function handoffSettledTermPageCensoredRow() {
+  const rayGroup = getFocusRayGroup();
+  const textEl = getSelectedTermTextEl();
+  const wrap = getSelectedTermWrap();
+  if (!rayGroup || !textEl) return null;
+
+  const preservedBarBottoms = captureCensoredBarScreenBottoms(rayGroup);
+  const preservedFrozenAlign = termPageCensoredFrozenScreenAlign
+    ? { ...termPageCensoredFrozenScreenAlign }
+    : null;
+  const preservedScreenZ = termPageScreenZ;
+  const frozenBaseline = getLiveSecoloBaselineScreenY(rayGroup);
+  if (frozenBaseline != null) {
+    termPageFrozenSecoloBaselineScreenY = frozenBaseline;
+  }
+
+  applySelectedTermDisplayFont(textEl);
+  updateTermHitArea(
+    textEl,
+    wrap?.querySelector(".sun-term-hit"),
+    wrap?.querySelector(".sun-term-censor")
+  );
+  snapOverlayToSettledSvgBaseline();
+
+  const settledZ = getSecoloTitleScreenZ(rayGroup, textEl);
+  if (settledZ == null) return preservedScreenZ;
+
+  termPageScreenZ = settledZ;
+
+  const zDrifted =
+    preservedScreenZ == null || Math.abs(settledZ - preservedScreenZ) >= 0.5;
+
+  if (zDrifted) {
+    termPageCensoredLayoutRef = null;
+    captureTermPageCensoredLayoutRef(rayGroup, settledZ);
+    const screenDeltaX = resolveCensoredAlignScreenDeltaX(rayGroup, null);
+    applyTermPageCensoredRayOffset(screenDeltaX, 0);
+    freezeTermPageCensoredScreenAlign(screenDeltaX, 0);
+  } else if (preservedFrozenAlign) {
+    termPageCensoredFrozenScreenAlign = preservedFrozenAlign;
+    applyFrozenTermPageCensoredScreenAlign();
+  }
+
+  restoreCensoredBarScreenBottoms(rayGroup, preservedBarBottoms);
+  termPageCensoredPreserveBarsAfterHandoff = true;
+  return settledZ;
+}
+
+/** Bottom edge of censored bars — alignment reference before row transforms. */
+function getCensoredRowAlignReferenceScreenY(rayGroup) {
+  if (!rayGroup) return null;
+  return withCensoredWrapTransformsSuspended(rayGroup, () => {
+    let maxBottom = -Infinity;
+    for (const wrap of rayGroup.querySelectorAll(".sun-term-wrap:not(.is-selected)")) {
+      const censorEl = wrap.querySelector(".sun-term-censor");
+      if (!censorEl) continue;
+      const rect = censorEl.getBoundingClientRect();
+      if (rect.height > 0.5) maxBottom = Math.max(maxBottom, rect.bottom);
+    }
+    return Number.isFinite(maxBottom) ? maxBottom : null;
+  });
+}
+
+function resolveCensoredAlignScreenDeltaY() {
+  // Vertical alignment lives in per-sibling censor barY, not wrap transforms.
+  return 0;
+}
+
+function applyTermPageCensoredBaselineAlign(
+  rayGroup = getFocusRayGroup(),
+  { refreshBars = true } = {}
+) {
+  if (!rayGroup || termPageScreenZ == null || !isTermPageFocusVisual()) return;
+
+  if (refreshBars) refreshTermPageSiblingCensorBars();
+
+  const screenDeltaX = resolveCensoredAlignScreenDeltaX(rayGroup, null);
+  const screenDeltaY = resolveCensoredAlignScreenDeltaY(rayGroup);
+  applyTermPageCensoredRayOffset(screenDeltaX, screenDeltaY);
+  freezeTermPageCensoredScreenAlign(screenDeltaX, screenDeltaY);
+}
+
+/** Recompute censored-row alignment after the focus ray anchor or scroll lift changes. */
+function realignTermPageCensoredRowAfterRayAnchor({ refreshBars = false } = {}) {
+  if (
+    !termPageSelectedFontSettled ||
+    termPageScreenZ == null ||
+    !isTermPageFocusVisual() ||
+    viewport?.classList.contains("is-term-font-scrambling")
+  ) {
+    return;
+  }
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup) return;
+  termPageCensoredLayoutRef = null;
+  termPageCensoredFrozenScreenAlign = null;
+  clearTermPageCensoredWrapState();
+  applyTermPageCensoredBaselineAlign(rayGroup, { refreshBars });
+}
+
+function getTermPageSimilarLabelNaturalTopPx(labelHeight) {
+  const rayGroup = getFocusRayGroup();
+  const baselineY = getLiveSecoloBaselineScreenY(rayGroup);
+  if (baselineY == null) return null;
+
+  const barHeight = getTermCensorBarHeight(LAYOUT.fontSize);
+  return baselineY - barHeight - LAYOUT.termPageSimilarLabelGap - labelHeight;
+}
+
+function finalizeTermPageCensoredAlignment(overrideZ) {
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup || !isTermPageFocusVisual()) return;
+
+  termPageCensoredFrozenScreenAlign = null;
+  alignCensoredTermsToSecoloZ(overrideZ);
+
+  const Z = termPageScreenZ;
+  if (Z == null) return;
+
+  termPageDeferCensoredWrapRepack = true;
+  applyTermPageCensoredBaselineAlign(rayGroup);
+  termPageDeferCensoredWrapRepack = false;
 }
 
 function getSelectedTermBaselineScreenPoint() {
@@ -8776,7 +10056,22 @@ function getSelectedTermBaselineScreenPoint() {
   if (!rayGroup || !textEl) return null;
   const x = parseFloat(textEl.getAttribute("x"));
   if (!Number.isFinite(x)) return null;
-  return rayLocalPointToViewport(rayGroup, x, 0);
+  return rayLocalPointToViewport(rayGroup, x, getSecoloTitleNudgePx());
+}
+
+/**
+ * Title-only downward nudge (Secolo glyphs), in ray-local units (≈screen px).
+ * Zero during the rise / Roobert phase; ramps in across the Roobert→Secolo
+ * transition (tracking the Secolo push progress) and holds full once settled.
+ */
+function getSecoloTitleNudgePx() {
+  const full = LAYOUT.termPageSecoloTitleNudgePx || 0;
+  if (!full) return 0;
+  if (termPageSelectedFontSettled) return full;
+  if (isTermFontScrambleSecoloPhase()) {
+    return full * clamp(termPageCensoredPushProgress, 0, 1);
+  }
+  return 0;
 }
 
 /** SVG glyph baseline — can differ by a few px from the y=0 anchor. */
@@ -8797,6 +10092,87 @@ function getRenderedTermBaselineScreenY(rayGroup, textEl) {
 
 function isTermFontScrambleSecoloPhase() {
   return termPageCensoredPushProgress > 0.001;
+}
+
+/**
+ * CSS ascent (box-top -> alphabetic baseline) for a `line-height:1` inline box of
+ * the given font/size, measured directly from the DOM. Canvas font metrics can
+ * disagree with the browser's actual line-box layout by a few px; measuring the
+ * real baseline via an empty `vertical-align:baseline` marker is exact. Cached per
+ * family+size; cleared when web fonts finish loading.
+ * @type {Map<string, number>}
+ */
+const overlayCssAscentCache = new Map();
+
+function measureOverlayCssAscent(fontFamily, fontSizePx, fontWeight, fontVariation) {
+  if (typeof document === "undefined" || !document.body) return null;
+  const key = `${fontFamily}@${Math.round(fontSizePx)}`;
+  const cached = overlayCssAscentCache.get(key);
+  if (cached != null) return cached;
+
+  const probe = document.createElement("span");
+  probe.setAttribute("aria-hidden", "true");
+  probe.style.cssText =
+    "position:fixed;left:-10000px;top:0;visibility:hidden;pointer-events:none;" +
+    "white-space:nowrap;display:inline-block;line-height:1;direction:rtl";
+  probe.style.fontFamily = fontFamily;
+  probe.style.fontSize = `${fontSizePx}px`;
+  if (fontWeight) probe.style.fontWeight = fontWeight;
+  if (fontVariation && fontVariation !== "normal")
+    probe.style.fontVariationSettings = fontVariation;
+  probe.textContent = "AgQjy";
+
+  const marker = document.createElement("span");
+  marker.style.cssText =
+    "display:inline-block;width:0;height:0;vertical-align:baseline";
+  probe.appendChild(marker);
+  document.body.appendChild(probe);
+
+  let ascent = NaN;
+  try {
+    const baseY = marker.getBoundingClientRect().bottom;
+    const topY = probe.getBoundingClientRect().top;
+    ascent = baseY - topY;
+  } catch {
+    ascent = NaN;
+  }
+  probe.remove();
+  if (!Number.isFinite(ascent)) return null;
+  overlayCssAscentCache.set(key, ascent);
+  return ascent;
+}
+
+/**
+ * True rendered alphabetic baseline (screen Y) of the mounted scramble overlay.
+ * Each scramble cell is an `overflow:hidden` inline-block, so its box baseline is
+ * not the glyph baseline — we derive the glyph baseline as cellTop + cssAscent for
+ * the cell's actual font, averaged across cells (which share one baseline).
+ */
+function getOverlayTrueBaselineScreenY(overlayTermEl) {
+  if (!overlayTermEl?.children?.length) return null;
+  let sum = 0;
+  let n = 0;
+  for (const cell of overlayTermEl.children) {
+    const rect = cell.getBoundingClientRect();
+    if (rect.height < 0.5) continue;
+    const cs = getComputedStyle(cell);
+    const fs = parseFloat(cs.fontSize);
+    if (!Number.isFinite(fs)) continue;
+    const ascent = measureOverlayCssAscent(
+      cs.fontFamily,
+      fs,
+      cs.fontWeight,
+      cs.fontVariationSettings
+    );
+    if (ascent == null) continue;
+    sum += rect.top + ascent;
+    n++;
+  }
+  return n ? sum / n : null;
+}
+
+if (typeof document !== "undefined" && document.fonts?.ready) {
+  document.fonts.ready.then(() => overlayCssAscentCache.clear());
 }
 
 function computeTermFontOverlayTop(rayGroup, textEl, overlayTermEl, { secoloInkBlend = 1 } = {}) {
@@ -8859,13 +10235,11 @@ function syncTermFontOverlayPosition({ releaseVerticalLock = false, secoloInkBle
 
   const useFrozenTop =
     termFontOverlayFrozenTop != null && !releaseVerticalLock;
-  if (useFrozenTop) {
-    termFontOverlayEl.style.top = `${termFontOverlayFrozenTop}px`;
-    return;
-  }
 
   let top = null;
-  if (termFontOverlayTermEl.childElementCount > 0) {
+  if (useFrozenTop) {
+    top = termFontOverlayFrozenTop;
+  } else if (termFontOverlayTermEl.childElementCount > 0) {
     top = computeTermFontOverlayTop(rayGroup, textEl, termFontOverlayTermEl, {
       secoloInkBlend,
     });
@@ -8876,7 +10250,29 @@ function syncTermFontOverlayPosition({ releaseVerticalLock = false, secoloInkBle
       top = baselinePt.y + baselineInset - anchorHeight;
     }
   }
-  if (top != null) termFontOverlayEl.style.top = `${top}px`;
+  if (top == null) return;
+  termFontOverlayEl.style.top = `${top}px`;
+
+  // Lock the overlay's *actual* rendered baseline onto the SVG baseline. The
+  // metric-based positioning above can leave the Secolo line box a few px off,
+  // which only shows as a downward "settle" when the SVG takes over. Measuring
+  // the real baseline from the DOM and nudging keeps the scramble and the
+  // settled title on exactly the same line (no jitter — the measurement is
+  // content-independent).
+  if (!releaseVerticalLock && termFontOverlayTermEl.childElementCount > 0) {
+    const targetBaseline = inSecoloPhase
+      ? getRenderedTermBaselineScreenY(rayGroup, textEl)
+      : getSelectedTermBaselineScreenPoint()?.y ?? null;
+    const trueBaseline = getOverlayTrueBaselineScreenY(termFontOverlayTermEl);
+    if (Number.isFinite(targetBaseline) && trueBaseline != null) {
+      const correction = targetBaseline - trueBaseline;
+      if (Math.abs(correction) >= 0.1) {
+        top += correction;
+        termFontOverlayEl.style.top = `${top}px`;
+      }
+    }
+    termFontOverlayFrozenTop = top;
+  }
 }
 
 /** Last-frame baseline snap — match overlay ink to settled SVG before handoff. */
@@ -8931,14 +10327,18 @@ function updateCensoredAlignmentDuringFontScramble() {
 
   const ref = termPageCensoredLayoutRef;
   if (!ref) {
-    applyTermPageCensoredRayOffset(0);
+    applyTermPageCensoredRayOffset(0, 0);
     return;
   }
 
   const gap = getTermPageCensoredPushGap(termPageCensoredPushProgress);
   const targetRight = Z - gap;
-  const screenDeltaX = targetRight - ref.refScreenX;
-  applyTermPageCensoredRayOffset(screenDeltaX);
+  const screenDeltaX =
+    (targetRight - ref.refScreenX) * termPageCensoredPushProgress;
+  applyTermPageCensoredRayOffset(screenDeltaX, 0);
+  if (termPageCensoredPushProgress >= 0.999) {
+    freezeTermPageCensoredScreenAlign(screenDeltaX, 0);
+  }
 }
 
 function tickTermPageLayoutAnimation(
@@ -8975,6 +10375,9 @@ function tickTermPageLayoutAnimation(
   }
 
   syncTermFontOverlayPosition();
+  if (termPageCensoredPushProgress > 0.001 || isSiblingBaselineRampActive()) {
+    refreshTermPageSiblingCensorBars();
+  }
   updateCensoredAlignmentDuringFontScramble();
   if (currentLayout && !termPageLayoutAnimCensorOnly) {
     updateTermPageSimilarLabel(currentLayout);
@@ -9080,11 +10483,19 @@ function applyFocusTermPositionsToDom() {
     if (!textEl || focusState.termEndXs[i] == null) continue;
     textEl.setAttribute("x", focusState.termEndXs[i]);
     textEl.setAttribute("text-anchor", focusState.textAnchor);
-    if (overlayActive && i === selectedIndex) continue;
+    if (overlayActive && i === selectedIndex) {
+      textEl.setAttribute("y", String(getSecoloTitleNudgePx()));
+      continue;
+    }
     updateTermHitArea(
       textEl,
       wraps[i].querySelector(".sun-term-hit"),
-      wraps[i].querySelector(".sun-term-censor")
+      wraps[i].querySelector(".sun-term-censor"),
+      {
+        forceBaselineCensor:
+          !wraps[i].classList.contains("is-selected") &&
+          isTermPageSiblingCensorBaselineMode(textEl),
+      }
     );
   }
 }
@@ -9109,16 +10520,26 @@ function clearFocusSiblingTermTransforms() {
     .forEach((wrap) => wrap.removeAttribute("transform"));
 }
 
+/** Drop stale per-sibling translate transforms before remeasuring censored-row layout. */
+function resetTermPageCensoredRowTransforms() {
+  clearFocusSiblingTermTransforms();
+}
+
 function clearTermPageSiblingFreeze() {
   termPageSiblingFrozenXs = null;
   termPageSiblingFrozenWidths = null;
   termPageSiblingLayoutApplied = false;
+  termPageSiblingRepackedForSwitch = false;
   termPageScreenZ = null;
   termSimilarLabelRestTop = null;
   termSimilarLabelIsPinned = false;
+  termPageSimilarLabelAnchorStale = true;
   termPageCensoredRayOffset = null;
   termPageCensoredLayoutRef = null;
   termPageCensoredScrollRef = null;
+  termPageCensoredFrozenScreenAlign = null;
+  termPageFrozenSecoloBaselineScreenY = null;
+  clearTermPageCensoredWrapState();
 }
 
 function freezeTermPageSiblingLayout() {
@@ -9181,24 +10602,166 @@ function getFocusTermPageLayoutWidths() {
 }
 
 /**
- * Term-page positions: carousel slot packing only (spacing matches nav wheel).
+ * Term-page positions: same edge-to-edge packing as layoutTermsOnRay / refineTermPositions.
  * Viewport Z alignment runs after render in alignCensoredTermsToSecoloZ.
  */
+function getCensoredSiblingIndicesForSelected(selectedIndex, termCount) {
+  const slots = getSlotsAtStep(getCarouselSteps(selectedIndex, termCount), termCount);
+  return slots.slice(1);
+}
+
+function measureTermPageLayoutWidths() {
+  const rayGroup = getFocusRayGroup();
+  const group = groups[focusState?.activeIndex];
+  if (!rayGroup || !group) return null;
+
+  const widths = new Array(group.terms.length).fill(0);
+  for (const wrap of rayGroup.querySelectorAll(".sun-term-wrap")) {
+    const termIndex = Number.parseInt(wrap.dataset.termIndex ?? "", 10);
+    if (!Number.isFinite(termIndex) || termIndex < 0) continue;
+    const text = wrap.querySelector(".sun-term");
+    const measured = text?.getBBox().width ?? 0;
+    if (measured > 0.25) widths[termIndex] = measured;
+  }
+  if (widths.every((w) => w <= 0.25)) return null;
+  return widths;
+}
+
+function getTermPageRoobertLayoutWidth(termIndex, widths, selectedIndex) {
+  const selected = selectedIndex ?? getFocusSelectedTermIndex();
+
+  if (termPageSiblingFrozenWidths?.[termIndex] > 0.25) {
+    return termPageSiblingFrozenWidths[termIndex];
+  }
+
+  // Packing chain uses Roobert width — selected may display as Secolo.
+  if (termIndex === selected) {
+    const term = groups[focusState?.activeIndex]?.terms[termIndex];
+    return term ? estimateTermWidth(term.name) : widths?.[termIndex] ?? 0;
+  }
+
+  const live = measureTermPageLayoutWidths();
+  if (live?.[termIndex] > 0.25) return live[termIndex];
+  if (widths?.[termIndex] > 0.25) return widths[termIndex];
+
+  const term = groups[focusState?.activeIndex]?.terms[termIndex];
+  return term ? estimateTermWidth(term.name) : 0;
+}
+
 function computeTermPageEndXs(widths, outwardSign, selectedIndex, termCount) {
-  const finalSlots = getSlotsAtStep(getCarouselSteps(selectedIndex, termCount), termCount);
   const termGap = focusState?.termGap ?? LAYOUT.termGap;
-  const selectedIdx = finalSlots[0];
-  const roobertW =
-    termPageSiblingFrozenWidths?.[selectedIdx] ?? widths[selectedIdx];
-  const layoutWidths = widths.slice();
-  layoutWidths[selectedIdx] = roobertW;
-  const slotPos = computeSlotPositions(finalSlots, layoutWidths, termGap, outwardSign);
-  const endXs = new Array(termCount);
-  for (let slot = 0; slot < finalSlots.length; slot++) {
-    endXs[finalSlots[slot]] = slotPos[slot];
+  const endXs = new Array(termCount).fill(null);
+  endXs[selectedIndex] = 0;
+
+  const siblings = getCensoredSiblingIndicesForSelected(selectedIndex, termCount);
+  const selectedLayoutW = getTermPageRoobertLayoutWidth(
+    selectedIndex,
+    widths,
+    selectedIndex
+  );
+  let dist = selectedLayoutW + termGap;
+
+  for (const termIdx of siblings) {
+    const w = getTermPageRoobertLayoutWidth(termIdx, widths, selectedIndex);
+    endXs[termIdx] = outwardSign === 1 ? dist : -dist;
+    dist += w + termGap;
   }
 
   return endXs;
+}
+
+/** Re-measure sibling widths and repack — mirrors refineTermPositions on the home row. */
+function refineTermPagePositions() {
+  if (
+    !focusState ||
+    focusState.phase !== "locked" ||
+    TERM_PAGE_LEGACY_CONTENT_ENABLED ||
+    termPageLayoutAnimActive ||
+    viewport?.classList.contains("is-term-font-scrambling")
+  ) {
+    return;
+  }
+  if (!termPageSelectedFontSettled) return;
+
+  const group = groups[focusState.activeIndex];
+  if (!group || group.terms.length < 2) return;
+
+  const selectedIndex = getFocusSelectedTermIndex();
+  const widths = measureTermPageLayoutWidths();
+  if (!widths) return;
+
+  const layoutWidths = widths.map((_, index) =>
+    getTermPageRoobertLayoutWidth(index, widths, selectedIndex)
+  );
+  const endXs = computeTermPageEndXs(
+    layoutWidths,
+    focusState.outwardSign,
+    selectedIndex,
+    group.terms.length
+  );
+
+  const changed = endXs.some(
+    (x, i) => x != null && Math.abs((focusState.termEndXs[i] ?? 0) - x) > 0.35
+  );
+  if (!changed) return;
+
+  focusState.termWidths = layoutWidths;
+  focusState.termEndXs = endXs;
+  termPageSiblingLayoutApplied = true;
+  applyFocusTermPositionsToDom();
+  refreshTermPageSiblingCensorBars();
+}
+
+/** On same-group switch: pack all title-row terms immediately so no gap remains at the clicked slot. */
+function repackTermPageSiblingsForSwitch(newTermIndex) {
+  if (!focusState) return;
+  const group = groups[focusState.activeIndex];
+  if (!group || group.terms.length < 2) return;
+
+  const widths =
+    measureTermPageLayoutWidths() ??
+    (focusState.termWidths?.length === group.terms.length
+      ? focusState.termWidths.slice()
+      : measureTermWidths(focusState.activeIndex));
+  if (!widths?.length) return;
+
+  const endXs = computeTermPageEndXs(
+    widths,
+    focusState.outwardSign,
+    newTermIndex,
+    group.terms.length
+  );
+
+  focusState.termWidths = widths.map((_, index) =>
+    getTermPageRoobertLayoutWidth(index, widths, newTermIndex)
+  );
+  focusState.termEndXs = endXs;
+
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup) return;
+
+  const wraps = [...rayGroup.querySelectorAll(".sun-term-wrap")];
+  for (let i = 0; i < wraps.length; i++) {
+    const textEl = wraps[i].querySelector(".sun-term");
+    if (!textEl || endXs[i] == null) continue;
+    textEl.setAttribute("x", endXs[i]);
+    textEl.setAttribute("text-anchor", focusState.textAnchor);
+    if (i === newTermIndex) continue;
+    updateTermHitArea(
+      textEl,
+      wraps[i].querySelector(".sun-term-hit"),
+      wraps[i].querySelector(".sun-term-censor"),
+      {
+        forceBaselineCensor:
+          !wraps[i].classList.contains("is-selected") &&
+          isTermPageSiblingCensorBaselineMode(textEl),
+      }
+    );
+  }
+
+  if (getLiveSecoloBaselineScreenY(rayGroup) != null) {
+    refreshTermPageSiblingCensorBars();
+  }
 }
 
 function applyFocusTermPageLayout() {
@@ -9222,7 +10785,12 @@ function applyFocusTermPageLayout() {
 
   if (termPageSiblingLayoutApplied) return;
 
-  const widths = getFocusTermPageLayoutWidths();
+  const measured = measureTermPageLayoutWidths();
+  const widths = measured
+    ? measured.map((_, index) =>
+        getTermPageRoobertLayoutWidth(index, measured, selectedIndex)
+      )
+    : getFocusTermPageLayoutWidths();
   if (!widths) return;
 
   focusState.termWidths = widths;
@@ -9249,6 +10817,7 @@ function hideTermPageChrome() {
   termPageCensoredRayOffset = null;
   termPageCensoredLayoutRef = null;
   termPageCensoredScrollRef = null;
+  clearTermPageCensoredWrapState();
   termPageBleedTermId = null;
   termPageBleedImage = null;
   termPageSelectedFontSettled = false;
@@ -9300,9 +10869,11 @@ function getRightmostCensoredTermWrap() {
   let best = wraps[0];
   let bestScreenRight = -Infinity;
   for (const wrap of wraps) {
-    const text = wrap.querySelector(".sun-term");
-    if (!text) continue;
-    const screenRight = text.getBoundingClientRect().right;
+    const bounds = getTermCensorScreenBounds(wrap);
+    const screenRight =
+      bounds?.maxX ??
+      wrap.querySelector(".sun-term")?.getBoundingClientRect().right ??
+      -Infinity;
     if (screenRight > bestScreenRight) {
       bestScreenRight = screenRight;
       best = wrap;
@@ -9625,7 +11196,12 @@ function captureTermPageCensoredLayoutRef(rayGroup, screenZ = termPageScreenZ) {
   const savedLiftTransform = liftGroup?.getAttribute("transform") ?? null;
   if (svgEl) svgEl.style.removeProperty("transform");
   if (liftGroup) liftGroup.removeAttribute("transform");
-  if (baseTransform) {
+  if (
+    baseTransform &&
+    Number.isFinite(baseTransform.anchor?.x) &&
+    Number.isFinite(baseTransform.anchor?.y) &&
+    Number.isFinite(baseTransform.rotation)
+  ) {
     rayGroup.setAttribute(
       "transform",
       `translate(${baseTransform.anchor.x}, ${baseTransform.anchor.y}) rotate(${baseTransform.rotation})`
@@ -9691,25 +11267,29 @@ function captureTermPageCensoredLayoutRef(rayGroup, screenZ = termPageScreenZ) {
   }
 }
 
-function getCensoredRowAlignLocalOffset(alignScreenDeltaX = null) {
+/** Screen Y anchor for layout-ref → local conversion; includes active scroll lift. */
+function getCensoredLayoutRefScreenY() {
+  const ref = termPageCensoredLayoutRef;
+  if (!ref) return 0;
+  const rise = Math.max(0, -termPageCensoredScrollShiftY);
+  return ref.refScreenY + (rise > 0.01 ? termPageCensoredScrollShiftY : 0);
+}
+
+function getCensoredRowAlignLocalOffset(screenDx = 0, screenDy = 0) {
   const ref = termPageCensoredLayoutRef;
   if (!ref) return { dx: 0, dy: 0 };
-
-  if (alignScreenDeltaX != null) {
-    if (Math.abs(alignScreenDeltaX) < 0.25) return { dx: 0, dy: 0 };
-    const rayGroup = getFocusRayGroup();
-    return rayGroup
-      ? viewportScreenPointDeltaToRayLocalDelta(
-          rayGroup,
-          ref.refScreenX,
-          ref.refScreenY,
-          alignScreenDeltaX,
-          0
-        )
-      : { dx: 0, dy: 0 };
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup) return { dx: 0, dy: 0 };
+  if (Math.abs(screenDx) < 0.01 && Math.abs(screenDy) < 0.01) {
+    return { dx: 0, dy: 0 };
   }
-
-  return ref.alignLocal;
+  return viewportScreenPointDeltaToRayLocalDelta(
+    rayGroup,
+    ref.refScreenX,
+    getCensoredLayoutRefScreenY(),
+    screenDx,
+    screenDy
+  );
 }
 
 /** @deprecated scroll is applied on the ray group — use getCensoredRowAlignLocalOffset */
@@ -9717,7 +11297,14 @@ function getCensoredRowLocalOffset(
   scrollShiftY = termPageCensoredScrollShiftY,
   alignScreenDeltaX = null
 ) {
-  return getCensoredRowAlignLocalOffset(alignScreenDeltaX);
+  const rayGroup = getFocusRayGroup();
+  const screenDx =
+    alignScreenDeltaX != null
+      ? alignScreenDeltaX
+      : rayGroup
+        ? resolveCensoredAlignScreenDeltaX(rayGroup, null)
+        : 0;
+  return getCensoredRowAlignLocalOffset(screenDx, 0);
 }
 
 function alignCensoredTermsToSecoloZ(overrideZ) {
@@ -9750,34 +11337,207 @@ function alignCensoredTermsToSecoloZ(overrideZ) {
   termPageCensoredLayoutRef = null;
   termPageCensoredScrollRef = null;
   termPageCensoredRayOffset = null;
+  clearTermPageCensoredWrapState();
   termPageScreenZ = Z;
   captureTermPageCensoredLayoutRef(rayGroup, Z);
 }
 
-function applyTermPageCensoredRayOffset(alignScreenDeltaX = null) {
+function getCensoredRowBandLeftPx() {
+  const span = getGridSpanBounds(
+    LAYOUT.termPageCensoredRowColumns,
+    GRID.alignColumnFromRight,
+    viewport
+  );
+  return span.left;
+}
+
+function getCensoredSiblingIndicesInSlotOrder() {
+  if (!focusState) return [];
+  const group = groups[focusState.activeIndex];
+  if (!group || group.terms.length < 2) return [];
+  return getCensoredSiblingIndicesForSelected(
+    getFocusSelectedTermIndex(),
+    group.terms.length
+  );
+}
+
+function measureCensoredSiblingScreenBounds(rayGroup) {
+  /** @type {Map<number, { minX: number, maxX: number, minY: number, maxY: number }>} */
+  const bounds = new Map();
+  withCensoredWrapTransformsSuspended(rayGroup, () => {
+    for (const wrap of rayGroup.querySelectorAll(".sun-term-wrap:not(.is-selected)")) {
+      const termIndex = Number.parseInt(wrap.dataset.termIndex ?? "", 10);
+      const text = wrap.querySelector(".sun-term");
+      if (!text || !Number.isFinite(termIndex)) continue;
+      const measured = getTermTextScreenBounds(rayGroup, text);
+      if (measured) bounds.set(termIndex, measured);
+    }
+  });
+  return bounds;
+}
+
+function clearTermPageCensoredWrapState() {
+  termPageCensoredWrapOffsets = null;
+  termPageCensoredWrapExtraPx = 0;
+}
+
+function resolveCensoredAlignScreenDeltaX(rayGroup, alignScreenDeltaX) {
+  if (alignScreenDeltaX != null) return alignScreenDeltaX;
+  if (termPageScreenZ == null) return 0;
+  const censored = withCensoredWrapTransformsSuspended(rayGroup, () =>
+    getCensoredTermsScreenRight(rayGroup)
+  );
+  if (!censored) return 0;
+  const targetRight = termPageScreenZ - LAYOUT.termPageCensoredRightFromZ;
+  return targetRight - censored.maxX;
+}
+
+function syncTermPageCensoredWrapPlan(
+  rayGroup,
+  alignScreenDeltaX = 0,
+  alignScreenDeltaY = 0
+) {
+  if (termPageDeferCensoredWrapRepack) return;
+  clearTermPageCensoredWrapState();
+  if (
+    !rayGroup ||
+    !isTermPageFocusVisual() ||
+    !termPageSelectedFontSettled ||
+    termPageScreenZ == null
+  ) {
+    return;
+  }
+
+  const siblings = getCensoredSiblingIndicesInSlotOrder();
+  if (!siblings.length) return;
+
+  const bandLeft = getCensoredRowBandLeftPx();
+  const targetRight = termPageScreenZ - LAYOUT.termPageCensoredRightFromZ;
+  const naturalBounds = measureCensoredSiblingScreenBounds(rayGroup);
+  const termGap = focusState?.termGap ?? LAYOUT.termGap;
+
+  const row1 = [];
+  const row2 = [];
+  let cursor = targetRight;
+
+  for (const termIndex of siblings) {
+    const bounds = naturalBounds.get(termIndex);
+    if (!bounds) continue;
+    const width = bounds.maxX - bounds.minX;
+    const placeLeft = cursor - width;
+    if (placeLeft < bandLeft - 0.5) {
+      row2.push(termIndex);
+    } else {
+      row1.push(termIndex);
+      cursor = placeLeft - termGap;
+    }
+  }
+
+  if (!row2.length) return;
+
+  const sample = naturalBounds.get(row1[0] ?? row2[0]);
+  const rowHeight =
+    (sample ? sample.maxY - sample.minY : LAYOUT.fontSize) +
+    LAYOUT.termPageCensoredWrapRowGap;
+  termPageCensoredWrapExtraPx = rowHeight;
+
+  const offsets = new Map();
+  for (const termIndex of row1) {
+    offsets.set(termIndex, {
+      screenDx: alignScreenDeltaX,
+      screenDy: alignScreenDeltaY,
+    });
+  }
+
+  cursor = targetRight;
+  for (const termIndex of row2) {
+    const bounds = naturalBounds.get(termIndex);
+    if (!bounds) continue;
+    const width = bounds.maxX - bounds.minX;
+    const targetLeft = cursor - width;
+    const screenDx = alignScreenDeltaX + (targetLeft - (bounds.minX + alignScreenDeltaX));
+    offsets.set(termIndex, {
+      screenDx,
+      screenDy: rowHeight + alignScreenDeltaY,
+    });
+    cursor = targetLeft - termGap;
+  }
+
+  termPageCensoredWrapOffsets = offsets;
+}
+
+function applyCensoredWrapPageOffset(layout = currentLayout) {
+  if (!layout || !termPageEl || termPageEl.hidden || !isTermPageScrollContentMode()) {
+    return;
+  }
+  const pageTop = getTermPageScrollContentTopPx(layout.viewportHeight);
+  termPageEl.style.top = `${pageTop}px`;
+}
+
+function applyTermPageCensoredRayOffset(alignScreenDeltaX = null, alignScreenDeltaY = null) {
   const rayGroup = getFocusRayGroup();
   if (!rayGroup) return;
 
   if (
     !termPageCensoredLayoutRef &&
-    termPageSelectedFontSettled &&
-    termPageScreenZ != null
+    termPageScreenZ != null &&
+    (termPageSelectedFontSettled ||
+      termPageLayoutAnimActive ||
+      termPageCensoredPushProgress > 0.001)
   ) {
     captureTermPageCensoredLayoutRef(rayGroup, termPageScreenZ);
   }
 
-  const { dx, dy } = getCensoredRowAlignLocalOffset(alignScreenDeltaX);
+  const alignScreenDx =
+    alignScreenDeltaX != null
+      ? Math.abs(alignScreenDeltaX) < 0.25
+        ? 0
+        : alignScreenDeltaX
+      : resolveCensoredAlignScreenDeltaX(rayGroup, null);
+  const alignScreenDy =
+    alignScreenDeltaY != null ? alignScreenDeltaY : resolveCensoredAlignScreenDeltaY();
+  syncTermPageCensoredWrapPlan(rayGroup, alignScreenDx, alignScreenDy);
+
+  // Horizontal Z-align only — vertical sibling position lives in censor barY.
+  const { dx } = getCensoredRowAlignLocalOffset(alignScreenDx, 0);
+
+  const ref = termPageCensoredLayoutRef;
+  const refScreenX = ref?.refScreenX ?? 0;
+  const refScreenY = getCensoredLayoutRefScreenY();
 
   for (const wrap of rayGroup.querySelectorAll(".sun-term-wrap:not(.is-selected)")) {
     const text = wrap.querySelector(".sun-term");
     if (!text) continue;
 
-    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) {
-      wrap.removeAttribute("transform");
+    const termIndex = Number.parseInt(wrap.dataset.termIndex ?? "", 10);
+    const wrapPlan = Number.isFinite(termIndex)
+      ? termPageCensoredWrapOffsets?.get(termIndex)
+      : null;
+
+    if (!wrapPlan || wrapPlan.screenDy < 0.01) {
+      if (Math.abs(dx) < 0.01) {
+        wrap.removeAttribute("transform");
+      } else {
+        wrap.setAttribute("transform", `translate(${dx}, 0)`);
+      }
       continue;
     }
-    wrap.setAttribute("transform", `translate(${dx}, ${dy})`);
+
+    const wrapped = viewportScreenPointDeltaToRayLocalDelta(
+      rayGroup,
+      refScreenX,
+      refScreenY,
+      wrapPlan.screenDx,
+      wrapPlan.screenDy
+    );
+    if (Math.abs(wrapped.dx) < 0.01 && Math.abs(wrapped.dy) < 0.01) {
+      wrap.removeAttribute("transform");
+    } else {
+      wrap.setAttribute("transform", `translate(${wrapped.dx}, ${wrapped.dy})`);
+    }
   }
+
+  applyCensoredWrapPageOffset();
 }
 
 function syncFocusSelectedTermLayout() {
@@ -9873,13 +11633,10 @@ function updateTermPageSimilarLabel(layout) {
     return;
   }
 
-  const targetWrap = getRightmostCensoredTermWrap();
-  if (!targetWrap) return;
-
-  const bounds = getTermCensorScreenBounds(targetWrap);
-  if (!bounds) return;
-
-  const targetRight = termPageScreenZ - LAYOUT.termPageCensoredRightFromZ;
+  let censoredTop = getCensoredRowScreenTop();
+  if (censoredTop == null && getTermPageSimilarLabelNaturalTopPx(29) == null) {
+    return;
+  }
 
   termSimilarLabelWrapEl.hidden = false;
   termSimilarLabelWrapEl.setAttribute("aria-hidden", "false");
@@ -9894,26 +11651,89 @@ function updateTermPageSimilarLabel(layout) {
   }
   const labelWidth = termSimilarLabelEl.offsetWidth || 180;
   const labelHeight = termSimilarLabelEl.offsetHeight || 29;
+  const pushGap =
+    termPageLayoutAnimActive && !termPageSelectedFontSettled
+      ? getTermPageCensoredPushGap(termPageCensoredPushProgress)
+      : LAYOUT.termPageCensoredRightFromZ;
+  const targetRight = termPageScreenZ - pushGap;
   const left = targetRight - labelWidth;
-  const censorTop = bounds.minY;
   const viewportHeight = layout.viewportHeight ?? viewport?.clientHeight ?? getLiveViewportHeight();
-  const naturalTop = censorTop - LAYOUT.termPageSimilarLabelGap - labelHeight;
-  const scrollTop = viewport?.scrollTop ?? 0;
+  if (termPageSimilarLabelAnchorStale) {
+    termPageFrozenSecoloBaselineScreenY = null;
+  }
+  let naturalTop =
+    (termPageSiblingLayoutApplied && censoredTop != null
+      ? censoredTop - LAYOUT.termPageSimilarLabelGap - labelHeight
+      : null) ??
+    getTermPageSimilarLabelNaturalTopPx(labelHeight) ??
+    (censoredTop != null
+      ? censoredTop - LAYOUT.termPageSimilarLabelGap - labelHeight
+      : null);
+  if (naturalTop == null) return;
 
-  termSimilarLabelWrapEl.style.removeProperty("transform");
+  const scrollTop = viewport?.scrollTop ?? 0;
+  const rayGroup = getFocusRayGroup();
+  const selectedBounds = getSelectedTermTextEl()
+    ? getTermTextScreenBounds(rayGroup, getSelectedTermTextEl())
+    : null;
+  let rowLooksAligned =
+    censoredTop != null &&
+    censoredTop > 200 &&
+    (selectedBounds?.minY ?? censoredTop) > 200;
+  if (!rowLooksAligned && scrollTop <= 0.5) {
+    if (termPageScreenZ != null) {
+      realignTermPageCensoredRowAfterRayAnchor({ refreshBars: false });
+      const retryCensoredTop = getCensoredRowScreenTop();
+      const retrySelectedBounds = getSelectedTermTextEl()
+        ? getTermTextScreenBounds(rayGroup, getSelectedTermTextEl())
+        : null;
+      rowLooksAligned =
+        retryCensoredTop != null &&
+        retryCensoredTop > 200 &&
+        (retrySelectedBounds?.minY ?? retryCensoredTop) > 200;
+      if (rowLooksAligned) {
+        censoredTop = retryCensoredTop;
+        naturalTop =
+          censoredTop - LAYOUT.termPageSimilarLabelGap - labelHeight;
+      } else if (termSimilarLabelRestTop == null || termSimilarLabelRestTop <= 200) {
+        return;
+      }
+    } else if (termSimilarLabelRestTop == null || termSimilarLabelRestTop <= 200) {
+      return;
+    }
+  }
 
   termSimilarLabelEl.style.left = `${Math.round(left)}px`;
   termSimilarLabelEl.style.width = `${labelWidth}px`;
 
-  if (scrollTop <= 0) {
+  // Capture rest anchor only at scroll origin — live censoredTop already includes scroll lift.
+  if (
+    scrollTop <= 0.5 &&
+    rowLooksAligned &&
+    naturalTop != null &&
+    termPageSiblingLayoutApplied &&
+    (termSimilarLabelRestTop == null ||
+      termPageSimilarLabelAnchorStale ||
+      Math.abs((termSimilarLabelRestTop ?? 0) - naturalTop) > 1.5)
+  ) {
     termSimilarLabelRestTop = naturalTop;
+    termPageSimilarLabelAnchorStale = false;
   }
 
   const pinned = isTermCensoredGroupPinned(scrollTop, viewportHeight);
-  const screenShift = getTermCensoredGroupScreenShiftY(scrollTop, viewportHeight);
   termSimilarLabelIsPinned = pinned;
 
-  const top = (termSimilarLabelRestTop ?? naturalTop) + screenShift;
+  const scrollLiftPx = getTermHeaderPinScrollLiftPx(scrollTop, viewportHeight);
+  let top;
+  if (scrollLiftPx > 0.01 && censoredTop != null && termPageSiblingLayoutApplied) {
+    top = censoredTop - LAYOUT.termPageSimilarLabelGap - labelHeight;
+  } else {
+    const anchorTop =
+      termPageSimilarLabelAnchorStale && !termPageSiblingLayoutApplied
+        ? naturalTop
+        : (termSimilarLabelRestTop ?? naturalTop);
+    top = anchorTop;
+  }
 
   termSimilarLabelEl.style.top = `${Math.round(getScrollportLocalTopPx(top))}px`;
 }
@@ -9974,6 +11794,40 @@ function updateTermPageBleedCaption(layout, image) {
   applyTermPageBleedCaptionVisibility(layout);
 }
 
+/**
+ * Per-term framing for the full-screen (term-page) bleed image.
+ * Value is a CSS `object-position` (horizontal vertical) that picks which area
+ * of the covered image stays in frame. Only the crop shifts; the aspect ratio
+ * is preserved by `object-fit: cover`. Default for all other terms is
+ * `center top`.
+ */
+const TERM_BLEED_OBJECT_POSITION = {
+  "ביביסטים": "50% 100%",
+};
+
+function applyTermPageBleedObjectPosition(termName) {
+  if (!bleedBackdropImgEl) return;
+  bleedBackdropImgEl.style.objectPosition =
+    TERM_BLEED_OBJECT_POSITION[termName] || "";
+}
+
+/** Reverse lookup: which term owns this bleed image URL (for the framing override). */
+function getTermNameForBleedUrl(url) {
+  if (!url) return null;
+  for (const [name, images] of termImagesByName) {
+    if (images?.some((image) => image?.url === url)) return name;
+  }
+  return null;
+}
+
+/** Apply the per-term `object-position` override for any bleed image URL. */
+function applyBleedObjectPositionForUrl(url) {
+  if (!bleedBackdropImgEl) return;
+  const termName = getTermNameForBleedUrl(url);
+  bleedBackdropImgEl.style.objectPosition =
+    (termName && TERM_BLEED_OBJECT_POSITION[termName]) || "";
+}
+
 function updateTermPageBleed(layout) {
   if (!isTermPageFocusVisual()) {
     hideTermPageChrome();
@@ -10020,6 +11874,7 @@ function updateTermPageBleed(layout) {
 
   termPageBleedTermId = term.id;
   termPageBleedImage = image;
+  applyTermPageBleedObjectPosition(term.name);
 
   if (canContinueBleedToTermPage && transitionBleedBackdropToTermPage()) {
     // bleed promoted — clip synced below
@@ -10037,50 +11892,98 @@ function updateTermPageBleed(layout) {
 }
 
 function settleTermPageAfterFontScramble(layout, finalOverlayZ) {
-  termPageHeaderRowRestTop = null;
   termPageSelectedFontSettled = true;
-  alignCensoredTermsToSecoloZ(finalOverlayZ);
-  applyTermPageCensoredRayOffset();
-  if (isViewportTermScrollable()) {
+  termPageHeaderRowRestTop = null;
+
+  termPageSiblingLayoutApplied = false;
+  applyFocusTermPageLayout();
+  refineTermPagePositions();
+
+  const rayGroup = getFocusRayGroup();
+  const selectedText = getSelectedTermTextEl();
+  const Z = Number.isFinite(finalOverlayZ)
+    ? finalOverlayZ
+    : rayGroup && selectedText
+      ? getSecoloTitleScreenZ(rayGroup, selectedText)
+      : null;
+
+  const handoffComplete =
+    termPageCensoredFrozenScreenAlign != null &&
+    Z != null &&
+    termPageScreenZ != null &&
+    Math.abs(termPageScreenZ - Z) < 0.5;
+
+  if (Z != null && !handoffComplete) {
+    finalizeTermPageCensoredAlignment(Z);
+  } else if (Z != null) {
+    termPageScreenZ = Z;
+  }
+
+  if ((viewport?.scrollTop ?? 0) > 0.5) {
+    captureTermPageHeaderRowRestTopFromScroll();
+  } else {
+    termPageHeaderRowRestTop = null;
+    captureTermPageHeaderRowRestTopIfNeeded();
+  }
+  holdSiblingTermCensors();
+  termPageDeferCensoredWrapRepack = true;
+  if (handoffComplete) {
+    applyFrozenTermPageCensoredScreenAlign();
+  } else {
+    applyTermPageCensoredBaselineAlign(getFocusRayGroup(), { refreshBars: false });
+  }
+  termPageDeferCensoredWrapRepack = false;
+
+  const scrollTop = viewport?.scrollTop ?? 0;
+  if (isViewportTermScrollable() || scrollTop > 0.5) {
     termPageCensoredScrollShiftY = getTermCensoredGroupScreenShiftY();
     applyFocusRayScrollAnchor(layout);
     applyTermPageScrollLiftTransform();
   }
-  alignCensoredTermsToSecoloZ();
-  applyTermPageCensoredRayOffset();
-  updateTermPageSimilarLabel(layout);
+
+  if (!termPageInlineTermSwitch) {
+    updateTermPageSimilarLabel(layout);
+  }
 }
 
 function finishSelectedTermFontScramble(scrambleToken, onComplete) {
   if (scrambleToken !== termPageFontScrambleToken) return;
   stopTermPageLayoutAnimation();
-  termPageCensoredPushProgress = 1;
-  if (termPageCensoredPushTarget) {
-    applyTermPageCensoredPushFromTarget(termPageCensoredPushTarget, 1);
-  }
-  const finalOverlayZ = termFontOverlayTermEl?.getBoundingClientRect().left;
-  termPageCensoredPushTarget = null;
-  // Keep carousel positions from the animation — avoid a late width re-measure nudge.
   termPageSiblingLayoutApplied = true;
+  termPageCensoredPushProgress = 1;
+  termPageSiblingBaselineRampStartMs = null;
+  termPageSiblingBaselineRampDurationMs = 0;
 
-  const textEl = getSelectedTermTextEl();
-  const wrap = getSelectedTermWrap();
-  if (textEl) {
-    applySelectedTermDisplayFont(textEl);
-    updateTermHitArea(
-      textEl,
-      wrap?.querySelector(".sun-term-hit"),
-      wrap?.querySelector(".sun-term-censor")
-    );
-  }
-
-  snapOverlayToSettledSvgBaseline();
+  const finalZ =
+    handoffSettledTermPageCensoredRow() ??
+    (() => {
+      if (termPageCensoredPushTarget) {
+        applyTermPageCensoredPushFromTarget(termPageCensoredPushTarget, 1);
+      } else {
+        updateCensoredAlignmentDuringFontScramble();
+      }
+      if (termPageCensoredFrozenScreenAlign) {
+        applyTermPageCensoredRayOffset(
+          termPageCensoredFrozenScreenAlign.dx,
+          termPageCensoredFrozenScreenAlign.dy
+        );
+      }
+      const rayGroup = getFocusRayGroup();
+      const textEl = getSelectedTermTextEl();
+      return (
+        termPageScreenZ ??
+        (textEl && rayGroup ? getSecoloTitleScreenZ(rayGroup, textEl) : null)
+      );
+    })();
 
   if (currentLayout) {
+    settleTermPageAfterFontScramble(currentLayout, finalZ);
     clearTermFontScrambleOverlay();
-    settleTermPageAfterFontScramble(currentLayout, finalOverlayZ);
+    updateTermPageSimilarLabel(currentLayout);
+    termPageCensoredPushTarget = null;
     requestAnimationFrame(() => {
       if (scrambleToken !== termPageFontScrambleToken) return;
+      termPageCensoredPreserveBarsAfterHandoff = false;
       if (!termSimilarLabelScrambleStarted) runSimilarLabelScramble();
       onComplete?.();
     });
@@ -10088,6 +11991,7 @@ function finishSelectedTermFontScramble(scrambleToken, onComplete) {
   }
   clearTermFontScrambleOverlay();
   termPageSelectedFontSettled = true;
+  termPageCensoredPushTarget = null;
   onComplete?.();
 }
 
@@ -10107,6 +12011,8 @@ function runSelectedTermFontScramble(onComplete) {
   }
 
   termPageSelectedFontSettled = false;
+  termPageCensoredFrozenScreenAlign = null;
+  termPageFrozenSecoloBaselineScreenY = null;
   clearSelectedTermDisplayFont(textEl);
   stopContinuousScramble(textEl, { restore: false });
   freezeTermPageSiblingLayout();
@@ -10121,10 +12027,22 @@ function runSelectedTermFontScramble(onComplete) {
   const startXs = termPageSiblingFrozenXs?.slice() ?? focusState.termEndXs.slice();
   const endXs = layoutTargets?.endXs ?? startXs.slice();
 
+  if (termPageSiblingRepackedForSwitch) {
+    termPageSiblingRepackedForSwitch = false;
+    const selectedIndex = getFocusSelectedTermIndex();
+    for (let i = 0; i < endXs.length; i++) {
+      if (endXs[i] != null) startXs[i] = endXs[i];
+    }
+    if (selectedIndex >= 0) {
+      focusState.termEndXs = endXs.slice();
+    }
+  }
+
   if (currentLayout) {
     render(currentLayout);
   }
 
+  refreshTermPageSiblingCensorBars();
   captureTermPageCensoredPushTarget(originalText);
 
   const overlayShown = showTermFontScrambleOverlay();
@@ -10305,8 +12223,10 @@ function updateTermPage(layout) {
       lastTermPageRenderedId = term.id;
       clearSameObjectMentionHover();
       armSameObjectHoverReenterGate();
-      hideTermPageContent();
-      if (viewport) viewport.scrollTop = 0;
+      if (!termPageInlineTermSwitch) {
+        hideTermPageContent();
+        if (viewport) viewport.scrollTop = 0;
+      }
     }
     layoutTermPageScrollContent(layout, term, termChanged);
 
@@ -10451,6 +12371,7 @@ function forceOverviewReset() {
   overviewProgress = 0;
   overviewOverflowPasses = 0;
   hideTimelineEventHint({ immediate: true });
+  hideTimelineScrollHint();
   cancelOverviewAnimation();
   hideSunOverviewTermsGrid();
   if (overviewSubMode !== "filter") {
@@ -10587,6 +12508,9 @@ function snapOverviewOpen(mode) {
   cancelScrollMotion();
   clearTimeout(snapDebounceTimer);
   syncOverviewTermsGridVisibility();
+  if (mode === "timeline") {
+    syncTimelineScrollHint();
+  }
   refreshMapLayoutFromViewport();
   if (currentLayout) render(currentLayout);
 }
@@ -10597,6 +12521,7 @@ function snapOverviewClosed() {
   cancelOverviewAnimation();
   hideSunOverviewTermsGrid();
   hideTimelineEventHint({ immediate: true });
+  hideTimelineScrollHint();
   refreshMapLayoutFromViewport();
   if (currentLayout) render(currentLayout);
 }
@@ -10734,9 +12659,15 @@ function openTermById(termId) {
   if (!location || !currentLayout) return;
   if (isFocusActive() || isTermNavigating() || isPageNavTransitionActive()) return;
 
+  cancelScrollMotion();
+  clearTimeout(snapDebounceTimer);
+  setOverviewTarget(0);
+  clearTermHover();
+  refreshMapLayoutFromViewport();
   activeIndex = location.groupIndex;
   scrollOffset = scrollOffsetForGroup(location.groupIndex, currentLayout);
   updateActiveFromScroll(currentLayout);
+  ensureActiveRowSnapped(currentLayout);
   render(currentLayout);
   startFocusAnimation(location.termIndex);
 }
@@ -10787,9 +12718,11 @@ function setOverviewSubModeInternal(mode) {
     cancelScrollMotion();
   }
   if (overviewSubMode === "timeline") {
+    resetTimelineScrollHint();
     syncTimelineHintFromYearScroll();
   } else {
     hideTimelineEventHint({ immediate: true });
+    hideTimelineScrollHint();
   }
 }
 
@@ -10814,6 +12747,9 @@ function setOverviewTarget(value) {
   overviewTarget = value;
   if (value === 0) {
     hideTimelineEventHint({ immediate: true });
+    hideTimelineScrollHint();
+  } else if (overviewSubMode === "timeline") {
+    syncTimelineScrollHint();
   }
   if (value > 0) {
     cancelScrollMotion();
@@ -10861,6 +12797,9 @@ function tickOverview() {
   currentLayout = computeLayout(viewport.clientWidth, viewport.clientHeight);
   render(currentLayout);
   syncOverviewTermsGridVisibility();
+  if (overviewSubMode === "timeline" && overviewProgress > 0.02) {
+    syncTimelineScrollHint();
+  }
 }
 
 function isInOverview() {
@@ -11138,12 +13077,14 @@ function finalizeRender(layout) {
     restoreOverviewTermHoverFromState();
   }
   refineTermPositions(layout);
+  refineTermPagePositions();
   if (focusState) {
     applyFocusTermPositions(layout);
   }
   updateBackFixedOverlay(layout);
   updateTermPage(layout);
   if (isTermPageFocusVisual() && termPageLayoutAnimActive && termPageCensoredPushTarget) {
+    refreshTermPageSiblingCensorBars();
     applyTermPageCensoredPushFromTarget(
       termPageCensoredPushTarget,
       termPageCensoredPushProgress
@@ -11154,15 +13095,18 @@ function finalizeRender(layout) {
     termPageSelectedFontSettled &&
     !viewport?.classList.contains("is-term-font-scrambling")
   ) {
-    alignCensoredTermsToSecoloZ();
+    termPageDeferCensoredWrapRepack = true;
+    applyTermPageCensoredBaselineAlign(getFocusRayGroup(), {
+      refreshBars: false,
+    });
+    termPageDeferCensoredWrapRepack = false;
     if (isViewportTermScrollable()) {
       termPageCensoredScrollShiftY = getTermCensoredGroupScreenShiftY();
     }
     if (currentLayout) {
       applyFocusRayScrollAnchor(currentLayout);
-      applyTermPageScrollLiftTransform();
     }
-    applyTermPageCensoredRayOffset();
+    applyTermPageScrollLiftTransform();
     updateTermPageSimilarLabel(layout);
   }
   syncRayFixedImages(layout);
@@ -11172,6 +13116,7 @@ function finalizeRender(layout) {
   correctOverviewOverflow(layout);
   applySunFilterTestOpacity(svgEl);
   syncSiteNavFromMap(getActiveNavTarget);
+  repositionTimelineEventHint();
 }
 
 function render(layout) {
@@ -11269,6 +13214,10 @@ function startFocusAnimation(clickedIndex) {
       ? termNavState.targetGroupIndex
       : activeIndex;
   const preFocusTerm = groups[preFocusGroupIndex]?.terms[clickedIndex];
+  if (preFocusTerm?.name) {
+    boostTermImagePreloadForTerm(preFocusTerm.name);
+    scheduleTermImagePreloadBoost(preFocusGroupIndex);
+  }
   const carryBleedImage = preFocusTerm
     ? resolveTermPageBleedCarryImage(preFocusTerm)
     : null;
@@ -11471,6 +13420,7 @@ function rebuildFocusLayout() {
     (Math.abs(prevHeight - currentLayout.viewportHeight) > 0.5 ||
       Math.abs(prevWidth - currentLayout.viewportWidth) > 0.5)
   ) {
+    termPageCensoredFrozenScreenAlign = null;
     termPageHeaderRowRestTop = null;
     const nextScrollTop = resolveTermPageScrollTopAfterResize({
       scrollTop: prevScrollTop,
@@ -11661,7 +13611,13 @@ function getTermCensorBarHeight(fontSize) {
   return TERM_DISPLAY_CENSOR_BAR_HEIGHT;
 }
 
-function getTermCensorBarY(bbox, barHeight, fontSize) {
+function getTermCensorBarY(bbox, barHeight, fontSize, options = {}) {
+  if (options.alignBottomToBaseline) {
+    if (options.textEl) {
+      return getTermCensorBaselineBarY(options.textEl, barHeight);
+    }
+    return null;
+  }
   if (fontSize <= LAYOUT.fontSize) {
     return bbox.y + (bbox.height - barHeight) / 2 + MENTION_CENSOR_TOP_OFFSET;
   }
@@ -11673,10 +13629,134 @@ function getTermCensorBarY(bbox, barHeight, fontSize) {
   );
 }
 
+function getSiblingCensorCenteredTextY(bbox, barY, barHeight) {
+  const barCenterY = barY + barHeight / 2;
+  const glyphCenterY = bbox.y + bbox.height / 2;
+  return barCenterY - glyphCenterY;
+}
+
+function isSiblingBaselineRampActive() {
+  return (
+    termPageSiblingBaselineRampStartMs != null &&
+    termPageSiblingBaselineRampDurationMs > 0 &&
+    !termPageSelectedFontSettled
+  );
+}
+
+/**
+ * How fully sibling censor bars sit on the title baseline (1) vs. their
+ * glyph-centered line (0).
+ *
+ * For the initial term-page entry the censored siblings keep the exact
+ * home-row relationship to their text — centered on the glyph box — for the
+ * whole sequence (descent, Roobert erase, Secolo type, and settled). They only
+ * move horizontally with the censored push; their y never changes. Same-group
+ * switches still align the bars to the title baseline.
+ */
+function getSiblingCensorBaselineBlend() {
+  if (viewport?.classList.contains("is-term-switch-censor")) return 1;
+  return 0;
+}
+
+function isTermPageSiblingCensorBaselineMode(textEl) {
+  const wrap = textEl?.closest?.(".sun-term-wrap");
+  if (!wrap || wrap.classList.contains("is-selected")) return false;
+  if (!isTermPageFocusVisual()) return false;
+  return (
+    termPageSelectedFontSettled ||
+    termPageLayoutAnimActive ||
+    termPageCensoredPushProgress > 0.001 ||
+    viewport?.classList.contains("is-term-font-scrambling") ||
+    isTermPageEnterRisePhase()
+  );
+}
+
+function refreshTermPageSiblingCensorBars() {
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup || getLiveSecoloBaselineScreenY(rayGroup) == null) return;
+  for (const wrap of rayGroup.querySelectorAll(".sun-term-wrap:not(.is-selected)")) {
+    const textEl = wrap.querySelector(".sun-term");
+    if (!textEl) continue;
+    updateTermHitArea(
+      textEl,
+      wrap.querySelector(".sun-term-hit"),
+      wrap.querySelector(".sun-term-censor"),
+      { forceBaselineCensor: true }
+    );
+  }
+}
+
 function updateTermHitArea(textEl, hitEl, censorEl, options = {}) {
   if (!textEl) return;
-  const bbox = textEl.getBBox();
+  const alignBottomToBaseline =
+    options.forceBaselineCensor || isTermPageSiblingCensorBaselineMode(textEl);
+
+  const isSelectedTitle = Boolean(
+    textEl.closest(".sun-term-wrap")?.classList.contains("is-selected")
+  );
+  const baseTitleY = isSelectedTitle ? getSecoloTitleNudgePx() : 0;
+  textEl.setAttribute("y", String(baseTitleY));
+
+  let bbox = textEl.getBBox();
   const hitPad = 4;
+  let barY = null;
+  let barHeight = 0;
+  let barWidth = 0;
+  let barX = 0;
+
+  if (censorEl) {
+    const fontSize = getTermFontSize(textEl);
+    const isDisplaySize = fontSize > LAYOUT.fontSize;
+    barHeight =
+      getTermCensorBarHeight(fontSize) +
+      (isDisplaySize ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0);
+    const coreBarHeight =
+      barHeight - (isDisplaySize ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0);
+    barWidth = bbox.width + MENTION_CENSOR_WIDTH_PAD * 2;
+    barX = bbox.x - MENTION_CENSOR_WIDTH_PAD;
+    const blend = alignBottomToBaseline ? getSiblingCensorBaselineBlend() : 0;
+    if (alignBottomToBaseline && blend > 0.001) {
+      // During the entry ramp, aim the bars at the *settled* SVG baseline rather
+      // than the live overlay bbox baseline (which sits ~4px low and would snap
+      // up at the settle handoff).
+      const rampSettledScreenY = isSiblingBaselineRampActive()
+        ? getSettledSecoloBaselineScreenY(getFocusRayGroup())
+        : null;
+      const baselineBarY =
+        rampSettledScreenY != null
+          ? getTermCensorBaselineBarY(
+              textEl,
+              coreBarHeight,
+              getFocusRayGroup(),
+              rampSettledScreenY
+            )
+          : getTermCensorBarY(bbox, coreBarHeight, fontSize, {
+              alignBottomToBaseline: true,
+              textEl,
+            });
+      if (baselineBarY == null) return;
+      if (blend >= 0.999) {
+        barY = baselineBarY;
+      } else {
+        const glyphBarY = getTermCensorBarY(bbox, coreBarHeight, fontSize, {
+          alignBottomToBaseline: false,
+        });
+        barY = lerp(glyphBarY, baselineBarY, blend);
+      }
+      const targetTextY = getSiblingCensorCenteredTextY(
+        bbox,
+        baselineBarY,
+        coreBarHeight
+      );
+      textEl.setAttribute("y", String(lerp(0, targetTextY, blend)));
+      bbox = textEl.getBBox();
+    } else {
+      // Glyph-centered (home-row relationship); textEl.y stays 0.
+      barY = getTermCensorBarY(bbox, coreBarHeight, fontSize, {
+        alignBottomToBaseline: false,
+      });
+    }
+  }
 
   if (hitEl) {
     hitEl.setAttribute("x", bbox.x - hitPad);
@@ -11686,30 +13766,24 @@ function updateTermHitArea(textEl, hitEl, censorEl, options = {}) {
   }
 
   if (censorEl) {
-    const fontSize = getTermFontSize(textEl);
-    const isDisplaySize = fontSize > LAYOUT.fontSize;
-    const barHeight =
-      getTermCensorBarHeight(fontSize) +
-      (isDisplaySize ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0);
-    const barWidth = bbox.width + MENTION_CENSOR_WIDTH_PAD * 2;
-    const barX = bbox.x - MENTION_CENSOR_WIDTH_PAD;
-    const barY = getTermCensorBarY(
-      bbox,
-      barHeight - (isDisplaySize ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0),
-      fontSize
-    );
     censorEl.setAttribute("x", barX);
     censorEl.setAttribute("width", barWidth);
     censorEl.setAttribute("y", barY);
     censorEl.setAttribute("height", barHeight);
     censorEl.removeAttribute("transform");
+    if (alignBottomToBaseline) {
+      censorEl.style.animation = "none";
+      censorEl.style.transition = "none";
+      censorEl.style.transform = "scaleX(1)";
+    }
     const isSelectedDuringScramble =
       textEl.closest(".sun-term-wrap")?.classList.contains("is-selected") &&
       viewport?.classList.contains("is-term-font-scrambling");
     if (
       !options.skipCensorAnimation &&
       !isSelectedDuringScramble &&
-      !viewport?.classList.contains("is-term-sibling-censor-held")
+      !viewport?.classList.contains("is-term-sibling-censor-held") &&
+      !alignBottomToBaseline
     ) {
       applyCensorWriteTiming(censorEl, barWidth);
     }
@@ -12074,7 +14148,11 @@ function applyFocusTermPositions(layout) {
     if (!textEl) continue;
 
     let localX;
-    if (focusState.phase === "locked" || isUnfocusing) {
+    if (isUnfocusing) {
+      const home = focusState.termHomeXs;
+      const reflowT = focusState.unfocusReflowT ?? 1;
+      localX = home ? lerp(termEndXs[i], home[i], reflowT) : termEndXs[i];
+    } else if (focusState.phase === "locked") {
       localX = termEndXs[i];
     } else if (carouselSteps === 0) {
       localX = termEndXs[i];
@@ -12097,7 +14175,12 @@ function applyFocusTermPositions(layout) {
     updateTermHitArea(
       textEl,
       wraps[i].querySelector(".sun-term-hit"),
-      wraps[i].querySelector(".sun-term-censor")
+      wraps[i].querySelector(".sun-term-censor"),
+      {
+        forceBaselineCensor:
+          !wraps[i].classList.contains("is-selected") &&
+          isTermPageSiblingCensorBaselineMode(textEl),
+      }
     );
   }
 
@@ -12138,6 +14221,38 @@ function applyFocusTermPositions(layout) {
   }
 }
 
+/**
+ * Even arc-row term positions for a group's title row, keeping the selected
+ * term leading (carousel order). This is the resting home layout the row
+ * re-packs to when leaving a term page.
+ * @param {number} groupIndex
+ * @param {number} selectedIndex
+ * @param {number[]} widths per-term widths in natural index order
+ * @returns {{ xs: number[], anchor: "start" | "end" }}
+ */
+function computeArcRowHomeXs(groupIndex, selectedIndex, widths) {
+  const group = groups[groupIndex];
+  const termCount = widths.length;
+  const transform = getGroupTransform(groupIndex, currentLayout);
+  const { outwardSign, termGap } = layoutTermsOnRay(
+    transform,
+    group.terms,
+    currentLayout,
+    widths
+  );
+  const slots = getSlotsAtStep(
+    getCarouselSteps(selectedIndex, termCount),
+    termCount
+  );
+  const xs = new Array(termCount).fill(0);
+  let dist = 0;
+  for (const termIdx of slots) {
+    xs[termIdx] = outwardSign === 1 ? dist : -dist;
+    dist += (widths[termIdx] ?? 0) + termGap;
+  }
+  return { xs, anchor: outwardSign === 1 ? "end" : "start" };
+}
+
 function refineTermPositions(layout) {
   const count = LAYOUT.rayCount || 0;
 
@@ -12154,6 +14269,8 @@ function refineTermPositions(layout) {
     const widths = texts.map((el) => el.getBBox().width);
 
     if (arcTermLayout && arcTermLayout.groupIndex === groupIndex) {
+      // The cached termXs are the even arc-row positions the title row was
+      // re-packed to during the unfocus reflow, so apply them as-is.
       for (let i = 0; i < texts.length; i++) {
         texts[i].setAttribute("x", arcTermLayout.termXs[i]);
         texts[i].setAttribute("text-anchor", arcTermLayout.textAnchor);
@@ -12253,6 +14370,98 @@ function animateSnapTo(targetIndex, arc, options = {}) {
   snapAnimFrame = requestAnimationFrame(frame);
 }
 
+function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
+  if (!currentLayout || isFocusActive() || isTermNavigating()) return false;
+
+  if (isOverviewTimelineMode() && yearScroll) {
+    yearScroll.handleWheel(deltaY);
+    return true;
+  }
+
+  if (isOverviewTagsMode()) {
+    return false;
+  }
+
+  cancelSnapAnimation();
+  cancelMomentum();
+  settleSnapIndex = null;
+  clearTimeout(snapDebounceTimer);
+  clearArcTermLayout();
+  clearTitleRowTermHover();
+
+  const wheelDeltaY =
+    fromSplashHandoff && deltaY > 0 && deltaY < LAYOUT.scrollFineThresholdPx
+      ? LAYOUT.scrollFineThresholdPx
+      : deltaY;
+
+  const delta = applyWheelScroll(wheelDeltaY);
+  lastWheelWasNotch = isWheelNotch(wheelDeltaY);
+  if (!lastWheelWasNotch) {
+    scrollOffset -= delta;
+  }
+  updateActiveFromScroll(currentLayout);
+  render(currentLayout);
+
+  const isFineScroll =
+    !fromSplashHandoff &&
+    Math.abs(wheelDeltaY) < LAYOUT.scrollFineThresholdPx &&
+    Math.abs(scrollVelocity) < LAYOUT.scrollMomentumMinVelocity * 2;
+  if (isFineScroll) {
+    scrollVelocity = 0;
+    snapToNearest(currentLayout);
+  } else {
+    ensureMomentumLoop();
+    scheduleSnapEnd(currentLayout);
+  }
+  return true;
+}
+
+function flushPendingSplashWheelDelta() {
+  if (pendingSplashWheelDelta == null) return;
+  const deltaY = pendingSplashWheelDelta;
+  pendingSplashWheelDelta = null;
+  if (!applyArcWheelDelta(deltaY, { fromSplashHandoff: true })) {
+    pendingSplashWheelDelta = deltaY;
+  }
+}
+
+function bindSplashWheelHandoff() {
+  window.addEventListener("splash-wheel-handoff", (event) => {
+    const deltaY = event.detail?.deltaY;
+    const fromSplashHandoff = Boolean(event.detail?.fromSplashHandoff);
+    if (!deltaY || deltaY <= 0) return;
+    if (!applyArcWheelDelta(deltaY, { fromSplashHandoff })) {
+      pendingSplashWheelDelta = (pendingSplashWheelDelta ?? 0) + deltaY;
+    }
+  });
+}
+
+let navTypewriterEntered = false;
+const NAV_SPLASH_ENTRANCE_DELAY_MS = 220;
+
+/** True while a splash overlay is present and has not yet been dismissed. */
+function isSplashAwaitingEntrance() {
+  if (navTypewriterEntered) return false;
+  const splashEl = document.getElementById("splash");
+  return Boolean(splashEl) && !splashEl.hidden && !splashEl.classList.contains("is-dismissed");
+}
+
+/** Home entrance: typewriter-scramble the nav labels once the splash clears. */
+function bindSplashNavEntrance() {
+  window.addEventListener(
+    "splash-dismissed",
+    () => {
+      if (navTypewriterEntered) return;
+      navTypewriterEntered = true;
+      window.setTimeout(() => {
+        revealSiteNav();
+        runNavTypewriterEnter();
+      }, NAV_SPLASH_ENTRANCE_DELAY_MS);
+    },
+    { once: true }
+  );
+}
+
 function bindWheelScroll() {
   if (wheelBound) return;
   wheelBound = true;
@@ -12276,45 +14485,12 @@ function bindWheelScroll() {
       }
 
       event.preventDefault();
-      if (!currentLayout || isFocusActive() || isTermNavigating()) return;
-
-      if (isOverviewTimelineMode() && yearScroll) {
-        yearScroll.handleWheel(event.deltaY);
-        return;
-      }
-
-      if (isOverviewTagsMode()) {
-        return;
-      }
-
-      cancelSnapAnimation();
-      cancelMomentum();
-      settleSnapIndex = null;
-      clearTimeout(snapDebounceTimer);
-      clearArcTermLayout();
-      clearTitleRowTermHover();
-
-      const delta = applyWheelScroll(event.deltaY);
-      lastWheelWasNotch = isWheelNotch(event.deltaY);
-      if (!lastWheelWasNotch) {
-        scrollOffset -= delta;
-      }
-      updateActiveFromScroll(currentLayout);
-      render(currentLayout);
-
-      const isFineScroll =
-        Math.abs(event.deltaY) < LAYOUT.scrollFineThresholdPx &&
-        Math.abs(scrollVelocity) < LAYOUT.scrollMomentumMinVelocity * 2;
-      if (isFineScroll) {
-        scrollVelocity = 0;
-        snapToNearest(currentLayout);
-      } else {
-        ensureMomentumLoop();
-        scheduleSnapEnd(currentLayout);
-      }
+      if (!applyArcWheelDelta(event.deltaY)) return;
     },
     { passive: false }
   );
+
+  flushPendingSplashWheelDelta();
 }
 
 function rebuild(preserveScroll = true) {
@@ -12395,36 +14571,30 @@ async function warmInitialViewImages(layout) {
 
 function updateLoadingProgress(ratio, label) {
   const pct = clamp(ratio, 0, 1) * 100;
-  if (loadingLabelEl && label) loadingLabelEl.textContent = label;
+  // Label stays fixed ("טרמינולוגיה פוליטית"); the censor bar conveys progress.
+  void label;
   if (loadingBarFillEl) loadingBarFillEl.style.width = `${pct}%`;
   if (loadingProgressEl) loadingProgressEl.textContent = "";
 }
 
 function finishLoadingWithScramble() {
   advanceLoadingWork(LOADING_WORK_WEIGHT.finish, "מוכן");
-  loadingWork.display = 1;
-  updateLoadingProgress(1, "מוכן");
-  return new Promise((resolve) => {
-    runLoadingBarExitScramble(loadingLabelEl, () => {
-      loadingEl?.classList.add("hidden");
-      revealSiteNav();
-      runNavEnterScramble(resolve);
-    });
-  });
-}
-
-function startBackgroundTermImagePreload(urls) {
-  if (!urls.length) return;
-  void preloadTermImages(urls, null, {
-    decode: false,
-    concurrency: 12,
-    maxRounds: 2,
-    retries: 1,
-  }).then(({ failed, total }) => {
-    if (failed > 0) {
-      console.warn(`[sun-map] ${failed}/${total} term images failed background preload`);
-    }
-  });
+  return waitForLoadingMinimum().then(
+    () =>
+      new Promise((resolve) => {
+        loadingEl?.classList.add("hidden");
+        // Splash dismissal owns the visible nav entrance (typewriter scramble).
+        // While the splash is still up, keep the nav hidden so its text is never
+        // seen before the entrance animation plays; the splash-dismissed handler
+        // reveals + types it. If it already played, nothing more to do here.
+        if (navTypewriterEntered || isSplashAwaitingEntrance()) {
+          resolve();
+          return;
+        }
+        revealSiteNav();
+        runNavEnterScramble(resolve);
+      })
+  );
 }
 
 function findTermByName(termName) {
@@ -12550,7 +14720,10 @@ function exposeBleedTextLabApi() {
 }
 
 async function init() {
+  bindSplashWheelHandoff();
+  bindSplashNavEntrance();
   try {
+    loadingWork.startedAt = performance.now();
     loadingWork.display = 0;
     updateLoadingProgress(0, "טוען נתונים…");
     ensureLoadingDisplayTick();
@@ -12606,6 +14779,7 @@ async function init() {
         minYear: timelineMinYear,
         maxYear: timelineMaxYear,
         onChange: () => {
+          dismissTimelineScrollHint();
           syncTimelineHintFromYearScroll();
           if (currentLayout && isOverviewTimelineMode()) render(currentLayout);
         },
@@ -12614,6 +14788,15 @@ async function init() {
       initSunTimelineHint({
         isInOverview,
         getOverviewSubMode: () => overviewSubMode,
+        getSunCircle: () => {
+          if (!currentLayout || !viewport) return null;
+          const rect = viewport.getBoundingClientRect();
+          return {
+            cx: rect.left + currentLayout.cx,
+            cy: rect.top + currentLayout.cy,
+            r: currentLayout.radius,
+          };
+        },
       });
       initSiteNav({
         pending: true,
@@ -12637,11 +14820,13 @@ async function init() {
       LAYOUT.rayCount = groups.length;
       overviewGeo.resetFitCache();
       buildTermLocationIndex();
+      startBackgroundTermImagePreload(imageUrls, activeIndex);
     });
 
     await runLoadingSegmentAsync("מכין תצוגה…", LOADING_WORK_WEIGHT.rebuild, 5000, async () => {
       await rebuildAsync(false);
     });
+    flushPendingSplashWheelDelta();
 
     if (currentLayout) {
       runLoadingSegment("מכין תצוגה…", LOADING_WORK_WEIGHT.titleRow, 500, () => {
@@ -12657,7 +14842,6 @@ async function init() {
     initLetterShuffle();
     initFontScrambleTransitions();
     await finishLoadingWithScramble();
-    startBackgroundTermImagePreload(imageUrls);
 
     consumeSessionNavIntent();
     bindLetterShuffleDelegation(viewport, LETTER_SHUFFLE_DELEGATION_SELECTOR);

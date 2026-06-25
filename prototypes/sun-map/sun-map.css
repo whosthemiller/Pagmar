@@ -15,6 +15,14 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: "FrankRuhl";
+  src: url("../../assets/fonts/FrankRuhl-VF-TRIAL.ttf") format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @property --term-title-band-height {
   syntax: "<length>";
   inherits: true;
@@ -40,6 +48,11 @@
   --sun-prose-weight-overview-term: 300;
   --sun-mono-font: "RoobertVF", monospace;
   --sun-mono-variation: "MONO" 100, "slnt" 0;
+  /* Revealed same-object mentions render in FrankRuhl (serif) inside RoobertVF
+     (sans) prose, so their baseline metrics sit slightly high. Nudge the
+     revealed glyphs down onto the line. Only applied when the censor bar is
+     removed, so the censored-state band stays aligned with the page bars. */
+  --sun-mention-reveal-shift: -0.09em;
 }
 
 * {
@@ -66,7 +79,8 @@ body,
 .sun-term-page__side-heading,
 .sun-term-page__side-text,
 .sun-term-page__label-nav-text,
-.sun-filter-dim-hint {
+.sun-filter-dim-hint,
+.sun-timeline-event-hint {
   font-family: var(--sun-prose-font);
   font-variation-settings: var(--sun-prose-variation, normal);
 }
@@ -88,7 +102,6 @@ body,
 .sun-label-row-hover-heading,
 .sun-term-bleed-caption,
 .sun-term-page__caption,
-.sun-timeline-event-hint,
 .sun-filter-bar__label,
 .sun-filter-bar__trigger,
 .sun-filter-bar__suffix,
@@ -295,25 +308,43 @@ body,
   text-wrap: pretty;
 }
 
+/* Loading sits on top of the splash overlay (z-index: 200) so the censor
+   intro plays first, then reveals the splash underneath when it completes. */
+.sun-loading {
+  position: fixed;
+  z-index: 300;
+}
+
 .sun-loading__panel {
-  width: min(280px, 80vw);
+  width: auto;
+  max-width: 90vw;
+}
+
+.sun-loading__censor-wrap {
+  position: relative;
+  display: inline-block;
 }
 
 .sun-loading__label {
-  margin: 0 0 12px;
-  font-size: 0.95rem;
+  margin: 0;
+  font-family: var(--sun-mono-font);
+  font-variation-settings: "MONO" 100, "slnt" 0;
+  font-weight: 400;
+  font-size: 24px;
+  line-height: 1.2;
+  white-space: nowrap;
+  color: var(--ink);
 }
 
-.sun-loading__bar {
-  height: 3px;
-  background: rgba(17, 17, 17, 0.12);
-  overflow: hidden;
-}
-
-.sun-loading__bar-fill {
-  height: 100%;
+/* Redaction bar: grows across the term to censor/erase it as loading advances. */
+.sun-loading__censor {
+  position: absolute;
+  top: -0.12em;
+  bottom: -0.12em;
+  right: 0;
   width: 0%;
   background: var(--ink);
+  pointer-events: none;
 }
 
 .sun-loading__progress {
@@ -794,7 +825,7 @@ body,
   width: 100%;
   font-size: 32px;
   font-weight: 400;
-  line-height: 38px;
+  line-height: 42px;
   color: var(--ink);
   direction: rtl;
   text-align: right;
@@ -808,6 +839,10 @@ body,
 
 .sun-term-page.is-scroll-content .sun-term-page__image {
   height: var(--term-page-scroll-image-height, 40vh);
+}
+
+.sun-term-page.is-scroll-content .sun-term-page__images img.sun-term-page__image {
+  object-position: center top;
 }
 
 .sun-term-page.is-scroll-content .sun-term-page__caption {
@@ -1052,6 +1087,8 @@ body,
 .sun-term-meta__value .sun-def-mention--external {
   cursor: pointer;
   pointer-events: auto;
+  font-family: "FrankRuhl", serif;
+  font-variation-settings: "wght" 400, "opsz" 32;
 }
 
 .sun-term-page__definition .sun-def-mention--same-object,
@@ -1065,26 +1102,36 @@ body,
   pointer-events: auto;
   cursor: pointer;
   position: relative;
+  font-family: "FrankRuhl", serif;
+  font-variation-settings: "wght" 400, "opsz" 32;
+  /* The censor bar is painted as a centered background band (not a solid
+     background-color that fills the whole line box, and not an absolutely
+     positioned ::before). With box-decoration-break: clone every wrapped line
+     fragment gets its own band, so a mention that breaks across lines stays
+     fully covered. The band height tracks the page-censor line bands
+     (~0.87 * line-height) so a scattered censored word matches the censor bars
+     painted over the surrounding text instead of standing taller than them. */
+  background-image: linear-gradient(var(--ink), var(--ink));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% calc(1lh * 34 / 38 + 1px);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  padding-inline: 1px;
+  margin-inline: -1px;
 }
 
-.sun-term-page__definition .sun-def-mention--same-object::before,
-.sun-term-page__side-text .sun-def-mention--same-object::before,
-.sun-term-page__label-row-text .sun-def-mention--same-object::before,
-.sun-term-page__label-nav-panel-text .sun-def-mention--same-object::before,
-.sun-term-meta__value .sun-def-mention--same-object::before {
-  content: "";
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  left: -1px;
-  height: 1.25em;
-  background: var(--ink);
-  pointer-events: none;
+/* The מדגיש / מטשטש side sections set their mentions in FrankRuhl, which has a
+   slightly taller ascender/descender reach than the canonical word censor, so
+   their censor band needs a touch more height to fully cover the letters. */
+.sun-term-page__side-text .sun-def-mention--same-object {
+  background-size: 100% calc(1lh * 36 / 38 + 1px);
 }
 
-.sun-viewport.is-same-object-mention-hover .sun-def-mention--same-object::before,
-.sun-viewport.is-term-switch-censor .sun-def-mention--same-object.is-mention-revealed::before {
-  opacity: 0;
+.sun-viewport.is-same-object-mention-hover .sun-def-mention--same-object,
+.sun-viewport.is-term-switch-censor .sun-def-mention--same-object.is-mention-revealed {
+  background-image: none;
+  vertical-align: var(--sun-mention-reveal-shift);
 }
 
 .sun-page-censor-layer {
@@ -1092,6 +1139,11 @@ body,
   inset: 0;
   z-index: 6;
   pointer-events: none;
+}
+
+.sun-viewport.is-same-object-mention-hover > .sun-page-censor-layer,
+.sun-viewport.is-term-switch-censor > .sun-page-censor-layer {
+  z-index: 12;
 }
 
 .sun-page-censor-line {
@@ -1218,6 +1270,23 @@ body,
   fill: #111111;
 }
 
+/* Selected title stays uncensored even if page-censor mode is active elsewhere. */
+.sun-viewport.is-term-sibling-censor-held
+  .sun-svg.sun-is-page-censored
+  .sun-ray.is-active
+  .sun-term-wrap.is-selected
+  .sun-term-censor,
+.sun-viewport.is-term-sibling-censor-held
+  .sun-svg.sun-is-page-censored
+  .sun-ray.is-locked
+  .sun-term-wrap.is-selected
+  .sun-term-censor {
+  opacity: 0;
+  transform: scaleX(0);
+  transition: none;
+  animation: none;
+}
+
 .sun-viewport.is-same-object-mention-hover .sun-term-page__figure:has(> img.sun-term-page__image) {
   position: relative;
 }
@@ -1227,11 +1296,11 @@ body,
 }
 
 .sun-viewport.is-same-object-mention-hover .sun-term-page__figure:has(> img.sun-term-page__image) > img.sun-term-page__image {
-  display: none;
+  visibility: hidden;
 }
 
 .sun-viewport.is-term-switch-censor .sun-term-page__figure:has(> img.sun-term-page__image) > img.sun-term-page__image {
-  display: none;
+  visibility: hidden;
 }
 
 .sun-viewport.is-same-object-mention-hover .sun-term-page__figure:has(> img.sun-term-page__image)::before,
@@ -1244,6 +1313,18 @@ body,
 .sun-bleed-backdrop.is-censor-placeholder .sun-bleed-backdrop__pixel-canvas {
   opacity: 0;
   visibility: hidden;
+}
+
+.sun-media-placeholder-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.sun-media-placeholder-layer .sun-page-censor-media-frame {
+  z-index: 0;
 }
 
 .sun-image-visible-debug-layer {
@@ -1635,7 +1716,7 @@ img.sun-title-row-image__img.is-loaded {
 .sun-timeline-event-hint {
   position: fixed;
   z-index: 26;
-  bottom: var(--grid-margin);
+  top: calc(var(--site-nav-height) + var(--grid-margin));
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -1655,9 +1736,31 @@ img.sun-title-row-image__img.is-loaded {
 }
 
 .sun-timeline-event-hint {
-  font-size: 14px;
+  font-size: 82px;
   font-weight: 400;
-  line-height: 20px;
+  line-height: 80px;
+  white-space: pre-line;
+}
+
+.sun-timeline-scroll-hint {
+  position: fixed;
+  z-index: 26;
+  bottom: var(--grid-margin);
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  color: var(--ink);
+  direction: rtl;
+  text-align: center;
+  white-space: nowrap;
+  font-family: var(--sun-mono-font);
+  font-variation-settings: var(--sun-mono-variation, normal);
+  font-size: 18px;
+  font-weight: 400;
+  line-height: 26px;
 }
 
 .sun-term-hover-caption__lines {
@@ -1688,7 +1791,7 @@ img.sun-title-row-image__img.is-loaded {
 }
 
 .sun-timeline-year {
-  font-size: 40px;
+  font-size: 30px;
   font-weight: 400;
   pointer-events: none;
   user-select: none;
@@ -1814,25 +1917,6 @@ img.sun-title-row-image__img.is-loaded {
   pointer-events: auto;
 }
 
-.sun-filter-bar__select-wrap.has-value {
-  background: var(--ink);
-  border-color: var(--ink);
-}
-
-.sun-filter-bar__select-wrap.has-value .sun-filter-bar__trigger,
-.sun-filter-bar__select-wrap.has-value .sun-filter-bar__value,
-.sun-filter-bar__select-wrap.has-value .sun-filter-bar__suffix {
-  color: var(--bg);
-}
-
-.sun-filter-bar__select-wrap.has-value .sun-filter-bar__suffix:hover {
-  opacity: 0.65;
-}
-
-.sun-filter-bar__select-wrap.has-value .sun-filter-bar__suffix:focus-visible {
-  outline-color: var(--bg);
-}
-
 .sun-filter-bar__trigger {
   display: block;
   flex: 1 1 auto;
@@ -1870,7 +1954,7 @@ img.sun-title-row-image__img.is-loaded {
   box-shadow: none;
   font-family: "RoobertVF", monospace;
   font-variation-settings: "MONO" 100, "slnt" 0;
-  font-weight: 400;
+  font-weight: 500;
   line-height: 1;
   color: var(--ink);
   cursor: pointer;
@@ -2035,12 +2119,12 @@ img.sun-title-row-image__img.is-loaded {
   height: 1em;
 }
 
-[data-letter-shuffle-active]:not(:is(svg text)):not(.sun-terms-index__term-label):not(.site-nav__label):not(.sun-term-page__label-nav-text):not(.sun-term-meta__tag):not(.sun-term-meta__value):not(.sun-def-mention),
-[data-letter-shuffle-hover]:not(:is(svg text)):not(.sun-terms-index__term-label):not(.site-nav__label):not(.sun-term-page__label-nav-text):not(.sun-term-meta__tag):not(.sun-term-meta__value):not(.sun-def-mention) {
+[data-letter-shuffle-active]:not(:is(svg text)):not(.sun-terms-index__term-label):not(.site-nav__label):not(.splash__intro-link):not(.sun-term-page__label-nav-text):not(.sun-term-meta__tag):not(.sun-term-meta__value):not(.sun-def-mention),
+[data-letter-shuffle-hover]:not(:is(svg text)):not(.sun-terms-index__term-label):not(.site-nav__label):not(.splash__intro-link):not(.sun-term-page__label-nav-text):not(.sun-term-meta__tag):not(.sun-term-meta__value):not(.sun-def-mention) {
   text-decoration: none !important;
 }
 
-[data-letter-shuffle-active]:not(.sun-terms-index__term-label):not(.site-nav__label):not(.sun-term-page__label-nav-text):not(.sun-term-meta__tag):not(.sun-term-meta__value):not(.sun-def-mention) .letter-shuffle-char {
+[data-letter-shuffle-active]:not(.sun-terms-index__term-label):not(.site-nav__label):not(.splash__intro-link):not(.sun-term-page__label-nav-text):not(.sun-term-meta__tag):not(.sun-term-meta__value):not(.sun-def-mention) .letter-shuffle-char {
   text-decoration: none;
 }
 
