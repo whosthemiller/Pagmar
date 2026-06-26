@@ -342,6 +342,10 @@ const LAYOUT = {
   scrollMomentumHandoffVelocity: 0.018,
   scrollCoastDelayMs: 22,
   scrollCoastStartMs: 10,
+  /** Very gentle home-view sun drift (scrollOffset units per second). */
+  idleRotateSpeed: 0.05,
+  /** Delay before idle drift resumes after mouse/scroll activity stops. */
+  idleRotateRestartDelayMs: 1200,
   snapDurationMs: 1050,
   snapDebounceMs: 140,
   snapOvershoot: 5.8,
@@ -709,8 +713,20 @@ let timelineMaxYear = new Date().getFullYear();
 /** @type {ReturnType<typeof createYearScrollController> | null} */
 let yearScroll = null;
 let lastPointer = { x: 0, y: 0, known: false };
+let idleRotateFrame = null;
+let idleRotateBound = false;
+let idleRotateLastFrameAt = 0;
+let lastUserActivityAt = 0;
 let hoveredRay = null;
 let hoveredWrap = null;
+/**
+ * Term hover stays disarmed until the pointer genuinely moves. When the map
+ * first appears under a stationary cursor, the browser fires `mouseover` over
+ * whatever term sits beneath the pointer (without any `mousemove`), which would
+ * reveal a censored term the user never intentionally pointed at. We only honor
+ * hover after a real pointer movement, and re-disarm on each home entrance.
+ */
+let termHoverArmed = false;
 /** @type {null | {
  *   phase: 'animating' | 'locked' | 'switch-exiting' | 'switching' | 'switch-entering' | 'unfocusing',
  *   direction: 'in' | 'out',
@@ -1011,6 +1027,24 @@ function ensureActiveRowSnapped(arc) {
   updateActiveFromScroll(arc);
 }
 
+/** Animate the highlighted row to center when idle drift left the arc slightly misaligned. */
+function snapActiveRowToCenterIfNeeded() {
+  if (!currentLayout || !groups.length) return;
+  if (!isAtHomeView()) return;
+  if (isSplashAwaitingEntrance()) return;
+  if (isArcScrollMotionActive()) return;
+
+  const nearestSnap = resolveSnapIndex(currentLayout, 0);
+  const targetOffset = scrollOffsetForSnapIndex(nearestSnap, currentLayout);
+  if (Math.abs(scrollOffset - targetOffset) < 0.001) return;
+
+  markUserActivity();
+  clearTimeout(snapDebounceTimer);
+  scrollVelocity = 0;
+  settleSnapIndex = null;
+  animateSnapTo(nearestSnap, currentLayout, { startVelocity: 0 });
+}
+
 function randomSnapIndex() {
   const count = LAYOUT.rayCount || groups.length || 1;
   return Math.floor(Math.random() * count);
@@ -1279,9 +1313,10 @@ function findOverviewHoverTargetAtPointer(clientX, clientY) {
 }
 
 function applyOverviewHoverAtPointer(clientX, clientY, { maintainOnMiss = false } = {}) {
-  if (isFocusActive() || overviewProgress > 0.02 || isArcScrollMotionActive()) {
-    return;
-  }
+  if (isFocusActive() || overviewProgress > 0.02) return;
+
+  snapActiveRowToCenterIfNeeded();
+  if (isArcScrollMotionActive()) return;
 
   const target = findOverviewHoverTargetAtPointer(clientX, clientY);
   if (target?.wrap && target?.ray) {
@@ -13816,7 +13851,19 @@ function bindTermClick() {
 }
 
 function bindTermHover() {
+  // Arm hover on the first genuine pointer movement. A stationary pointer that
+  // the freshly rendered map appears under never fires `pointermove`, so its
+  // synthetic `mouseover` stays ignored until the user actually moves.
+  svgEl.addEventListener(
+    "pointermove",
+    () => {
+      termHoverArmed = true;
+    },
+    { passive: true }
+  );
+
   svgEl.addEventListener("mouseover", (event) => {
+    if (!termHoverArmed) return;
     if (isFocusActive()) return;
     if (overviewProgress > 0.02) return;
     if (isArcScrollMotionActive()) return;
@@ -14738,6 +14785,65 @@ function bindSplashNavEntrance() {
   );
 }
 
+function markUserActivity() {
+  lastUserActivityAt = performance.now();
+}
+
+/** Hover on a censored term or pixelated title-row image counts as engagement. */
+function hasActiveHomeHoverEngagement() {
+  if (!isAtHomeView()) return false;
+  if (hoveredTitleRowTermId) return true;
+  if (
+    bleedBackdropEl?.classList.contains("is-visible") &&
+    bleedBackdropEl.classList.contains("is-hover")
+  ) {
+    return true;
+  }
+  return bleedPixelAnimFrame !== null;
+}
+
+function canIdleRotate(now) {
+  if (!currentLayout || !groups.length) return false;
+  if (!isAtHomeView()) return false;
+  if (isSplashAwaitingEntrance()) return false;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+  if (isArcScrollMotionActive()) return false;
+  if (hasActiveHomeHoverEngagement()) return false;
+  if (now - lastUserActivityAt < LAYOUT.idleRotateRestartDelayMs) return false;
+  return true;
+}
+
+function tickIdleRotate(now) {
+  idleRotateFrame = requestAnimationFrame(tickIdleRotate);
+
+  if (!canIdleRotate(now)) {
+    idleRotateLastFrameAt = now;
+    return;
+  }
+
+  const dt = idleRotateLastFrameAt > 0 ? Math.min(48, now - idleRotateLastFrameAt) : 16.67;
+  idleRotateLastFrameAt = now;
+
+  scrollOffset -= LAYOUT.idleRotateSpeed * (dt / 1000);
+  updateActiveFromScroll(currentLayout);
+  render(currentLayout);
+}
+
+function bindIdleRotate() {
+  if (idleRotateBound || !viewport) return;
+  idleRotateBound = true;
+
+  const onActivity = () => markUserActivity();
+  viewport.addEventListener("mousemove", onActivity, { passive: true });
+  viewport.addEventListener("wheel", onActivity, { passive: true });
+  viewport.addEventListener("touchstart", onActivity, { passive: true });
+  viewport.addEventListener("touchmove", onActivity, { passive: true });
+
+  markUserActivity();
+  idleRotateLastFrameAt = performance.now();
+  idleRotateFrame = requestAnimationFrame(tickIdleRotate);
+}
+
 function bindWheelScroll() {
   if (wheelBound) return;
   wheelBound = true;
@@ -14823,13 +14929,6 @@ async function rebuildAsync(preserveScroll = true) {
 function bindGridToggle() {
   if (!gridEl) return;
   gridEl.classList.add("is-hidden");
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "g" && event.key !== "G") return;
-    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-      return;
-    }
-    gridEl.classList.toggle("is-hidden");
-  });
 }
 
 async function warmInitialViewImages(layout) {
@@ -15130,6 +15229,7 @@ async function init() {
     bindWheelScroll();
     bindTermPageScroll();
     bindOverviewHover();
+    bindIdleRotate();
     bindTermHover();
     bindTermClick();
     bindBackNavigation();
