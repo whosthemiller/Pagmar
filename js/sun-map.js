@@ -15195,7 +15195,6 @@ async function init() {
       LAYOUT.rayCount = groups.length;
       overviewGeo.resetFitCache();
       buildTermLocationIndex();
-      startBackgroundTermImagePreload(imageUrls, activeIndex);
     });
 
     await runLoadingSegmentAsync("מכין תצוגה…", LOADING_WORK_WEIGHT.rebuild, 5000, async () => {
@@ -15217,6 +15216,11 @@ async function init() {
     initLetterShuffle();
     initFontScrambleTransitions();
     await finishLoadingWithScramble();
+
+    // Defer bulk image preloading until the UI is interactive.
+    if (imageUrls.length) {
+      window.setTimeout(() => startBackgroundTermImagePreload(imageUrls, activeIndex), 0);
+    }
 
     consumeSessionNavIntent();
     bindLetterShuffleDelegation(viewport, LETTER_SHUFFLE_DELEGATION_SELECTOR);

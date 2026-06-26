@@ -23,6 +23,8 @@ let allTerms = [];
 /** @type {ResizeObserver | null} */
 let resizeObserver = null;
 let isVisible = false;
+/** Built lazily on first open — avoids blocking initial page load. */
+let gridBuilt = false;
 
 /** @type {{ lineHeight: number, fontSize: number }} */
 let currentLayoutMetrics = { lineHeight: LINE_HEIGHT, fontSize: FONT_SIZE };
@@ -620,12 +622,19 @@ function renderGrid(blockLayouts) {
   rootEl.appendChild(blocksWrap);
 }
 
+function ensureGridBuilt() {
+  if (gridBuilt || !rootEl || !allTerms.length) return;
+  rebuildGrid();
+  gridBuilt = true;
+}
+
 function rebuildGrid() {
   if (!rootEl || !allTerms.length) return;
   clearTermHoverState();
 
   let scale = 1;
-  while (true) {
+  let guard = 0;
+  while (guard++ < 40) {
     const resolved = resolveLayoutForScale(scale);
     currentLayoutMetrics = {
       lineHeight: resolved.lineHeight,
@@ -675,6 +684,7 @@ export function isSunTermsIndexVisible() {
 
 export function showSunTermsIndex() {
   if (!rootEl) return;
+  ensureGridBuilt();
   setVisibleState(true);
 }
 
@@ -711,7 +721,7 @@ export function initSunTermsIndex({
   if (!rootEl) return;
 
   allTerms = getAllTermsSorted(getGroups());
-  rebuildGrid();
+  gridBuilt = false;
 
   bindTermPointerHover();
 
@@ -725,5 +735,9 @@ export function initSunTermsIndex({
 
 export function refreshSunTermsIndex() {
   allTerms = getAllTermsSorted(getGroups());
-  if (isVisible) rebuildGrid();
+  gridBuilt = false;
+  if (isVisible) {
+    rebuildGrid();
+    gridBuilt = true;
+  }
 }

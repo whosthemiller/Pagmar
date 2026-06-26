@@ -23,6 +23,8 @@ let allGroups = [];
 /** @type {ResizeObserver | null} */
 let resizeObserver = null;
 let isVisible = false;
+/** Built lazily on first open — avoids blocking initial page load. */
+let gridBuilt = false;
 /** @type {Set<string>} */
 let censoredTermIds = new Set();
 
@@ -547,12 +549,19 @@ function renderGrid(blockLayouts) {
   applyFilterCensorToGrid(censoredTermIds);
 }
 
+function ensureGridBuilt() {
+  if (gridBuilt || !rootEl || !allGroups.length) return;
+  rebuildGrid();
+  gridBuilt = true;
+}
+
 function rebuildGrid() {
   if (!rootEl || !allGroups.length) return;
   clearTermHoverState();
 
   let scale = 1;
-  while (true) {
+  let guard = 0;
+  while (guard++ < 40) {
     const resolved = resolveLayoutForScale(scale);
     currentLayoutMetrics = {
       lineHeight: resolved.lineHeight,
@@ -594,6 +603,7 @@ export function isSunOverviewTermsGridVisible() {
 
 export function showSunOverviewTermsGrid() {
   if (!rootEl) return;
+  ensureGridBuilt();
   setVisibleState(true);
 }
 
@@ -651,7 +661,7 @@ export function initSunOverviewTermsGrid({
   if (!rootEl) return;
 
   allGroups = getGroups();
-  rebuildGrid();
+  gridBuilt = false;
 
   bindTermPointerHover();
 
@@ -665,5 +675,9 @@ export function initSunOverviewTermsGrid({
 
 export function refreshSunOverviewTermsGrid() {
   allGroups = getGroups();
-  if (isVisible) rebuildGrid();
+  gridBuilt = false;
+  if (isVisible) {
+    rebuildGrid();
+    gridBuilt = true;
+  }
 }
