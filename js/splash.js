@@ -140,11 +140,11 @@ function getBandDimensions() {
   return { width: container.clientWidth, height: container.clientHeight };
 }
 
-/** @param {number} openProgress @param {{ maxFactor?: number }} [options] */
+/** @param {number} openProgress @param {{ maxFactor?: number, sourceImg?: HTMLImageElement | null }} [options] */
 function applyPixelation(openProgress, options = {}) {
   const maxFactor = options.maxFactor ?? CONFIG.maxFactor;
   const factor = getPixelFactor(openProgress, maxFactor);
-  const img = imageEl;
+  const img = options.sourceImg ?? imageEl;
   const { width, height } = getBandDimensions();
 
   if (!img || !canvasEl || factor <= 1 || !width || !height) {
@@ -171,22 +171,34 @@ function getGlitchOpenProgress(t, hold = CONFIG.glitchHold) {
   return revealT * (2 - revealT);
 }
 
-/** @param {{ durationMs?: number, onHold?: () => void, onComplete?: () => void }} [options] */
+/**
+ * @param {{
+ *   durationMs?: number,
+ *   fromImg?: HTMLImageElement | null,
+ *   toImg?: HTMLImageElement | null,
+ *   onHold?: () => void,
+ *   onComplete?: () => void,
+ * }} [options]
+ */
 function runPixelGlitchAnimation(options = {}) {
   stopAnimation();
   const durationMs = options.durationMs ?? CONFIG.transitionMs;
   const maxFactor = CONFIG.maxFactor;
+  const fromImg = options.fromImg ?? null;
+  const toImg = options.toImg ?? null;
   const reducedMotion = prefersReducedMotion();
   const duration = reducedMotion ? 0 : durationMs;
 
   if (duration <= 0) {
+    // Still perform the swap so the image actually advances without motion.
+    options.onHold?.();
     clearPixelation();
     options.onComplete?.();
     return;
   }
 
   let holdFired = false;
-  applyPixelation(0, { maxFactor });
+  applyPixelation(0, { maxFactor, sourceImg: fromImg ?? toImg });
   const start = performance.now();
 
   function frame(now) {
@@ -196,7 +208,11 @@ function runPixelGlitchAnimation(options = {}) {
       options.onHold?.();
     }
     const openProgress = getGlitchOpenProgress(t);
-    applyPixelation(openProgress, { maxFactor });
+    // Before the hold, reveal the outgoing image; after it, the incoming one.
+    // Drawing from the decoded preloaded image (not imageEl) guarantees the
+    // new photo is painted during the reveal instead of snapping in at the end.
+    const sourceImg = holdFired ? toImg ?? fromImg : fromImg ?? toImg;
+    applyPixelation(openProgress, { maxFactor, sourceImg });
     if (t < 1) {
       animFrame = requestAnimationFrame(frame);
     } else {
@@ -242,18 +258,22 @@ function runInitialReveal() {
   const slide = splashSlides[0];
   applyQuoteColor(slide.quoteTextColor);
   imageEl.src = slide.url;
-  imageEl.onload = () => {
+
+  const start = () => {
     if (!active) return;
+    const img = preloaded.get(slide.url) ?? imageEl;
     runPixelGlitchAnimation({
       durationMs: 600,
+      fromImg: img,
+      toImg: img,
       onComplete: scheduleGalleryAdvance,
     });
   };
+
   if (imageEl.complete && imageEl.naturalWidth > 0) {
-    runPixelGlitchAnimation({
-      durationMs: 600,
-      onComplete: scheduleGalleryAdvance,
-    });
+    start();
+  } else {
+    imageEl.onload = start;
   }
 }
 
@@ -276,15 +296,21 @@ async function advanceGallery() {
 
   const nextIndex = (currentIndex + 1) % splashSlides.length;
   const nextSlide = splashSlides[nextIndex];
+  const currentSlide = splashSlides[currentIndex];
 
+  let toImg;
   try {
-    await preloadImage(nextSlide.url);
+    toImg = await preloadImage(nextSlide.url);
   } catch {
     scheduleGalleryAdvance();
     return;
   }
 
+  const fromImg = preloaded.get(currentSlide.url) ?? null;
+
   runPixelGlitchAnimation({
+    fromImg,
+    toImg,
     onHold: () => {
       applyQuoteColor(nextSlide.quoteTextColor);
       if (imageEl) imageEl.src = nextSlide.url;

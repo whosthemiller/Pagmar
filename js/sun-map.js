@@ -417,6 +417,10 @@ const LAYOUT = {
   focusReorderMsFew: 520,
   focusReorderMsMultiFew: 400,
   focusReorderMsMulti: 500,
+  /** Per-extra-term speed-up for many-term carousels (> 3 terms). */
+  focusReorderMultiSpeedStep: 0.05,
+  /** Floor for the many-term carousel speed-up factor. */
+  focusReorderMultiSpeedMin: 0.75,
   focusExitExtraFactor: 0.65,
   focusGatePad: 12,
   focusCarouselExitEnd: 0.5,
@@ -2665,10 +2669,12 @@ function syncTermPageBleedClipForScroll() {
     } else {
       syncTermPageBleedClip();
     }
+    syncBleedBackdropDarkInvert();
     return;
   }
   viewport?.classList.remove("is-term-bleed-scroll-active");
   syncTermPageBleedClip();
+  syncBleedBackdropDarkInvert();
 }
 
 function syncTermHeaderPinState(layout = currentLayout) {
@@ -3196,8 +3202,18 @@ function tickUnfocus(now) {
   } else if (pendingOverviewMode) {
     const mode = pendingOverviewMode;
     pendingOverviewMode = null;
-    enterOverviewAfterUnfocus(mode);
-    syncNavAfterPageEnter();
+    if (mode === "timeline") {
+      forceOverviewReset();
+      syncNavAfterPageEnter();
+      pendingAfterHome = () => {
+        enterOverviewAfterUnfocus(mode);
+        syncNavAfterPageEnter();
+      };
+      flushPendingAfterHome();
+    } else {
+      enterOverviewAfterUnfocus(mode);
+      syncNavAfterPageEnter();
+    }
   } else if (pendingTermsIndex) {
     pendingTermsIndex = false;
     revealTermsIndex();
@@ -3433,6 +3449,7 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
     viewport?.classList.contains("is-term-font-scrambling");
   const preservedBarBottoms = captureCensoredBarScreenBottoms(getFocusRayGroup());
   const oldText = applyTypographyRules(group.terms[focusState.clickedIndex]?.name ?? "");
+  const prevTermId = group.terms[focusState.clickedIndex]?.id ?? null;
 
   clearSameObjectMentionHover();
   armSameObjectHoverReenterGate();
@@ -3553,6 +3570,10 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   syncTermFontOverlayPosition();
   const syncedOverlayTop = parseFloat(termFontOverlayEl.style.top);
   if (Number.isFinite(syncedOverlayTop)) termFontOverlayFrozenTop = syncedOverlayTop;
+
+  // The term we just left becomes a censored sibling. Reveal it uncensored first,
+  // then write its censor bar in across the title's typewriter animation.
+  startNewlyCensoredReveal(prevTermId);
 
   playFontScrambleTextSwitch(termFontOverlayTermEl, {
     fromText: oldText,
@@ -3849,6 +3870,108 @@ function applyCensorWriteTiming(el, widthPx) {
   const { durationS, steps } = getCensorWriteTiming(widthPx);
   el.style.setProperty("--sun-censor-write-duration", `${durationS}s`);
   el.style.setProperty("--sun-censor-write-steps", String(steps));
+}
+
+/** Keep the just-left term readable for this long before the censor writes in. */
+const NEWLY_CENSORED_HOLD_MS = 650;
+/** Term id (in the active group) currently being revealed-then-censored. */
+let newlyCensoredTermId = null;
+/** True once the readable hold ends and the censor bar is writing in. */
+let newlyCensoredWriting = false;
+let newlyCensoredToken = 0;
+/** @type {number | null} */
+let newlyCensoredHoldTimer = null;
+/** @type {number | null} */
+let newlyCensoredEndTimer = null;
+
+function clearNewlyCensoredTimers() {
+  if (newlyCensoredHoldTimer != null) {
+    clearTimeout(newlyCensoredHoldTimer);
+    newlyCensoredHoldTimer = null;
+  }
+  if (newlyCensoredEndTimer != null) {
+    clearTimeout(newlyCensoredEndTimer);
+    newlyCensoredEndTimer = null;
+  }
+}
+
+/** Re-apply the reveal/write state to the (possibly re-rendered) sibling wrap. */
+function applyNewlyCensoredStateToWrap() {
+  if (!newlyCensoredTermId) return;
+  const rayGroup = getFocusRayGroup();
+  const wrap = rayGroup?.querySelector(
+    `.sun-term-wrap[data-term-id="${CSS.escape(newlyCensoredTermId)}"]`
+  );
+  if (!wrap || wrap.classList.contains("is-selected")) return;
+  const censorEl = wrap.querySelector(".sun-term-censor");
+  if (!censorEl) return;
+  wrap.classList.add("is-newly-censored");
+  // Drop any held inline bar so CSS controls the reveal/write.
+  censorEl.style.removeProperty("transform");
+  censorEl.style.removeProperty("animation");
+  censorEl.style.removeProperty("transition");
+  const barWidth = parseFloat(censorEl.getAttribute("width")) || 0;
+  if (barWidth > 0) applyCensorWriteTiming(censorEl, barWidth);
+  if (newlyCensoredWriting) wrap.classList.add("is-censoring");
+  else wrap.classList.remove("is-censoring");
+}
+
+/**
+ * On a same-group term switch, the previously-selected term drops into the
+ * censored sibling row. Instead of snapping it to a solid bar, leave it readable
+ * for a beat, then animate the censor bar writing in. Driven by module state so
+ * it survives the re-renders that happen during the title typewriter.
+ * @param {string | null} termId
+ */
+function startNewlyCensoredReveal(termId) {
+  if (!termId) return;
+  clearNewlyCensoredTimers();
+  const token = ++newlyCensoredToken;
+  newlyCensoredTermId = termId;
+  newlyCensoredWriting = false;
+  applyNewlyCensoredStateToWrap();
+
+  newlyCensoredHoldTimer = window.setTimeout(() => {
+    newlyCensoredHoldTimer = null;
+    if (token !== newlyCensoredToken) return;
+    newlyCensoredWriting = true;
+    applyNewlyCensoredStateToWrap();
+    const rayGroup = getFocusRayGroup();
+    const censorEl = rayGroup
+      ?.querySelector(`.sun-term-wrap[data-term-id="${CSS.escape(termId)}"]`)
+      ?.querySelector(".sun-term-censor");
+    const barWidth = censorEl ? parseFloat(censorEl.getAttribute("width")) || 0 : 0;
+    const { durationS } = getCensorWriteTiming(barWidth);
+    newlyCensoredEndTimer = window.setTimeout(() => {
+      newlyCensoredEndTimer = null;
+      if (token !== newlyCensoredToken) return;
+      finishNewlyCensoredReveal();
+    }, durationS * 1000 + 80);
+  }, NEWLY_CENSORED_HOLD_MS);
+}
+
+function finishNewlyCensoredReveal() {
+  clearNewlyCensoredTimers();
+  newlyCensoredToken++;
+  const termId = newlyCensoredTermId;
+  newlyCensoredTermId = null;
+  newlyCensoredWriting = false;
+  if (!termId) return;
+  const rayGroup = getFocusRayGroup();
+  const wrap = rayGroup?.querySelector(
+    `.sun-term-wrap[data-term-id="${CSS.escape(termId)}"]`
+  );
+  if (wrap) {
+    wrap.classList.remove("is-newly-censored");
+    wrap.classList.remove("is-censoring");
+    const censorEl = wrap.querySelector(".sun-term-censor");
+    if (censorEl) {
+      censorEl.style.removeProperty("animation");
+      censorEl.style.removeProperty("transition");
+      censorEl.style.transform = "scaleX(1)";
+    }
+  }
+  refreshTermPageSiblingCensorBars();
 }
 
 function isCaptionCensorElement(el) {
@@ -6840,17 +6963,67 @@ function clearBleedBackdropDarkInvert() {
   );
 }
 
-/** Viewport-local band behind the fixed site navigation. */
-function getSiteNavSampleViewportRect() {
-  if (!viewport) return null;
-  const viewportWidth = viewport.clientWidth;
-  const navHeight = getSiteNavHeightPx();
+function getSiteNavSampleScreenRect() {
+  const navEl = document.getElementById("site-nav");
+  if (navEl) {
+    const rect = navEl.getBoundingClientRect();
+    if (rect.width >= 1 && rect.height >= 1) return rect;
+  }
   return {
     left: 0,
     top: 0,
-    width: viewportWidth,
-    height: Math.max(1, navHeight),
+    width: viewport?.clientWidth ?? window.innerWidth,
+    height: Math.max(1, getSiteNavHeightPx()),
   };
+}
+
+function screenRectToViewportRect(screenRect) {
+  const viewportBounds = viewport?.getBoundingClientRect();
+  if (!viewportBounds) return null;
+  return {
+    left: screenRect.left - viewportBounds.left,
+    top: screenRect.top - viewportBounds.top,
+    width: screenRect.width,
+    height: screenRect.height,
+  };
+}
+
+function intersectScreenRects(a, b) {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.left + a.width, b.left + b.width);
+  const bottom = Math.min(a.top + a.height, b.top + b.height);
+  const width = right - left;
+  const height = bottom - top;
+  if (width < 1 || height < 1) return null;
+  return { left, top, width, height };
+}
+
+/** Viewport-local band behind the fixed site navigation. */
+function getSiteNavSampleViewportRect() {
+  if (!viewport) return null;
+  return screenRectToViewportRect(getSiteNavSampleScreenRect());
+}
+
+/** Nav band clipped to the visible term-page bleed image (null once image scrolls away). */
+function getTermPageNavBleedSampleViewportRect(
+  viewportHeight = getLiveViewportHeight(),
+  scrollTop = viewport?.scrollTop ?? 0
+) {
+  if (!viewport) return null;
+  const mainRect = getTermPageMainImageVisibleScreenRect(viewportHeight, scrollTop);
+  if (!mainRect) return null;
+  const overlap = intersectScreenRects(mainRect, getSiteNavSampleScreenRect());
+  if (!overlap) return null;
+  return screenRectToViewportRect(overlap);
+}
+
+function getActiveBleedTextTerm() {
+  if (isTermPageFocusVisual() && focusState) {
+    return groups[focusState.activeIndex]?.terms[getTermPageContentTermIndex()];
+  }
+  const groupIndex = getDisplayActiveIndex();
+  return getTitleRowImageTerm(groups[groupIndex]);
 }
 
 /** Viewport-local horizontal band behind the active title-row terms. */
@@ -6972,24 +7145,43 @@ function isBleedBackdropImageMostlyDarkInRect(img, sampleViewportRect) {
 }
 
 function syncBleedBackdropDarkInvert() {
-  const canSample =
-    isTitleRowBleedActive() &&
-    bleedBackdropEl?.classList.contains("is-hover") &&
-    bleedBackdropImgEl?.classList.contains("is-loaded");
   const img = bleedBackdropImgEl;
-  const autoInvertNav =
-    canSample && isBleedBackdropImageMostlyDarkInRect(img, getSiteNavSampleViewportRect());
-  const autoInvertTitleRow =
-    canSample &&
-    isBleedBackdropImageMostlyDarkInRect(img, getActiveTitleRowSampleViewportRect());
+  const imgLoaded = Boolean(img?.classList.contains("is-loaded"));
+  const isHoverBleed =
+    imgLoaded &&
+    isTitleRowBleedActive() &&
+    bleedBackdropEl?.classList.contains("is-hover");
+  const isTermPageBleed =
+    imgLoaded &&
+    isTermPageFocusVisual() &&
+    bleedBackdropEl &&
+    !bleedBackdropEl.hidden &&
+    bleedBackdropEl.classList.contains("is-term-page") &&
+    bleedBackdropEl.classList.contains("is-visible");
 
-  const groupIndex = getDisplayActiveIndex();
-  const group = groups[groupIndex];
-  const term = getTitleRowImageTerm(group);
-  const textPrefs = getBleedTextPrefsForActiveTerm(term);
+  let invertNav = false;
+  let invertTitleRow = false;
 
-  const invertNav = resolveTextInvert(textPrefs.navText, autoInvertNav);
-  const invertTitleRow = resolveTextInvert(textPrefs.titleRowText, autoInvertTitleRow);
+  if (isHoverBleed) {
+    const autoInvertNav = isBleedBackdropImageMostlyDarkInRect(
+      img,
+      getSiteNavSampleViewportRect()
+    );
+    const autoInvertTitleRow = isBleedBackdropImageMostlyDarkInRect(
+      img,
+      getActiveTitleRowSampleViewportRect()
+    );
+    const textPrefs = getBleedTextPrefsForActiveTerm(getActiveBleedTextTerm());
+    invertNav = resolveTextInvert(textPrefs.navText, autoInvertNav);
+    invertTitleRow = resolveTextInvert(textPrefs.titleRowText, autoInvertTitleRow);
+  } else if (isTermPageBleed && isTermPageBleedImageInFrame()) {
+    const navSample = getTermPageNavBleedSampleViewportRect();
+    if (navSample) {
+      const autoInvertNav = isBleedBackdropImageMostlyDarkInRect(img, navSample);
+      const textPrefs = getBleedTextPrefsForActiveTerm(getActiveBleedTextTerm());
+      invertNav = resolveTextInvert(textPrefs.navText, autoInvertNav);
+    }
+  }
 
   document.documentElement.classList.toggle("is-bleed-dark-invert-nav", invertNav);
   document.documentElement.classList.toggle("is-bleed-dark-invert-title-row", invertTitleRow);
@@ -8681,7 +8873,9 @@ function clearTitleRowImageClasses() {
     "is-visible"
   );
   viewport?.classList.remove("is-title-row-bleed", "is-title-row-inline");
-  clearBleedBackdropDarkInvert();
+  // Recompute instead of force-clearing: a term-page bleed under the nav must
+  // keep its inverted (white) nav even though the hover title-row bleed is gone.
+  syncBleedBackdropDarkInvert();
 }
 
 function hideTitleRowImage({ preserveBleed = false } = {}) {
@@ -11888,6 +12082,7 @@ function updateTermPageBleed(layout) {
   }
 
   syncTermPageBleedClip();
+  syncBleedBackdropDarkInvert();
   updateTermPageBleedCaption(layout, image);
 }
 
@@ -12466,6 +12661,43 @@ function navigateViaHome(onHomeReady) {
   return true;
 }
 
+/**
+ * Route a page-to-page navigation through the home map view, playing the
+ * scramble transition on the close leg so the home view animates in between.
+ * @param {() => void} onHomeReady
+ * @returns {boolean}
+ */
+function routeViaHomeScramble(onHomeReady) {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) {
+    return false;
+  }
+
+  if (isSunTermsIndexVisible()) {
+    runPageNavScrambleTransition(
+      "index",
+      () => hideSunTermsIndex(),
+      "map",
+      onHomeReady,
+      PAGE_TAGS_ROUTE_TIMING
+    );
+    return true;
+  }
+
+  if (isInOverview()) {
+    runPageNavScrambleTransition(
+      "overview",
+      () => snapOverviewClosed(),
+      "map",
+      onHomeReady,
+      PAGE_TAGS_ROUTE_TIMING
+    );
+    return true;
+  }
+
+  onHomeReady();
+  return true;
+}
+
 function navigateToHome() {
   if (isSunTermsIndexVisible()) {
     runPageNavScrambleTransition(
@@ -12483,6 +12715,10 @@ function navigateToHome() {
   if (isInOverview()) {
     if (isOverviewTagsMode()) {
       navigateTagsToHome();
+      return;
+    }
+    if (isOverviewTimelineMode()) {
+      navigateTimelineToHome();
       return;
     }
     setOverviewTarget(0);
@@ -12562,6 +12798,17 @@ function navigateTagsToHome() {
   );
 }
 
+function navigateTimelineToHome() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "overview",
+    () => snapOverviewClosed(),
+    "map",
+    syncNavAfterPageEnter,
+    PAGE_TAGS_ROUTE_TIMING
+  );
+}
+
 function navigateTagsToIndex() {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
   runPageNavScrambleTransition(
@@ -12586,7 +12833,7 @@ function navigateToTermsIndex() {
     navigateTagsToIndex();
     return;
   }
-  navigateViaHome(revealTermsIndex);
+  routeViaHomeScramble(revealTermsIndex);
 }
 
 /** @param {"filter" | "timeline"} mode */
@@ -12596,7 +12843,7 @@ function navigateToOverviewMode(mode) {
       navigateIndexToTags();
       return;
     }
-    navigateViaHome(() => {
+    routeViaHomeScramble(() => {
       setOverviewSubModeInternal(mode);
       setOverviewTarget(1);
       syncNavAfterPageEnter();
@@ -12620,11 +12867,15 @@ function navigateToOverviewMode(mode) {
     return;
   }
   if (overviewSubMode !== mode) {
-    setOverviewSubModeInternal(mode);
-    overviewGeo.resetFitCache();
-    refreshMapLayoutFromViewport();
-    if (currentLayout) render(currentLayout);
-    syncNavAfterPageEnter();
+    routeViaHomeScramble(() => {
+      if (mode === "filter") {
+        navigateHomeToTags();
+        return;
+      }
+      setOverviewSubModeInternal(mode);
+      setOverviewTarget(1);
+      syncNavAfterPageEnter();
+    });
   }
 }
 
@@ -13017,6 +13268,12 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
         ? " is-display-font"
         : "";
     const carouselClass = "";
+    const newlyCensoredClass =
+      !selectedClass && newlyCensoredTermId && tp.term.id === newlyCensoredTermId
+        ? newlyCensoredWriting
+          ? " is-newly-censored is-censoring"
+          : " is-newly-censored"
+        : "";
 
     let termWrapStyle = "";
     if (timelineYears) {
@@ -13048,7 +13305,7 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
       : `font-size:${fontSize}px`;
 
     parts.push(
-      `<g class="sun-term-wrap${selectedClass}${displayFontClass}${carouselClass}"${termWrapStyle} data-term-index="${termIndex}" data-term-id="${escapeAttr(tp.term.id)}">`
+      `<g class="sun-term-wrap${selectedClass}${displayFontClass}${carouselClass}${newlyCensoredClass}"${termWrapStyle} data-term-index="${termIndex}" data-term-id="${escapeAttr(tp.term.id)}">`
     );
     parts.push('<rect class="sun-term-hit" fill="rgba(0,0,0,0.001)" />');
     parts.push(
@@ -13083,6 +13340,10 @@ function finalizeRender(layout) {
   }
   updateBackFixedOverlay(layout);
   updateTermPage(layout);
+  if (newlyCensoredTermId) {
+    refreshTermPageSiblingCensorBars();
+    applyNewlyCensoredStateToWrap();
+  }
   if (isTermPageFocusVisual() && termPageLayoutAnimActive && termPageCensoredPushTarget) {
     refreshTermPageSiblingCensorBars();
     applyTermPageCensoredPushFromTarget(
@@ -13177,6 +13438,15 @@ function getCarouselStepMs(termCount, carouselSteps) {
     stepMs = isFew ? LAYOUT.focusReorderMsFew : LAYOUT.focusReorderMs;
   } else {
     stepMs = isFew ? LAYOUT.focusReorderMsMultiFew : LAYOUT.focusReorderMsMulti;
+    // Many-term carousels chain more rotation steps, so trim each step a touch
+    // as the term count grows past 3 to keep the full rotation snappy.
+    const extra = termCount - 3;
+    if (extra > 0) {
+      stepMs *= Math.max(
+        LAYOUT.focusReorderMultiSpeedMin,
+        1 - extra * LAYOUT.focusReorderMultiSpeedStep
+      );
+    }
   }
   return stepMs * getReorderTimeScale();
 }
@@ -13317,6 +13587,7 @@ function tickFocus(now) {
 
   if (isTermPageFocusVisual() && isBleedBackdropLoaded()) {
     syncTermPageBleedClip();
+    syncBleedBackdropDarkInvert();
   }
 
   render(currentLayout);
@@ -13771,7 +14042,12 @@ function updateTermHitArea(textEl, hitEl, censorEl, options = {}) {
     censorEl.setAttribute("y", barY);
     censorEl.setAttribute("height", barHeight);
     censorEl.removeAttribute("transform");
-    if (alignBottomToBaseline) {
+    const isNewlyCensored = textEl
+      .closest(".sun-term-wrap")
+      ?.classList.contains("is-newly-censored");
+    if (isNewlyCensored) {
+      applyCensorWriteTiming(censorEl, barWidth);
+    } else if (alignBottomToBaseline) {
       censorEl.style.animation = "none";
       censorEl.style.transition = "none";
       censorEl.style.transform = "scaleX(1)";

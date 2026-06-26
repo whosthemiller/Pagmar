@@ -323,6 +323,7 @@ body,
 .sun-loading__censor-wrap {
   position: relative;
   display: inline-block;
+  padding-inline: 1em;
 }
 
 .sun-loading__label {
@@ -487,14 +488,14 @@ body,
   }
 }
 
-.sun-ray.is-active.is-term-hover .sun-term-wrap:not(.is-hovered) .sun-term-censor,
-.sun-ray.is-locked .sun-term-wrap:not(.is-selected) .sun-term-censor,
+.sun-ray.is-active.is-term-hover .sun-term-wrap:not(.is-hovered):not(.is-newly-censored) .sun-term-censor,
+.sun-ray.is-locked .sun-term-wrap:not(.is-selected):not(.is-newly-censored) .sun-term-censor,
 .sun-svg.sun-is-focused:not(.sun-is-unfocusing)
   .sun-ray.is-active
-  .sun-term-wrap:not(.is-selected)
+  .sun-term-wrap:not(.is-selected):not(.is-newly-censored)
   .sun-term-censor,
-.sun-svg.sun-is-page-censored .sun-ray.is-active .sun-term-wrap .sun-term-censor,
-.sun-svg.sun-is-page-censored.sun-is-focused .sun-ray.is-active .sun-term-wrap .sun-term-censor {
+.sun-svg.sun-is-page-censored .sun-ray.is-active .sun-term-wrap:not(.is-newly-censored) .sun-term-censor,
+.sun-svg.sun-is-page-censored.sun-is-focused .sun-ray.is-active .sun-term-wrap:not(.is-newly-censored) .sun-term-censor {
   opacity: 1;
   animation: sun-censor-scramble-in var(--sun-censor-write-duration, 0.24s)
     steps(var(--sun-censor-write-steps, 12), end) forwards;
@@ -1257,16 +1258,39 @@ body,
 /* After enter/switch, keep sibling censors visible without replaying the animation. */
 .sun-viewport.is-term-sibling-censor-held
   .sun-ray.is-active
-  .sun-term-wrap:not(.is-selected):not(.is-mention-revealed)
+  .sun-term-wrap:not(.is-selected):not(.is-mention-revealed):not(.is-newly-censored)
   .sun-term-censor,
 .sun-viewport.is-term-sibling-censor-held
   .sun-ray.is-locked
-  .sun-term-wrap:not(.is-selected):not(.is-mention-revealed)
+  .sun-term-wrap:not(.is-selected):not(.is-mention-revealed):not(.is-newly-censored)
   .sun-term-censor {
   opacity: 1;
   transform: scaleX(1);
   transition: none;
   animation: none;
+  fill: #111111;
+}
+
+/* The term we just navigated away from stays readable until its bar writes in.
+   Independent of the sibling-censor hold so the always-on locked rule can't
+   censor it early. */
+.sun-ray .sun-term-wrap.is-newly-censored .sun-term-censor {
+  opacity: 1;
+  transform: scaleX(0);
+  transform-origin: 100% 50%;
+  transition: none;
+  animation: none;
+  fill: #111111;
+}
+
+/* Then write the censor bar in across the title's typewriter animation. */
+.sun-ray .sun-term-wrap.is-newly-censored.is-censoring .sun-term-censor {
+  opacity: 1;
+  transform: scaleX(1);
+  transform-origin: 100% 50%;
+  transition: none;
+  animation: sun-censor-scramble-in var(--sun-censor-write-duration, 0.24s)
+    steps(var(--sun-censor-write-steps, 12), end) forwards;
   fill: #111111;
 }
 

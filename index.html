@@ -34,6 +34,19 @@
     <link rel="stylesheet" href="css/splash.css" />
   </head>
   <body>
+    <div id="sun-loading" class="sun-loading" role="status" aria-live="polite">
+      <div class="sun-loading__panel">
+        <div class="sun-loading__censor-wrap">
+          <p class="sun-loading__label">טרמינולוגיה פוליטית</p>
+          <div
+            id="sun-loading-bar-fill"
+            class="sun-loading__censor"
+            aria-hidden="true"
+          ></div>
+        </div>
+        <p id="sun-loading-progress" class="sun-loading__progress"></p>
+      </div>
+    </div>
     <div
       id="splash"
       class="splash"
@@ -58,6 +71,7 @@
       <blockquote class="splash__quote">
         „המאבק האמיתי מתרחש על המילון …<br />
         מי שמנצח בשדה המילים – מנצח, לעיתים, גם בשדה הזיכרון."
+        <cite class="splash__cite">— ג׳ורג׳ אורוול</cite>
       </blockquote>
       <p class="splash__intro"></p>
       <p class="splash__scroll-hint">גללו כדי להתחיל לחקור</p>
@@ -68,19 +82,6 @@
     <div class="sun-app">
       <div class="sun-viewport" id="sun-viewport">
         <svg id="sun-svg" class="sun-svg" aria-hidden="true"></svg>
-        <div id="sun-loading" class="sun-loading" role="status" aria-live="polite">
-          <div class="sun-loading__panel">
-            <div class="sun-loading__censor-wrap">
-              <p class="sun-loading__label">טרמינולוגיה פוליטית</p>
-              <div
-                id="sun-loading-bar-fill"
-                class="sun-loading__censor"
-                aria-hidden="true"
-              ></div>
-            </div>
-            <p id="sun-loading-progress" class="sun-loading__progress"></p>
-          </div>
-        </div>
         <div id="sun-error" class="sun-error hidden"></div>
         <div
           id="sun-terms-index-root"
