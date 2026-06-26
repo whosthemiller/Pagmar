@@ -354,6 +354,38 @@ function isCompactShuffleLabel(root) {
   );
 }
 
+/** Light-shuffle labels that must keep a fixed footprint so neighbouring inline text doesn't reflow. */
+function isNoReflowLightShuffleEl(root) {
+  return root.classList.contains("splash__intro-link");
+}
+
+/** Snapshot the rendered width and pin it so random glyphs of varying advance don't shift siblings. */
+function lockLightShuffleWidth(root) {
+  const rect = root.getBoundingClientRect();
+  const saved = {
+    display: root.style.display,
+    width: root.style.width,
+    boxSizing: root.style.boxSizing,
+    whiteSpace: root.style.whiteSpace,
+    overflow: root.style.overflow,
+  };
+  root.style.display = "inline-block";
+  root.style.width = `${rect.width}px`;
+  root.style.boxSizing = "border-box";
+  root.style.whiteSpace = "nowrap";
+  root.style.overflow = "hidden";
+  return saved;
+}
+
+function restoreLightShuffleWidth(root, saved) {
+  if (!saved) return;
+  root.style.display = saved.display;
+  root.style.width = saved.width;
+  root.style.boxSizing = saved.boxSizing;
+  root.style.whiteSpace = saved.whiteSpace;
+  root.style.overflow = saved.overflow;
+}
+
 function applyHtmlLayoutLock(root, widthPx, metrics) {
   const htmlStyles = lockHtmlLayout(root);
   const cs = getComputedStyle(root);
@@ -596,6 +628,7 @@ function abortState(state) {
     );
   } else if (state.mode === "light" || state.mode === "light-typewriter") {
     root.textContent = state.original;
+    restoreLightShuffleWidth(root, state.widthLock);
   } else if (state.mode === "annotated-typewriter") {
     root.innerHTML = state.original;
   } else if (state.mode === "svg") {
@@ -645,6 +678,7 @@ function restoreState(state) {
     root.textContent = state.original;
   } else {
     root.textContent = state.original;
+    restoreLightShuffleWidth(root, state.widthLock);
   }
 
   activeStates.delete(root);
@@ -770,6 +804,7 @@ function runLightSettleReveal(root, targetText, onComplete) {
     frame: 0,
     graphemes,
     settleFrames,
+    widthLock: isNoReflowLightShuffleEl(root) ? lockLightShuffleWidth(root) : null,
   };
 
   const tick = () => {
@@ -782,6 +817,7 @@ function runLightSettleReveal(root, targetText, onComplete) {
 
     if (state.frame > maxSettleFrame(state.settleFrames, state.config)) {
       root.textContent = state.original;
+      restoreLightShuffleWidth(root, state.widthLock);
       state.timerId = null;
       activeStates.delete(root);
       delete root.dataset.letterShuffleActive;
