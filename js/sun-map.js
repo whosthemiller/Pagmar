@@ -6733,7 +6733,7 @@ function getTermPageLabelPanelWidthPx() {
 }
 
 function ensureTermPageLabelNavMarkup() {
-  const markupVersion = "2";
+  const markupVersion = "3";
   if (!termLabelNavEl || termLabelNavEl.dataset.built === markupVersion) return;
   termLabelNavEl.dataset.built = markupVersion;
   termLabelNavEl.innerHTML = TERM_PAGE_LABEL_NAV_ITEMS.map(
@@ -6744,7 +6744,7 @@ function ensureTermPageLabelNavMarkup() {
       `</span>` +
       `<span class="sun-term-page__label-nav-trigger">` +
       `<span class="sun-term-page__label-nav-text">${escapeHtml(label)}</span>` +
-      `<span class="sun-term-page__label-nav-glyph" aria-hidden="true">↙</span>` +
+      `<span class="sun-term-page__label-nav-glyph" aria-hidden="true"></span>` +
       `</span>` +
       `</span>`
   ).join("");

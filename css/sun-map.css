@@ -53,8 +53,8 @@
   --term-page-meta-line-height: calc(22px * var(--map-typography-scale));
   --term-page-meta-narrow-font-size: calc(15px * var(--map-typography-scale));
   --term-page-meta-narrow-line-height: calc(21px * var(--map-typography-scale));
-  --term-page-label-font-size: calc(14px * var(--map-typography-scale));
-  --term-page-label-line-height: calc(18px * var(--map-typography-scale));
+  --term-page-label-font-size: calc(18px * var(--map-typography-scale));
+  --term-page-label-line-height: calc(24px * var(--map-typography-scale));
   --term-page-caption-font-size: calc(12px * var(--map-typography-scale));
   --term-page-caption-line-height: calc(16px * var(--map-typography-scale));
   --term-page-side-font-size: calc(18px * var(--map-typography-scale));
@@ -1021,6 +1021,14 @@ body,
   font-weight: 700;
   line-height: var(--term-page-label-line-height);
   color: var(--ink);
+}
+
+.sun-term-page__label-nav-glyph::before {
+  content: "↙";
+}
+
+.sun-term-page__label-nav-item.is-panel-open .sun-term-page__label-nav-glyph::before {
+  content: "←";
 }
 
 .sun-viewport.is-term-scroll-content .sun-term-meta__rows {

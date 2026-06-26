@@ -192,7 +192,7 @@ export function getTermPageScrollLayoutConfig(viewportWidth) {
       metaHeadingColumns: 2,
       metaValueColumns: 10,
       metaGapColumns: 0,
-      labelPanelColumns: 5,
+      labelPanelColumns: 6,
     };
   }
   return {
@@ -211,7 +211,7 @@ export function getTermPageScrollLayoutConfig(viewportWidth) {
     metaHeadingColumns: 2,
     metaValueColumns: 14,
     metaGapColumns: 2,
-    labelPanelColumns: 4,
+    labelPanelColumns: 5,
   };
 }
 
