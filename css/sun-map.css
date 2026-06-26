@@ -1,6 +1,6 @@
 @font-face {
   font-family: "RoobertVF";
-  src: url("../../assets/fonts/RoobertHebrewCollectionVF-TRIAL.ttf") format("truetype");
+  src: url("../assets/fonts/RoobertHebrewCollectionVF-TRIAL.ttf") format("truetype");
   font-weight: 300 900;
   font-style: normal;
   font-display: swap;
@@ -8,7 +8,7 @@
 
 @font-face {
   font-family: "Secolo";
-  src: url("../../assets/fonts/Secolo/Secolo-19.ce0c2d9e5affd7c971e42c8ce783a1de.ttf")
+  src: url("../assets/fonts/Secolo/Secolo-19.ce0c2d9e5affd7c971e42c8ce783a1de.ttf")
     format("truetype");
   font-weight: normal;
   font-style: normal;
@@ -17,7 +17,7 @@
 
 @font-face {
   font-family: "FrankRuhl";
-  src: url("../../assets/fonts/FrankRuhl-VF-TRIAL.ttf") format("truetype");
+  src: url("../assets/fonts/FrankRuhl-VF-TRIAL.ttf") format("truetype");
   font-weight: 400 700;
   font-style: normal;
   font-display: swap;
