@@ -1,5 +1,11 @@
 /** Grid metrics aligned to `.site-nav__grid` — the layout reference. */
 
+import {
+  getMapTypographyScale,
+  getResponsiveGridLayout,
+  getViewportHeightScale,
+} from "./viewport-layout.js";
+
 export const GRID = {
   columns: 24,
   gutter: 10,
@@ -25,34 +31,34 @@ function getGridContainer() {
  */
 export function getGridMetrics() {
   const viewportWidth = document.documentElement.clientWidth;
+  const layout = getResponsiveGridLayout(viewportWidth);
   const navGrid = document.querySelector(".site-nav__grid");
 
   if (navGrid && navGrid.clientWidth > 0) {
     const rect = navGrid.getBoundingClientRect();
-    const { columns, gutter } = GRID;
+    const { columns, gutter } = layout;
     const colWidth = (rect.width - (columns - 1) * gutter) / columns;
-    return {
-      viewportWidth,
-      gridLeft: rect.left,
-      gridWidth: rect.width,
-      colWidth,
-      gutter,
-      columns,
-      margin: rect.left,
-    };
+    if (Math.abs(rect.width - layout.gridWidth) < 4) {
+      return {
+        viewportWidth,
+        gridLeft: rect.left,
+        gridWidth: rect.width,
+        colWidth,
+        gutter,
+        columns,
+        margin: rect.left,
+      };
+    }
   }
 
-  const { columns, gutter, margin } = GRID;
-  const gridWidth = viewportWidth - 2 * margin;
-  const colWidth = (gridWidth - (columns - 1) * gutter) / columns;
   return {
     viewportWidth,
-    gridLeft: margin,
-    gridWidth,
-    colWidth,
-    gutter,
-    columns,
-    margin,
+    gridLeft: layout.gridLeft,
+    gridWidth: layout.gridWidth,
+    colWidth: layout.colWidth,
+    gutter: layout.gutter,
+    columns: layout.columns,
+    margin: layout.margin,
   };
 }
 
@@ -154,9 +160,18 @@ export function measureGridCssColumnSpan(
 export function syncGridCssVars(containerEl = getGridContainer()) {
   const metrics = getGridMetrics();
   const containerLeft = containerEl?.getBoundingClientRect().left ?? 0;
+  const viewportHeight = window.innerHeight;
   const root = document.documentElement;
+
+  root.style.setProperty("--grid-margin", `${metrics.margin}px`);
+  root.style.setProperty("--grid-gutter", `${metrics.gutter}px`);
   root.style.setProperty("--grid-content-width", `${metrics.gridWidth}px`);
   root.style.setProperty("--grid-content-left", `${metrics.gridLeft}px`);
   root.style.setProperty("--grid-column-width", `${metrics.colWidth}px`);
   root.style.setProperty("--grid-content-offset", `${metrics.gridLeft - containerLeft}px`);
+  root.style.setProperty("--map-typography-scale", String(getMapTypographyScale(metrics.viewportWidth)));
+  root.style.setProperty(
+    "--viewport-height-scale",
+    String(getViewportHeightScale(viewportHeight))
+  );
 }

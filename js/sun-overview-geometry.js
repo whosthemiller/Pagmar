@@ -3,6 +3,22 @@
  */
 
 import { getGridAlignAnchorX } from "./grid-metrics.js";
+import { VIEWPORT_DESIGN, clampScalar } from "./viewport-layout.js";
+
+/** Smaller dimension of the reference viewport — the overview ring's design basis. */
+const DESIGN_MIN_DIM = Math.min(VIEWPORT_DESIGN.width, VIEWPORT_DESIGN.height);
+/**
+ * Direct, linear size control for the locked ring (the timeline) on big screens.
+ *
+ * The radius target is `minDim * overviewRadiusFactor * radiusScale * scale`,
+ * where `scale` ramps from 1 at the MacBook reference (so the reference never
+ * changes) up to `..._MAX` on a 4K-class screen. Unlike a plain cap, the
+ * locked fit *forces* this radius and shrinks only the font (contentScale) if
+ * the labels would otherwise overflow — so nudging `..._MAX` moves the circle
+ * smoothly and predictably instead of snapping at the label limit.
+ */
+const LOCKED_RING_RADIUS_SCALE_GAIN = 0.6;
+const LOCKED_RING_RADIUS_SCALE_MAX = 1.12;
 
 export function lerp(a, b, t) {
   return a + (b - a) * t;
@@ -79,6 +95,11 @@ export function createOverviewGeometry({
   getOverviewCxOffset,
   getOverviewCyOffset,
   getOverviewRadiusScale,
+  getOverviewRotationLocked,
+  getOverviewFitKey,
+  getOverviewTermVisible,
+  getTypographyScale,
+  getOverviewTypographyScale,
 }) {
   const resolveOverviewCxOffset = () =>
     getOverviewCxOffset?.() ?? layout.overviewCxOffset ?? 0;
@@ -86,6 +107,22 @@ export function createOverviewGeometry({
     getOverviewCyOffset?.() ?? layout.overviewCyOffset ?? 0;
   const resolveOverviewRadiusScale = () =>
     getOverviewRadiusScale?.() ?? layout.overviewRadiusScale ?? 1;
+  // When the overview can't be spun freely (e.g. the timeline, where scrolling
+  // changes the year instead of rotating the ring), the fit only needs to
+  // clear the single rotation that's actually shown — not every possible one.
+  // That lets the circle grow to use the real available space on wide screens.
+  const resolveOverviewRotationLocked = () =>
+    getOverviewRotationLocked?.() ?? false;
+  const resolveOverviewSpinOffset = () => getOverviewSpinOffset?.() ?? 0;
+  const resolveOverviewFitKey = () => getOverviewFitKey?.() ?? "";
+  const isOverviewTermVisible = (term) => getOverviewTermVisible?.(term) ?? true;
+  const resolveTypographyScale = (viewportWidth) =>
+    getTypographyScale?.(viewportWidth) ?? 1;
+  // Labels around the ring scale with the ring (min-dimension), not the
+  // width-based map scale, so the text stays proportional to the circle.
+  const resolveOverviewTypographyScale = (viewportWidth, viewportHeight) =>
+    getOverviewTypographyScale?.(viewportWidth, viewportHeight) ??
+    resolveTypographyScale(viewportWidth);
   let overviewFitCacheKey = "";
   let overviewFitCache = { radius: 0, contentScale: 1 };
 
@@ -102,8 +139,8 @@ export function createOverviewGeometry({
     overviewFitCache = { ...overviewFitCache, contentScale };
   }
 
-  function estimateTermWidth(name) {
-    return Math.max(name.length * layout.charWidth, 56);
+  function estimateTermWidth(name, typographyScale = 1) {
+    return Math.max(name.length * layout.charWidth, 56) * typographyScale;
   }
 
   function getOverviewSpinUnits(arc, extraSpinOffset = 0) {
@@ -125,24 +162,55 @@ export function createOverviewGeometry({
     return (layout.overviewMinRayArcPx * count) / (2 * Math.PI);
   }
 
-  function getOverviewFontSize(overview, contentScale = 1) {
-    const target = layout.overviewFontSize * contentScale;
-    return lerp(layout.fontSize, target, overview);
+  function getOverviewFontSize(
+    overview,
+    contentScale = 1,
+    typographyScale = 1,
+    overviewTypographyScale = typographyScale
+  ) {
+    const base = layout.fontSize * typographyScale;
+    const target = layout.overviewFontSize * contentScale * overviewTypographyScale;
+    return lerp(base, target, overview);
   }
 
-  function getOverviewTermGap(overview, contentScale = 1) {
-    const fontSize = getOverviewFontSize(overview, contentScale);
+  function getOverviewTermGap(
+    overview,
+    contentScale = 1,
+    typographyScale = 1,
+    overviewTypographyScale = typographyScale
+  ) {
+    const fontSize = getOverviewFontSize(
+      overview,
+      contentScale,
+      typographyScale,
+      overviewTypographyScale
+    );
     return layout.termGap * (fontSize / layout.fontSize);
   }
 
-  function getOverviewTypography(overview, contentScale = 1) {
-    const fontSize = getOverviewFontSize(overview, contentScale);
-    const fontScale = fontSize / layout.fontSize;
+  function getOverviewTypography(
+    overview,
+    contentScale = 1,
+    typographyScale = 1,
+    overviewTypographyScale = typographyScale
+  ) {
+    const fontSize = getOverviewFontSize(
+      overview,
+      contentScale,
+      typographyScale,
+      overviewTypographyScale
+    );
+    const fontScale = fontSize / (layout.fontSize * typographyScale);
     return {
       fontSize,
       fontHeight: fontSize * 1.15,
-      termGap: getOverviewTermGap(overview, contentScale),
-      termWidth: (name) => estimateTermWidth(name) * fontScale,
+      termGap: getOverviewTermGap(
+        overview,
+        contentScale,
+        typographyScale,
+        overviewTypographyScale
+      ),
+      termWidth: (name) => estimateTermWidth(name, typographyScale) * fontScale,
     };
   }
 
@@ -193,7 +261,17 @@ export function createOverviewGeometry({
     const cx = viewportWidth / 2 + resolveOverviewCxOffset();
     const cy = viewportHeight / 2 + resolveOverviewCyOffset();
     const count = getRayCount() || 0;
-    const { fontHeight, termGap, termWidth } = getOverviewTypography(overview, contentScale);
+    const typographyScale = resolveTypographyScale(viewportWidth);
+    const overviewTypographyScale = resolveOverviewTypographyScale(
+      viewportWidth,
+      viewportHeight
+    );
+    const { fontHeight, termGap, termWidth } = getOverviewTypography(
+      overview,
+      contentScale,
+      typographyScale,
+      overviewTypographyScale
+    );
     const bounds = {
       minX: Infinity,
       maxX: -Infinity,
@@ -211,7 +289,10 @@ export function createOverviewGeometry({
       let dist = 0;
 
       for (let i = 0; i < group.terms.length; i++) {
-        const width = termWidth(group.terms[i].name);
+        const term = group.terms[i];
+        if (!isOverviewTermVisible(term)) continue;
+
+        const width = termWidth(term.name);
         const localX = outwardSign === 1 ? dist : -dist;
         const textAnchor = outwardSign === 1 ? "end" : "start";
         addOverviewTermCornersToBounds(
@@ -238,7 +319,12 @@ export function createOverviewGeometry({
     margin = layout.overviewMargin
   ) {
     const count = getRayCount() || 1;
-    const samples = Math.max(1, Math.min(count, 24));
+    // A locked ring only ever displays one rotation, so checking the single
+    // live spin offset is enough; sampling all rotations would shrink it for
+    // orientations that never appear.
+    const samples = resolveOverviewRotationLocked()
+      ? 1
+      : Math.max(1, Math.min(count, 24));
     const overviewSpin = getOverviewSpinOffset?.() ?? 0;
     const extraSpin = ((layout.overviewSpinExtraDeg ?? 0) / 360) * count;
 
@@ -266,13 +352,68 @@ export function createOverviewGeometry({
   }
 
   function computeOverviewFit(viewportWidth, viewportHeight) {
-    const cacheKey = `${viewportWidth}x${viewportHeight}:${resolveOverviewCxOffset()}:${resolveOverviewCyOffset()}:${resolveOverviewRadiusScale()}`;
+    const typographyScale = resolveTypographyScale(viewportWidth);
+    const cacheKey = `${viewportWidth}x${viewportHeight}:${resolveOverviewCxOffset()}:${resolveOverviewCyOffset()}:${resolveOverviewRadiusScale()}:${resolveOverviewRotationLocked()}:${resolveOverviewSpinOffset()}:${resolveOverviewFitKey()}:${typographyScale}`;
     if (cacheKey === overviewFitCacheKey) return overviewFitCache;
 
     const minDim = Math.min(viewportWidth, viewportHeight);
     const radiusScale = resolveOverviewRadiusScale();
-    const maxRadius = minDim * layout.overviewRadiusFactor * radiusScale;
+    const locked = resolveOverviewRotationLocked();
+    // Direct linear size control for a locked ring: ramps from 1 at the
+    // reference up to its cap on big screens (reference never changes).
+    const lockedRadiusScale = locked
+      ? clampScalar(
+          1 + (minDim / DESIGN_MIN_DIM - 1) * LOCKED_RING_RADIUS_SCALE_GAIN,
+          1,
+          LOCKED_RING_RADIUS_SCALE_MAX
+        )
+      : 1;
+    const maxRadius =
+      minDim * layout.overviewRadiusFactor * radiusScale * lockedRadiusScale;
     const minRadius = computeOverviewMinRadiusForRaySpacing() * radiusScale;
+
+    const cacheAndReturn = (result) => {
+      overviewFitCacheKey = cacheKey;
+      overviewFitCache = result;
+      return result;
+    };
+
+    // Locked ring (timeline): hold the chosen radius and shrink only the font
+    // to fit, so the size knob responds linearly instead of snapping.
+    if (locked) {
+      for (
+        let contentScale = 1;
+        contentScale >= layout.overviewMinContentScale;
+        contentScale = Math.round((contentScale - 0.03) * 100) / 100
+      ) {
+        if (overviewContentFits(viewportWidth, viewportHeight, maxRadius, contentScale)) {
+          return cacheAndReturn({ radius: maxRadius, contentScale });
+        }
+      }
+
+      // Labels don't fit even at the smallest font — shrink the radius too.
+      let lo = minRadius;
+      let hi = maxRadius;
+      for (let i = 0; i < 20; i++) {
+        const mid = (lo + hi) / 2;
+        if (
+          overviewContentFits(
+            viewportWidth,
+            viewportHeight,
+            mid,
+            layout.overviewMinContentScale
+          )
+        ) {
+          lo = mid;
+        } else {
+          hi = mid;
+        }
+      }
+      return cacheAndReturn({
+        radius: lo,
+        contentScale: layout.overviewMinContentScale,
+      });
+    }
 
     for (
       let contentScale = 1;
@@ -280,9 +421,7 @@ export function createOverviewGeometry({
       contentScale = Math.round((contentScale - 0.03) * 100) / 100
     ) {
       if (overviewContentFits(viewportWidth, viewportHeight, maxRadius, contentScale)) {
-        overviewFitCacheKey = cacheKey;
-        overviewFitCache = { radius: maxRadius, contentScale };
-        return overviewFitCache;
+        return cacheAndReturn({ radius: maxRadius, contentScale });
       }
 
       if (!overviewContentFits(viewportWidth, viewportHeight, minRadius, contentScale)) {
@@ -300,14 +439,12 @@ export function createOverviewGeometry({
         }
       }
 
-      overviewFitCacheKey = cacheKey;
-      overviewFitCache = { radius: lo, contentScale };
-      return overviewFitCache;
+      return cacheAndReturn({ radius: lo, contentScale });
     }
 
-    overviewFitCacheKey = cacheKey;
-    overviewFitCache = { radius: minRadius, contentScale: layout.overviewMinContentScale };
-    return overviewFitCache;
+    return cacheAndReturn(
+      { radius: minRadius, contentScale: layout.overviewMinContentScale }
+    );
   }
 
   function getGeometryEndpoints(viewportWidth, viewportHeight) {
@@ -363,6 +500,11 @@ export function createOverviewGeometry({
       angleSpan: normal.angleTop - normal.angleBottom,
       overview,
       contentScale: lerp(1, overviewGeo.contentScale ?? 1, overview),
+      typographyScale: resolveTypographyScale(viewportWidth),
+      overviewTypographyScale: resolveOverviewTypographyScale(
+        viewportWidth,
+        viewportHeight
+      ),
     };
   }
 
@@ -370,12 +512,29 @@ export function createOverviewGeometry({
     const { anchor, rotation, outwardSign } = transform;
     const overview = arcLayout.overview ?? 0;
     const contentScale = arcLayout.contentScale ?? 1;
-    const termGap = getOverviewTermGap(overview, contentScale);
+    const typographyScale = arcLayout.typographyScale ?? 1;
+    const overviewTypographyScale =
+      arcLayout.overviewTypographyScale ?? typographyScale;
+    const termGap = getOverviewTermGap(
+      overview,
+      contentScale,
+      typographyScale,
+      overviewTypographyScale
+    );
+    const fontSize = getOverviewFontSize(
+      overview,
+      contentScale,
+      typographyScale,
+      overviewTypographyScale
+    );
+    const fontScale = fontSize / (layout.fontSize * typographyScale);
     let dist = 0;
     const placed = [];
 
     for (let i = 0; i < terms.length; i++) {
-      const width = widths?.[i] ?? estimateTermWidth(terms[i].name);
+      const width =
+        widths?.[i] ??
+        estimateTermWidth(terms[i].name, typographyScale) * fontScale;
       placed.push({
         term: terms[i],
         localX: outwardSign === 1 ? dist : -dist,

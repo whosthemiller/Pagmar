@@ -1,4 +1,6 @@
 import { syncGridCssVars } from "./grid-metrics.js";
+import { getMapTypographyScale } from "./viewport-layout.js";
+import { packColumnsBalanced } from "./terms-column-packer.js";
 
 const LINE_HEIGHT = 20;
 const FONT_SIZE = 14;
@@ -7,7 +9,7 @@ const TERM_COL_START = 2;
 const BLOCK_COL_SPAN = 4;
 const BLOCK_COUNT = 6;
 const INDEX_MARGIN_TOP = 170;
-const INDEX_MARGIN_BOTTOM = 92;
+const INDEX_MARGIN_BOTTOM = 72;
 const MIN_LAYOUT_SCALE = 0.62;
 
 /** @type {HTMLElement | null} */
@@ -471,10 +473,26 @@ function packIntoBlocks(allTermsList, maxRows, blockCount) {
   return blocks.filter((block) => block.length);
 }
 
+/**
+ * Top/bottom margins reserved for the index grid, scaled by the same map
+ * typography factor as the CSS padding so the column packing matches the
+ * (proportionally growing) gaps above and below the list on wide screens.
+ */
+function getIndexMargins() {
+  const viewportWidth =
+    viewportEl?.clientWidth ?? rootEl?.clientWidth ?? window.innerWidth;
+  const scale = getMapTypographyScale(viewportWidth);
+  return {
+    top: INDEX_MARGIN_TOP * scale,
+    bottom: INDEX_MARGIN_BOTTOM * scale,
+  };
+}
+
 function getAvailableIndexHeight() {
   const viewportHeight =
     viewportEl?.clientHeight ?? rootEl?.clientHeight ?? window.innerHeight;
-  return viewportHeight - INDEX_MARGIN_TOP - INDEX_MARGIN_BOTTOM;
+  const { top, bottom } = getIndexMargins();
+  return viewportHeight - top - bottom;
 }
 
 function indexBlocksOverflow() {
@@ -484,15 +502,37 @@ function indexBlocksOverflow() {
 }
 
 function resolveLayoutForScale(scale) {
+  const viewportWidth =
+    viewportEl?.clientWidth ?? rootEl?.clientWidth ?? window.innerWidth;
   const viewportHeight =
     viewportEl?.clientHeight ?? rootEl?.clientHeight ?? window.innerHeight;
-  const lineHeight = Math.max(14, Math.round(LINE_HEIGHT * scale));
-  const fontSize = Math.max(12, Math.round(FONT_SIZE * scale));
+  const typographyScale = getMapTypographyScale(viewportWidth);
+  const lineHeight = Math.max(14, Math.round(LINE_HEIGHT * typographyScale * scale));
+  const fontSize = Math.max(12, Math.round(FONT_SIZE * typographyScale * scale));
   const maxRows = Math.max(
     1,
-    Math.floor((viewportHeight - INDEX_MARGIN_TOP - INDEX_MARGIN_BOTTOM) / lineHeight)
+    Math.floor(
+      (viewportHeight - INDEX_MARGIN_TOP * typographyScale - INDEX_MARGIN_BOTTOM * typographyScale) /
+        lineHeight
+    )
   );
-  const blockTerms = packIntoBlocks(allTerms, maxRows, BLOCK_COUNT);
+
+  const balancedColumns = packColumnsBalanced({
+    count: allTerms.length,
+    blockCount: BLOCK_COUNT,
+    rowsOf: (start, end, skipFirstLegend) =>
+      computeBlockRows(allTerms.slice(start, end + 1), skipFirstLegend),
+    sameBoundary: (prevEndIndex, startIndex) =>
+      getLegendLetter(allTerms[prevEndIndex].name) ===
+      getLegendLetter(allTerms[startIndex].name),
+  });
+
+  const blockTerms = balancedColumns.length
+    ? balancedColumns.map(({ start, end }) => allTerms.slice(start, end + 1))
+    : packIntoBlocks(allTerms, maxRows, BLOCK_COUNT);
+
+  // Columns are always balanced; `allFit` only tells the scale loop whether the
+  // balanced layout already fits the height so it can stop shrinking the type.
   const allFit = blockTerms.every((terms, blockIndex) => {
     const skipFirstLegend = getSkipFirstLegend(blockTerms, blockIndex);
     return computeBlockRows(terms, skipFirstLegend) <= maxRows;

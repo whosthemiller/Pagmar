@@ -9,6 +9,7 @@ import {
 } from "./letter-shuffle.js";
 import { getGridSpanBounds } from "./grid-metrics.js";
 import { getTimelineEventText } from "./timeline-events.js";
+import { applyTypographyRules } from "./typography.js";
 
 const TIMELINE_HINT_COLUMNS = 10;
 const TIMELINE_HINT_LINE_HEIGHT = 80;
@@ -196,11 +197,12 @@ export function updateTimelineEventHint(year) {
     return;
   }
 
-  const text = getTimelineEventText(year);
-  if (!text) {
+  const rawText = getTimelineEventText(year);
+  if (!rawText) {
     hideTimelineEventHint();
     return;
   }
+  const text = applyTypographyRules(rawText);
 
   clearHintHideTimer();
   positionTimelineHint();

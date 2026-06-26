@@ -1,4 +1,6 @@
 import { syncGridCssVars } from "./grid-metrics.js";
+import { getMapTypographyScale } from "./viewport-layout.js";
+import { packColumnsBalanced } from "./terms-column-packer.js";
 
 const LINE_HEIGHT = 20;
 const FONT_SIZE = 14;
@@ -7,7 +9,7 @@ const TERM_COL_START = 2;
 const BLOCK_COL_SPAN = 4;
 const BLOCK_COUNT = 6;
 const DEFAULT_MARGIN_TOP = 170;
-const MARGIN_BOTTOM = 92;
+const MARGIN_BOTTOM = 72;
 const MIN_LAYOUT_SCALE = 0.62;
 
 /** @type {HTMLElement | null} */
@@ -451,17 +453,32 @@ function gridBlocksOverflow() {
 }
 
 function resolveLayoutForScale(scale) {
+  const viewportWidth =
+    viewportEl?.clientWidth ?? rootEl?.clientWidth ?? window.innerWidth;
   const viewportHeight =
     viewportEl?.clientHeight ?? rootEl?.clientHeight ?? window.innerHeight;
   const marginTop = getMarginTop();
   const marginBottom = getMarginBottom();
-  const lineHeight = Math.max(14, Math.round(LINE_HEIGHT * scale));
-  const fontSize = Math.max(12, Math.round(FONT_SIZE * scale));
+  const typographyScale = getMapTypographyScale(viewportWidth);
+  const lineHeight = Math.max(14, Math.round(LINE_HEIGHT * typographyScale * scale));
+  const fontSize = Math.max(12, Math.round(FONT_SIZE * typographyScale * scale));
   const maxRows = Math.max(
     1,
     Math.floor((viewportHeight - marginTop - marginBottom) / lineHeight)
   );
-  const blockGroups = packGroupsIntoBlocks(allGroups, maxRows, BLOCK_COUNT);
+
+  const balancedColumns = packColumnsBalanced({
+    count: allGroups.length,
+    blockCount: BLOCK_COUNT,
+    rowsOf: (start, end) => computeGroupBlockRows(allGroups.slice(start, end + 1)),
+  });
+
+  const blockGroups = balancedColumns.length
+    ? balancedColumns.map(({ start, end }) => allGroups.slice(start, end + 1))
+    : packGroupsIntoBlocks(allGroups, maxRows, BLOCK_COUNT);
+
+  // Columns are always balanced; `allFit` only tells the scale loop whether the
+  // balanced layout already fits the height so it can stop shrinking the type.
   const allFit = blockGroups.every(
     (groupBlock) => computeGroupBlockRows(groupBlock) <= maxRows
   );

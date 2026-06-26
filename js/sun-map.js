@@ -90,6 +90,7 @@ import {
   mountFontScrambleTerm,
   playFontScrambleTextSwitch,
   playFontScrambleTransition,
+  setFontScrambleScale,
 } from "./font-scramble-transitions.js";
 import {
   GRID,
@@ -111,6 +112,7 @@ import {
   getTermPageScrollDefinitionImageGapPx,
   getTermPageScrollContentOffsetYpx,
   getTermPageScrollImageHeightFactor,
+  getTermPageScrollImageMinHeightPx,
   getTermPageScrollLayoutConfig,
   getTermPageScrollPaddingBottomPx,
   getTermPageTitleBandHeightPx,
@@ -119,6 +121,13 @@ import {
   resolveTermPageScrollTopAfterResize,
   syncTermPageResponsiveVars,
 } from "./term-page-responsive.js";
+import {
+  VIEWPORT_DESIGN,
+  getMapTypographyScale,
+  getOverviewTypographyScale,
+  getResponsiveGridLayout,
+  scaleLayoutPx,
+} from "./viewport-layout.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 
@@ -673,6 +682,10 @@ let wheelBound = false;
 /** Wheel delta from splash dismiss, applied once the arc scroll handler is ready. */
 let pendingSplashWheelDelta = null;
 let currentLayout = null;
+// Fraction of the free space below the pinned header used as the top gap when
+// resting fold 3: 0.5 = dead centre, smaller = image higher. Live-tunable via
+// the `?foldTune` overlay (arrow keys), then baked in here.
+let termPageFold3CentreFrac = 0.39;
 let isSnapping = false;
 let snapAnimFrame = null;
 let snapDebounceTimer = null;
@@ -823,6 +836,22 @@ function getLiveViewportWidth() {
   return viewport?.clientWidth ?? currentLayout?.viewportWidth ?? window.innerWidth;
 }
 
+function getTermPageImageHeightPx(viewportHeight = getLiveViewportHeight()) {
+  return scaleLayoutPx(LAYOUT.termPageImageHeight, viewportHeight);
+}
+
+function getTermPageBlockGapPx(viewportHeight = getLiveViewportHeight()) {
+  return scaleLayoutPx(LAYOUT.termPageBlockGap, viewportHeight);
+}
+
+function getOverviewOffsetPx(value, viewportHeight = getLiveViewportHeight()) {
+  return scaleLayoutPx(value, viewportHeight);
+}
+
+function getTermPageSelectedFontSizePx(viewportWidth = getLiveViewportWidth()) {
+  return Math.round(LAYOUT.termPageSelectedFontSize * getMapTypographyScale(viewportWidth));
+}
+
 /** Cached scroll-layout column tiers — refreshed on resize / term-page layout. */
 let termPageScrollLayout = getTermPageScrollLayoutConfig(
   typeof window !== "undefined" ? window.innerWidth : 1200
@@ -917,18 +946,36 @@ const overviewGeo = createOverviewGeometry({
   getScrollOffset: () => scrollOffset,
   getOverviewProgress: () => overviewProgress,
   getOverviewSpinOffset: () => overviewSpinOffset,
-  getOverviewCxOffset: () =>
-    overviewSubMode === "timeline"
-      ? LAYOUT.timelineCxOffset
-      : LAYOUT.overviewCxOffset,
-  getOverviewCyOffset: () =>
-    overviewSubMode === "timeline"
-      ? LAYOUT.timelineCyOffset
-      : LAYOUT.overviewCyOffset,
+  getOverviewCxOffset: () => {
+    const viewportHeight = getLiveViewportHeight();
+    const base =
+      overviewSubMode === "timeline"
+        ? LAYOUT.timelineCxOffset
+        : LAYOUT.overviewCxOffset;
+    return getOverviewOffsetPx(base, viewportHeight);
+  },
+  getOverviewCyOffset: () => {
+    const viewportHeight = getLiveViewportHeight();
+    const base =
+      overviewSubMode === "timeline"
+        ? LAYOUT.timelineCyOffset
+        : LAYOUT.overviewCyOffset;
+    return getOverviewOffsetPx(base, viewportHeight);
+  },
   getOverviewRadiusScale: () =>
     overviewSubMode === "timeline"
       ? LAYOUT.timelineRadiusScale
       : LAYOUT.overviewRadiusScale,
+  getOverviewRotationLocked: () => overviewSubMode === "timeline",
+  // The timeline ring is sized once against the full term set (the densest
+  // possible layout) so the font/radius stays uniform across years. If the fit
+  // tracked the per-year visible subset, scrolling would resize the type as the
+  // term count changed year to year, producing visible size jumps.
+  getOverviewFitKey: () => overviewSubMode,
+  getOverviewTermVisible: () => true,
+  getTypographyScale: (viewportWidth) => getMapTypographyScale(viewportWidth),
+  getOverviewTypographyScale: (viewportWidth, viewportHeight) =>
+    getOverviewTypographyScale(viewportWidth, viewportHeight),
 });
 
 const {
@@ -1539,15 +1586,68 @@ function isTermPageScrollContentMode() {
   return isTermPageScrollBgMode();
 }
 
-function getTermPageScrollImageHeightPx(viewportHeight) {
+/**
+ * Vertical room reserved below the fold-2 inline image so it lands inside one
+ * fold: the image caption + a little breathing space, plus (in stacked tiers)
+ * the meta block that sits beneath the image.
+ */
+function getTermPageFold2BottomReservePx(viewportHeight) {
+  // Room below the inline image for its caption plus a small bottom margin.
+  let reserve = scaleLayoutPx(40, viewportHeight);
+  if (termPageScrollLayout?.metaBelowImage) {
+    // The meta is laid out after the image is sized, so its live height can be
+    // stale here. Never reserve less than a full three-row estimate.
+    const liveMeta = termMetaEl && !termMetaEl.hidden ? termMetaEl.offsetHeight : 0;
+    const metaHeight = Math.max(liveMeta, scaleLayoutPx(160, viewportHeight));
+    reserve += getTermPageMetaBelowImageGapPx(viewportHeight) + metaHeight;
+  }
+  return reserve;
+}
+
+/**
+ * Pinned header band bottom as seen in fold 2 (definition tucked under the
+ * header). The live header projection is unusable while the page sits at the
+ * title view (scroll 0): every source reads the large unpinned title and
+ * reports ~290px, whereas the real pinned band measures ~153px on a short
+ * viewport up to ~173px on a tall one. This calibrated estimate tracks that
+ * measured band and stays a touch conservative (never over-reserves), so the
+ * inline image fills the fold instead of leaving dead space below it.
+ */
+function getTermPageFold2PinnedHeaderBottomPx(viewportHeight) {
+  return Math.min(185, Math.max(150, Math.round(viewportHeight * 0.155)));
+}
+
+/**
+ * Height of the fold-2 inline image. Starts from the tier factor, but shrinks
+ * (down to a floor) when the definition is tall so the definition, gap, image
+ * and the meta hanging off it all stay within a single fold.
+ */
+function getTermPageScrollImageHeightPx(
+  viewportHeight,
+  definitionHeight = termDefinitionEl?.offsetHeight ?? 0
+) {
   const factor = getTermPageScrollImageHeightFactor(termPageScrollLayout.tier);
-  return Math.round(viewportHeight * factor);
+  const baseHeight = Math.round(viewportHeight * factor);
+  if (!(definitionHeight > 0)) return baseHeight;
+
+  const headerBottom = getTermPageFold2PinnedHeaderBottomPx(viewportHeight);
+  const gap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
+  const bottomReserve = getTermPageFold2BottomReservePx(viewportHeight);
+  const available =
+    viewportHeight - headerBottom - definitionHeight - gap - bottomReserve;
+  if (!Number.isFinite(available) || available >= baseHeight) return baseHeight;
+
+  const minHeight = getTermPageScrollImageMinHeightPx(
+    viewportHeight,
+    termPageScrollLayout.tier
+  );
+  return Math.max(minHeight, Math.round(available));
 }
 
 function getTermPageScrollContentTopPx(viewportHeight) {
   return (
     getFocusRowTopPx(viewportHeight) +
-    LAYOUT.termPageSelectedFontSize * 0.12 +
+    getTermPageSelectedFontSizePx() * 0.12 +
     LAYOUT.termPageGapBelowTitle +
     getTermPageScrollContentOffsetYpx(viewportHeight) +
     termPageCensoredWrapExtraPx
@@ -1783,6 +1883,49 @@ function isTermDefinitionAtSnapPosition(
   return Math.abs(defLocal - headerBottom) < 4;
 }
 
+/**
+ * Minimum fold-2 chapter height (in page px) that guarantees fold 3 is pushed
+ * fully below the viewport at the definition (fold-2) snap, so the two folds
+ * never share a screen.
+ *
+ * At that snap the page top maps to the pinned-header bottom, so fold 3's
+ * content begins at screen y = `headerBottom + fold2EndInPage + blockGap`; for
+ * it to clear the viewport we need `fold2EndInPage + blockGap >= viewportHeight`.
+ *
+ * We deliberately do *not* subtract the header height here. This floor is baked
+ * into the details element's position at layout time, while the resting header
+ * height is read live at the fold-2 snap, and the pinned header routinely
+ * renders shorter at rest than projected during layout (it can swing by far more
+ * than a small margin). Subtracting the layout-time header therefore lets fold 3
+ * peek when the rest header is shorter. Ignoring the header makes the separation
+ * header-independent — fold 3 starts at least `blockGap`-below the bottom of the
+ * fold-2 screen, and any real header height only pushes it further off-screen.
+ * The large `blockGap` absorbs the extra reserve, so almost no empty space shows.
+ *
+ * Pure geometry: it does *not* check whether fold 3 exists, so callers must only
+ * apply it when there is fold-3 content (otherwise the extra reserve would clip
+ * the fold-2 snap on short pages).
+ */
+function getTermPageFold2ClearFloorPx(viewportHeight = getLiveViewportHeight()) {
+  const blockGap = getTermPageScrollBlockGapPx(viewportHeight);
+  // Small extra so the next fold's top edge sits a touch below the viewport
+  // bottom rather than flush against it.
+  const separationMargin = scaleLayoutPx(16, viewportHeight);
+  return Math.max(0, viewportHeight - blockGap + separationMargin);
+}
+
+/**
+ * Fold-2 chapter floor used by the settled snap getters: the design ratio,
+ * lifted to the clear floor when fold-3 content is present so fold 3 stays off
+ * the fold-2 screen. Safe to call once the term page is visible (the layout
+ * path below detects fold-3 differently while the page is still hidden).
+ */
+function getTermPageFold2ChapterFloorPx(viewportHeight = getLiveViewportHeight()) {
+  const ratioMin = getTermPageFold2ChapterMinPx(viewportHeight);
+  if (!hasTermPageFold3Content()) return ratioMin;
+  return Math.max(ratioMin, getTermPageFold2ClearFloorPx(viewportHeight));
+}
+
 function getTermPageFold2EndInPagePx(viewportHeight = getLiveViewportHeight()) {
   if (!termPageEl || !termDefinitionEl || !termPageEl.classList.contains("is-scroll-content")) {
     return 0;
@@ -1803,9 +1946,47 @@ function getTermPageFold2EndInPagePx(viewportHeight = getLiveViewportHeight()) {
     );
   }
 
-  const minFold2Chapter = getTermPageFold2ChapterMinPx(viewportHeight);
+  const minFold2Chapter = getTermPageFold2ChapterFloorPx(viewportHeight);
   const fold2Pad = Math.max(0, minFold2Chapter - fold2BottomInPage);
   return imagesBottomInPage + fold2Pad;
+}
+
+/** Bottom of fold 2's actual content (images / meta) in page px, before the
+ *  fold-2 chapter padding. */
+function getTermPageFold2ContentBottomInPagePx(viewportHeight = getLiveViewportHeight()) {
+  if (
+    !termPageEl ||
+    !termDefinitionEl ||
+    !termPageEl.classList.contains("is-scroll-content")
+  ) {
+    return 0;
+  }
+
+  const definitionImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
+  const definitionHeight = termDefinitionEl.offsetHeight;
+  const imagesBlockTop = definitionHeight + definitionImageGap;
+  const imagesHeight = termImagesEl?.offsetHeight || 0;
+  let bottom = imagesBlockTop + imagesHeight;
+
+  const pageTop = parseFloat(termPageEl.style.top) || termPageEl.offsetTop || 0;
+  if (termMetaEl && !termMetaEl.hidden) {
+    bottom = Math.max(bottom, termMetaEl.offsetTop + termMetaEl.offsetHeight - pageTop);
+  }
+  return bottom;
+}
+
+/** Bottom of fold 3's actual content (details image / details / labels) in page
+ *  px, before the fold-3 chapter padding. */
+function getTermPageFold3ContentBottomInPagePx(viewportHeight = getLiveViewportHeight()) {
+  if (!hasTermPageFold3Content()) return 0;
+  let bottom = getTermPageFold3TopInPagePx(viewportHeight);
+  // These elements live inside termPageEl, so offsetTop is already page-relative.
+  for (const el of [termDetailsImageEl, termDetailsEl, termLabelNavEl]) {
+    if (el && !el.hidden) {
+      bottom = Math.max(bottom, el.offsetTop + el.offsetHeight);
+    }
+  }
+  return bottom;
 }
 
 function hasTermPageFold3Content() {
@@ -1828,10 +2009,25 @@ function applyTermPageFold3ChapterPad(fold2EndInPage, contentBottom, viewportHei
   if (!hasTermPageFold3Content()) return contentBottom;
   const blockGap = getTermPageScrollBlockGapPx(viewportHeight);
   const fold3ContentHeight = Math.max(0, contentBottom - fold2EndInPage - blockGap);
-  const fold3Pad = Math.max(
+
+  // Fold 3 snaps to the bottom of the page, so it must reserve enough height
+  // that scrolling there lifts fold 2 fully above the pinned header. The header
+  // and bottom padding are capped in px, so a fixed viewport-height ratio
+  // under-reserves on tall screens and leaves fold-2 content visible. Derive the
+  // floor from the actual header bottom + bottom reserve as well.
+  const headerBottom = getTermPinnedHeaderBottomLocalPx(viewportHeight);
+  const bottomReserve =
+    getTermPageScrollPaddingBottomPx(viewportHeight) + 2 * LAYOUT.termPageBottomMargin;
+  const fold2ClearHeight = Math.max(
     0,
-    getTermPageFold3ChapterMinPx(viewportHeight) - fold3ContentHeight
+    viewportHeight - headerBottom - bottomReserve - blockGap
   );
+  const minFold3Content = Math.max(
+    getTermPageFold3ChapterMinPx(viewportHeight),
+    fold2ClearHeight
+  );
+
+  const fold3Pad = Math.max(0, minFold3Content - fold3ContentHeight);
   return contentBottom + fold3Pad;
 }
 
@@ -1868,14 +2064,86 @@ function getTermPageFold2EndScrollTop(viewportHeight = getLiveViewportHeight()) 
   return Math.max(fold1, Math.round(pageTop + fold2EndInPage - headerBottom));
 }
 
-/** Scroll offset for fold 3 — snap all the way to the bottom of the page. */
+/**
+ * Scroll offset for fold 3.
+ *
+ * Snapping all the way to the bottom of the page (maxScroll) over-scrolls fold
+ * 3: the page reserves extra height for the background-reveal padding, so the
+ * bottom snap lifts fold 3 to the very top of the viewport and leaves a large
+ * empty gap below the (often short) fold-3 content. Instead, rest fold 3 at the
+ * lowest scroll that still hides fold 2:
+ *
+ *   - `fold2HiddenScroll` — minimum scroll that tucks the end of the fold-2
+ *     chapter just under the pinned header (fold 2 fully hidden). Lower bound.
+ *   - `bottomAlignScroll` — rests the bottom of fold 3's content flush with the
+ *     bottom of the viewport, minimising empty space under short fold-3 chapters
+ *     (the scroll stops as early as possible without leaving a gap below).
+ *   - `fold3PinScroll` — tucks the *top* of fold 3 under the header; going past
+ *     this only clips fold 3 off the top, so it is the upper bound for tall
+ *     fold-3 chapters.
+ */
+/**
+ * Resting scroll target for fold 3 *before* clamping to the page's max scroll.
+ * Computed independently of `maxScroll` so the scrollable height can be capped
+ * to it (see `applyViewportTermScrollBounds`) — that way scrolling stops with
+ * fold 3 at rest instead of continuing into the empty background-reveal runway.
+ */
+function getTermPageFold3SnapTargetPx(viewportHeight = getLiveViewportHeight()) {
+  if (!hasTermPageFold3Content()) return 0;
+
+  const fold1Snap = getTermPageDefinitionSnapScrollTop(viewportHeight);
+  const pageTop =
+    termPageEl?.offsetTop || getTermPageScrollContentTopPx(viewportHeight);
+  // Use the *calibrated* pinned-header band rather than the live projection: the
+  // live value depends on the current scroll/pin animation state and can swing
+  // wildly (seen jumping 120→390px for the same viewport), which made fold 3
+  // rest at an inconsistent height — sometimes far too high. This estimate is
+  // stable per viewport, so the resting position is deterministic.
+  const headerBottom = getTermPageFold2PinnedHeaderBottomPx(viewportHeight);
+
+  const fold3TopInPage = getTermPageFold3TopInPagePx(viewportHeight);
+  const fold3Height = Math.max(
+    0,
+    getTermPageFold3ContentBottomInPagePx(viewportHeight) - fold3TopInPage
+  );
+  const availableBelowHeader = Math.max(0, viewportHeight - headerBottom);
+
+  // Tuck the whole fold-2 chapter, not just its rendered image/meta content,
+  // under the header. On tall screens fold 2 gets extra chapter padding so fold
+  // 3 does not peek into fold 2; using only the content bottom here would undo
+  // that separation when resting at fold 3.
+  const fold2HideMargin = scaleLayoutPx(28, viewportHeight);
+  const fold2HiddenScroll =
+    pageTop +
+    getTermPageFold2EndInPagePx(viewportHeight) -
+    headerBottom +
+    fold2HideMargin;
+  const fold3PinScroll = pageTop + fold3TopInPage - headerBottom;
+  // Rest fold 3 a touch above dead-centre in the area below the pinned header:
+  // the image sits in the middle of the composition (not pinned high), while the
+  // smaller top gap keeps fold 2 — including its image caption — tucked further
+  // under the header backdrop.
+  const freeSpace = Math.max(0, availableBelowHeader - fold3Height);
+  const centreGap = Math.max(0, Math.min(freeSpace, freeSpace * termPageFold3CentreFrac));
+  const centredScroll = fold3PinScroll - centreGap;
+
+  const target = Math.max(
+    fold2HiddenScroll,
+    Math.min(fold3PinScroll, centredScroll)
+  );
+
+  return Math.round(Math.max(fold1Snap, target));
+}
+
 function getTermPageFold3SnapScrollTop(viewportHeight = getLiveViewportHeight()) {
   if (!hasTermPageFold3Content()) return 0;
 
   const fold1Snap = getTermPageDefinitionSnapScrollTop(viewportHeight);
   const maxScroll = getTermPageMaxScrollTopPx(viewportHeight);
   if (maxScroll <= fold1Snap + 24) return 0;
-  return maxScroll;
+
+  const target = getTermPageFold3SnapTargetPx(viewportHeight);
+  return Math.round(Math.min(maxScroll, Math.max(fold1Snap, target)));
 }
 
 function getTermPagePinSnapStops(viewportHeight = getLiveViewportHeight()) {
@@ -2659,7 +2927,7 @@ function getTermFixedHeaderBottomPx(viewportHeight) {
   const focusTop = getFocusRowTopPx(viewportHeight);
   const selectedFontSize = TERM_PAGE_LEGACY_CONTENT_ENABLED
     ? LAYOUT.fontSize
-    : LAYOUT.termPageSelectedFontSize;
+    : getTermPageSelectedFontSizePx();
   const metaTop = focusTop - selectedFontSize / 2;
   const termRowBottom = focusTop + selectedFontSize * 0.12;
   let bottom = termRowBottom;
@@ -2787,6 +3055,29 @@ function applyViewportTermScrollBounds(viewportHeight) {
     totalHeight = getTermContentBottom();
     scrollContentBottom = totalHeight;
   }
+
+  // Fold 3 rests partway down the page and the bleed background finishes
+  // revealing well before it, so any scroll runway *below* fold 3's resting
+  // position is dead space the reader is forced to drag through. Pin the
+  // scrollable height to exactly the fold-3 rest so that snap *is* the bottom of
+  // the page: extend up to it when the content alone is shorter (otherwise the
+  // bleed spacer overshoots and leaves an empty tail past the snap) and trim it
+  // when the bleed runway would otherwise overshoot — but never trim below the
+  // real content. The page element is absolutely positioned, so its bottom edge
+  // (via minHeight) sets scrollHeight; the spacer is matched to it below.
+  let fold3ScrollCap = 0;
+  if (isTermPageScrollContentMode() && hasTermPageFold3Content() && termPageEl) {
+    const pageTop = termPageEl.offsetTop || 0;
+    const fold3Rest = viewportHeight + getTermPageFold3SnapTargetPx(viewportHeight);
+    if (fold3Rest > viewportHeight + 1) {
+      const capped = Math.max(fold3Rest, scrollContentBottom);
+      fold3ScrollCap = capped;
+      totalHeight = capped;
+      termPageEl.style.paddingBottom = "0px";
+      termPageEl.style.minHeight = `${Math.max(0, capped - pageTop)}px`;
+    }
+  }
+
   const scrollTop = viewport?.scrollTop ?? 0;
   const preserveScrollMode =
     isTermPageScrollBgMode() &&
@@ -2813,10 +3104,15 @@ function applyViewportTermScrollBounds(viewportHeight) {
       // Absolute scroll content sets scrollHeight from its bottom edge; park the
       // spacer below that content so bleed-scroll range always reaches imageCutY.
       const spacerTop = Math.max(0, scrollContentBottom);
-      const spacerHeight = Math.max(
-        getTermPageScrollPaddingBottomPx(viewportHeight),
-        totalHeight - spacerTop
-      );
+      // When fold 3 caps the scroll, the (absolute) page already defines the
+      // full scrollHeight — adding the usual runway here would re-introduce the
+      // empty tail below fold 3, so keep the spacer flush with the content.
+      const spacerHeight = fold3ScrollCap
+        ? Math.max(0, totalHeight - spacerTop)
+        : Math.max(
+            getTermPageScrollPaddingBottomPx(viewportHeight),
+            totalHeight - spacerTop
+          );
       scrollSpacerEl.style.marginTop = `${spacerTop}px`;
       scrollSpacerEl.style.height = `${spacerHeight}px`;
     } else {
@@ -4853,7 +5149,7 @@ function getCensorHeaderBottomScreenY(viewportHeight = getLiveViewportHeight()) 
   return viewportRect.top + getTermFixedHeaderBottomPx(viewportHeight);
 }
 
-function getTermPageImageHeightPx(el, figure = el?.closest?.(".sun-term-page__figure")) {
+function measureTermPageImageHeightPx(el, figure = el?.closest?.(".sun-term-page__figure")) {
   if (!el) return 0;
 
   const fromVar = figure
@@ -4890,7 +5186,7 @@ function getElementVisibleImageScreenSpan(el, viewportHeight = getLiveViewportHe
     const figureRect = figure.getBoundingClientRect();
     if (figureRect.width < 1) return null;
 
-    const imageHeight = getTermPageImageHeightPx(el, figure);
+    const imageHeight = measureTermPageImageHeightPx(el, figure);
     if (imageHeight < 1) return null;
 
     left = figureRect.left;
@@ -6667,7 +6963,7 @@ function refreshTermPageLabelNavLayout() {
   }
   const fold2Pad = Math.max(
     0,
-    getTermPageFold2ChapterMinPx(viewportHeight) - fold2BottomInPage
+    getTermPageFold2ChapterFloorPx(viewportHeight) - fold2BottomInPage
   );
   const fold2EndInPage = imagesBottomInPage + fold2Pad;
   const scrollTopBefore = viewport?.scrollTop ?? 0;
@@ -6738,7 +7034,7 @@ function getTermPageImageDimensions() {
     LAYOUT.termPageImagesColumnFromRight,
     viewport
   );
-  return { width: span.width, height: LAYOUT.termPageImageHeight };
+  return { width: span.width, height: getTermPageImageHeightPx() };
 }
 
 function getTermImagePixelSize(url) {
@@ -7751,6 +8047,25 @@ function applyFixedRowTermPushRayLocal(rayGroup, hoverWrap, localLayout) {
   }
 }
 
+/**
+ * Aspect ratio of the row-end fixed image, locked to the MacBook reference
+ * viewport. Width tracks the live grid span (which scales with viewport width,
+ * uncapped) while the design-time height only scales with viewport height
+ * (capped). Deriving height from the live width via this fixed ratio keeps the
+ * thumbnail's proportions identical on every screen instead of stretching wide
+ * on large monitors.
+ */
+function getFixedRowImageReferenceAspect() {
+  const refGrid = getResponsiveGridLayout(VIEWPORT_DESIGN.width);
+  const cols = LAYOUT.titleRowFixedImageColumns;
+  const refWidth = cols * refGrid.colWidth + (cols - 1) * refGrid.gutter;
+  const refHeight =
+    LAYOUT.termPageImageHeight *
+    (LAYOUT.titleRowFixedImageColumns / LAYOUT.termPageImagesColumns);
+  if (refHeight <= 0) return 1;
+  return refWidth / refHeight;
+}
+
 function getFixedRowImageDimensions() {
   const span = getGridSpanBounds(
     LAYOUT.titleRowFixedImageColumns,
@@ -7758,10 +8073,8 @@ function getFixedRowImageDimensions() {
     viewport
   );
   const width = span.width;
-  const height = Math.round(
-    LAYOUT.termPageImageHeight *
-      (LAYOUT.titleRowFixedImageColumns / LAYOUT.termPageImagesColumns)
-  );
+  const aspect = getFixedRowImageReferenceAspect();
+  const height = aspect > 0 ? Math.round(width / aspect) : width;
   return { width, height };
 }
 
@@ -9507,11 +9820,11 @@ function updateTermPageScrollImages(
   term,
   definitionHeight,
   viewportHeight,
+  imageHeight,
   rebuild = true
 ) {
   if (!termImagesEl) return { imagesHeight: 0, imageBottom: 0 };
 
-  const imageHeight = getTermPageScrollImageHeightPx(viewportHeight);
   const scrollCfg = termPageScrollLayout;
   const definitionImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
   const imagesSpan = getGridSpanBounds(
@@ -9565,13 +9878,11 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   const { viewportWidth, viewportHeight } = layout;
   syncTermPageResponsiveState(viewportWidth, viewportHeight);
   const pageTop = getTermPageScrollContentTopPx(viewportHeight);
-  const imageHeight = getTermPageScrollImageHeightPx(viewportHeight);
   const scrollCfg = termPageScrollLayout;
   const definitionImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
 
   termPageEl.classList.add("is-scroll-content");
   viewport?.classList.add("is-term-scroll-content");
-  viewport?.style.setProperty("--term-page-scroll-image-height", `${imageHeight}px`);
   termPageEl.style.left = "0";
   termPageEl.style.width = "100%";
   termPageEl.style.top = `${pageTop}px`;
@@ -9592,10 +9903,14 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   termDefinitionEl.style.top = "0";
 
   const definitionHeight = termDefinitionEl.offsetHeight;
+  const imageHeight = getTermPageScrollImageHeightPx(viewportHeight, definitionHeight);
+  viewport?.style.setProperty("--term-page-scroll-image-height", `${imageHeight}px`);
+
   const { imagesHeight } = updateTermPageScrollImages(
     term,
     definitionHeight,
     viewportHeight,
+    imageHeight,
     termChanged
   );
 
@@ -9614,9 +9929,24 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   }
   const minFold2Chapter = getTermPageFold2ChapterMinPx(viewportHeight);
   const fold2Pad = Math.max(0, minFold2Chapter - fold2BottomInPage);
-  const fold2EndInPage = imagesBottomInPage + fold2Pad;
+  let fold2EndInPage = imagesBottomInPage + fold2Pad;
 
-  const detailsBottom = layoutTermPageScrollDetails(fold2EndInPage, term, !termChanged);
+  let detailsBottom = layoutTermPageScrollDetails(fold2EndInPage, term, !termChanged);
+
+  // The page is still hidden here, so hasTermPageFold3Content() (which checks
+  // termPageEl.hidden) can't be trusted. Detect fold 3 from the layout result —
+  // the details layout returns a bottom past fold 2 only when it produced
+  // content — and, if present, grow the fold-2 chapter to the clear floor so
+  // fold 3 is pushed fully below the viewport at the fold-2 snap, then
+  // reposition the details so their actual style.top matches.
+  if (detailsBottom > fold2EndInPage) {
+    const clearFloor = getTermPageFold2ClearFloorPx(viewportHeight);
+    if (clearFloor > fold2EndInPage) {
+      fold2EndInPage = clearFloor;
+      detailsBottom = layoutTermPageScrollDetails(fold2EndInPage, term, true);
+    }
+  }
+
   const contentBottom = applyTermPageFold3ChapterPad(
     fold2EndInPage,
     detailsBottom,
@@ -9634,6 +9964,7 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
     Promise.all(imageContainers.map((container) => loadTermPageImages(container))).then(
       () => {
         revealTermPageContent(term.id, revealToken);
+        refitTermPageScrollImage(currentLayout);
         if (currentLayout) {
           applyViewportTermScrollBounds(currentLayout.viewportHeight);
         }
@@ -9644,6 +9975,23 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   if (currentLayout) {
     applyViewportTermScrollBounds(currentLayout.viewportHeight);
   }
+}
+
+/**
+ * Re-fit the fold-2 inline image after the page settles. The pinned-header
+ * geometry isn't ready during the first layout pass, so the image is sized
+ * conservatively (too small) then. Once the title font has settled and the pin
+ * threshold is accurate, re-run the layout so the image grows to fill the fold.
+ * Runs while the reader is still on the title view, so the resize is unseen.
+ */
+function refitTermPageScrollImage(layout = currentLayout) {
+  if (!layout || !isTermPageScrollContentMode()) return;
+  if (!termPageEl || termPageEl.hidden || !termPageEl.classList.contains("is-scroll-content")) {
+    return;
+  }
+  const term = groups[focusState?.activeIndex]?.terms[focusState?.clickedIndex];
+  if (!term) return;
+  layoutTermPageScrollContent(layout, term, false, { skipAsyncReveal: true });
 }
 
 function getTermPageScrollContentBottomPx() {
@@ -9893,6 +10241,7 @@ function getTermPageCensoredPushGap(progress) {
 
 function captureTermPageCensoredPushTarget(text) {
   termPageCensoredPushTarget = null;
+  setFontScrambleScale(getMapTypographyScale());
   const rayGroup = getFocusRayGroup();
   if (!rayGroup || !termFontOverlayTermEl || !termFontOverlayEl) return;
 
@@ -9920,6 +10269,10 @@ function captureTermPageCensoredPushTarget(text) {
   termFontOverlayEl.style.visibility = prevVisibility;
   termFontOverlayBaselineY = null;
 
+  // Stable settled-title ink-left, captured once so the push lands exactly where
+  // the handoff will (no overlap during the push, no snap at the end).
+  const settledZ = measureSettledSecoloTitleScreenZ(rayGroup);
+
   const censored = withCensoredWrapTransformsSuspended(rayGroup, () =>
     getCensoredTermsScreenRight(rayGroup)
   );
@@ -9929,6 +10282,7 @@ function captureTermPageCensoredPushTarget(text) {
     termPageCensoredPushTarget = {
       startZ,
       targetZ,
+      settledZ,
       initialCensoredMaxX: null,
       refScreenY: 0,
     };
@@ -9940,6 +10294,7 @@ function captureTermPageCensoredPushTarget(text) {
   termPageCensoredPushTarget = {
     startZ,
     targetZ,
+    settledZ,
     initialCensoredMaxX: censored.maxX,
     refScreenY: censored.refScreenY,
   };
@@ -9967,9 +10322,28 @@ function applyTermPageCensoredPushFromTarget(
     overlayTerm && !termFontOverlayEl?.hidden
       ? overlayTerm.getBoundingClientRect().left
       : NaN;
+  // The overlay's box-left (glyph cells) and the settled SVG title's ink-left
+  // differ by the per-glyph side bearings — a gap that scales with the title
+  // size. Z is taken from the overlay during the push but snaps to the SVG
+  // ink-left at the handoff, so without correcting toward the settled Z the
+  // censored row and "similar terms" label jump at the end (worse on wide
+  // screens). Ramp the ink correction in by `t` so the push lands exactly where
+  // the handoff will, with no final jump.
+  //
+  // Use the *captured* settled Z (measured once at full title size). Reading it
+  // live here is wrong: during the push the SVG title is still drawn at the
+  // small home size, so its ink-left sits far to the right of the final big
+  // title — which would shove the censored row into the title (overlap) and
+  // snap back at handoff.
+  const settledZ = target.settledZ ?? getSecoloTitleScreenZ(rayGroup, getSelectedTermTextEl());
   if (Number.isFinite(liveZ)) {
     // Ramp from the frozen Roobert Z toward the live overlay as Secolo grows in.
     clearanceZ = target.startZ + (liveZ - target.startZ) * t;
+    if (Number.isFinite(settledZ) && Number.isFinite(target.targetZ)) {
+      clearanceZ += (settledZ - target.targetZ) * t;
+    }
+  } else if (Number.isFinite(settledZ)) {
+    clearanceZ = target.startZ + (settledZ - target.startZ) * t;
   } else {
     clearanceZ = target.startZ + (target.targetZ - target.startZ) * t;
   }
@@ -9982,9 +10356,20 @@ function applyTermPageCensoredPushFromTarget(
   }
 
   const gap = getTermPageCensoredPushGap(t);
-  const targetRight = clearanceZ - gap;
-  const fullDeltaX = targetRight - target.initialCensoredMaxX;
-  const screenDeltaX = fullDeltaX * t;
+  // Ease the row offset from *zero* straight to its final resting edge. Two
+  // properties fall out of this:
+  //   • At the Secolo handoff (t→0) the offset is 0, continuous with the frozen
+  //     Roobert phase — so the row only ever pushes, it never jumps.
+  //   • It aims at the final left position from the start, so it leads the
+  //     leftward-growing title instead of chasing the still-small title edge
+  //     (which would lag and let the bars slide into the title).
+  // The big title grows left far faster than this ease, so the row always stays
+  // clear of it without needing a hard clamp (a clamp would reintroduce a jump
+  // the instant the push begins).
+  const finalTargetRight = Number.isFinite(target.settledZ)
+    ? target.settledZ - LAYOUT.termPageCensoredRightFromZ
+    : clearanceZ - gap;
+  const screenDeltaX = (finalTargetRight - target.initialCensoredMaxX) * t;
   applyTermPageCensoredRayOffset(screenDeltaX, 0);
   if (t >= 0.999) {
     freezeTermPageCensoredScreenAlign(screenDeltaX, 0);
@@ -10276,7 +10661,10 @@ function getTermPageSimilarLabelNaturalTopPx(labelHeight) {
   const baselineY = getLiveSecoloBaselineScreenY(rayGroup);
   if (baselineY == null) return null;
 
-  const barHeight = getTermCensorBarHeight(LAYOUT.fontSize);
+  const barHeight = getTermCensorBarHeight(
+    LAYOUT.fontSize * getMapTypographyScale(),
+    false
+  );
   return baselineY - barHeight - LAYOUT.termPageSimilarLabelGap - labelHeight;
 }
 
@@ -10542,6 +10930,7 @@ function snapOverlayToSettledSvgBaseline() {
 
 function showTermFontScrambleOverlay() {
   if (!termFontOverlayEl || !termFontOverlayTermEl) return false;
+  setFontScrambleScale(getMapTypographyScale());
   termFontOverlayFrozenTop = null;
   termFontOverlayTermEl.replaceChildren();
   termFontOverlayEl.hidden = false;
@@ -10706,14 +11095,15 @@ function measureTermDisplayWidth(termName) {
   }
   const textEl = document.createElementNS(SVG_NS, "text");
   textEl.setAttribute("font-family", "Secolo, serif");
-  textEl.setAttribute("font-size", `${LAYOUT.termPageSelectedFontSize}px`);
+  const selectedFontSize = getTermPageSelectedFontSizePx();
+  textEl.setAttribute("font-size", `${selectedFontSize}px`);
   textEl.setAttribute("dominant-baseline", "alphabetic");
   textEl.textContent = text;
   termDisplayMeasureSvg.appendChild(textEl);
   const width = textEl.getBBox().width;
   textEl.remove();
   if (width > 0.25) return width;
-  return estimateTermWidth(termName) * (LAYOUT.termPageSelectedFontSize / LAYOUT.fontSize);
+  return estimateTermWidth(termName) * (selectedFontSize / LAYOUT.fontSize);
 }
 
 function applyFocusTermPositionsToDom() {
@@ -11288,6 +11678,25 @@ function getSecoloTitleScreenZ(rayGroup, textEl) {
   return getTermTextScreenBounds(rayGroup, textEl)?.minX ?? null;
 }
 
+/**
+ * Settled (full-size Secolo) ink-left of the selected title, measured even while
+ * the SVG title is still drawn at the small home size behind the scramble
+ * overlay. We temporarily apply the display font so the measurement reflects the
+ * final handoff position, then revert. This runs synchronously (no paint), so it
+ * never flickers. Used to capture a *stable* push offset instead of reading the
+ * live (small) title every frame, which would shove the censored row toward the
+ * title and snap back at handoff.
+ */
+function measureSettledSecoloTitleScreenZ(rayGroup, textEl = getSelectedTermTextEl()) {
+  if (!rayGroup || !textEl) return null;
+  const wrap = getSelectedTermWrap();
+  const hadDisplayFont = wrap?.classList.contains("is-display-font") ?? false;
+  if (!hadDisplayFont) applySelectedTermDisplayFont(textEl);
+  const z = getSecoloTitleScreenZ(rayGroup, textEl);
+  if (!hadDisplayFont) clearSelectedTermDisplayFont(textEl);
+  return z;
+}
+
 function viewportScreenPointDeltaToRayLocalDelta(
   rayGroup,
   baseScreenX,
@@ -11792,7 +12201,7 @@ function syncFocusSelectedTermLayout() {
 function applySelectedTermDisplayFont(textEl) {
   if (!textEl) return;
   textEl.style.fontFamily = '"Secolo", serif';
-  textEl.style.fontSize = `${LAYOUT.termPageSelectedFontSize}px`;
+  textEl.style.fontSize = `${getTermPageSelectedFontSizePx()}px`;
   textEl.style.fontWeight = "normal";
   textEl.style.fontVariationSettings = "normal";
   getSelectedTermWrap()?.classList.add("is-display-font");
@@ -12190,6 +12599,9 @@ function settleTermPageAfterFontScramble(layout, finalOverlayZ) {
   if (!termPageInlineTermSwitch) {
     updateTermPageSimilarLabel(layout);
   }
+
+  // Now that the pin geometry is settled, re-fit the fold-2 image to fill the fold.
+  refitTermPageScrollImage(layout);
 }
 
 function finishSelectedTermFontScramble(scrambleToken, onComplete) {
@@ -12529,7 +12941,7 @@ function updateTermPage(layout) {
   );
   positionTermPageBlock(termDefinitionEl, definitionSpan, span);
   const definitionHeight = termDefinitionEl.offsetHeight;
-  const detailsTop = definitionHeight + LAYOUT.termPageBlockGap;
+  const detailsTop = definitionHeight + getTermPageBlockGapPx();
   termPageEl.style.paddingTop = `${definitionHeight}px`;
   const imagesHeight = updateTermPageImages(
     term,
@@ -13162,7 +13574,12 @@ function prepareRenderParts(layout) {
 
   const overview = resolveLayoutOverview(layout);
   const contentScale = layout.contentScale ?? 1;
-  const fontSize = getOverviewFontSize(overview, contentScale);
+  const fontSize = getOverviewFontSize(
+    overview,
+    contentScale,
+    layout.typographyScale ?? 1,
+    layout.overviewTypographyScale ?? layout.typographyScale ?? 1
+  );
   if (overview > 0.001) {
     svgEl.style.setProperty("--sun-overview-font-size", `${fontSize}px`);
   } else {
@@ -13351,8 +13768,9 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
       Boolean(selectedClass) &&
       termPageSelectedFontSettled &&
       focusState.phase === "locked";
+    const selectedFontSize = getTermPageSelectedFontSizePx(layout.viewportWidth);
     const termStyle = isSelectedTerm
-      ? `font-family:Secolo,serif;font-size:${LAYOUT.termPageSelectedFontSize}px;font-weight:normal`
+      ? `font-family:Secolo,serif;font-size:${selectedFontSize}px;font-weight:normal`
       : `font-size:${fontSize}px`;
 
     parts.push(
@@ -13935,14 +14353,45 @@ function getTermFontSize(textEl) {
   if (Number.isFinite(styleSize)) return styleSize;
   const attrSize = parseFloat(textEl.getAttribute("font-size"));
   if (Number.isFinite(attrSize)) return attrSize;
-  return LAYOUT.fontSize;
+  // No inline size (e.g. after the display font is cleared on a demoted title):
+  // the term falls back to the CSS --sun-term-font-size, which is the scaled
+  // home size. Match it so every sibling censor bar uses the same scale.
+  return LAYOUT.fontSize * getMapTypographyScale();
 }
 
-function getTermCensorBarHeight(fontSize) {
-  if (fontSize <= LAYOUT.fontSize) {
-    return fontSize * MENTION_CENSOR_HEIGHT_RATIO;
+/** Flat display-band height for the big Secolo title; scales with typography. */
+function getTermDisplayCensorBarHeightPx(scale = getMapTypographyScale()) {
+  return TERM_DISPLAY_CENSOR_BAR_HEIGHT * scale;
+}
+
+/**
+ * Font size at/above which the censor switches from a full redaction box
+ * (height = font × ratio) to the flat display band. Used only as a fallback when
+ * the term's role (display title vs sibling) is not explicitly known. Derived
+ * from the band height so the two regimes meet at the threshold.
+ */
+function getTermDisplayFontThreshold(scale = getMapTypographyScale()) {
+  return (TERM_DISPLAY_CENSOR_BAR_HEIGHT / MENTION_CENSOR_HEIGHT_RATIO) * scale;
+}
+
+/**
+ * Whether a term should use the flat display band. Prefer the explicit role
+ * (the selected Secolo title) so the regime never flips mid-animation as the
+ * font grows/shrinks past a size threshold — that flip moves the bar's Y and
+ * looks like a smeared rectangle during the carousel. Falls back to the size
+ * threshold when the role is unknown.
+ */
+function isTermCensorDisplay(fontSize, isDisplay) {
+  if (isDisplay === true) return true;
+  if (isDisplay === false) return false;
+  return fontSize >= getTermDisplayFontThreshold();
+}
+
+function getTermCensorBarHeight(fontSize, isDisplay) {
+  if (isTermCensorDisplay(fontSize, isDisplay)) {
+    return getTermDisplayCensorBarHeightPx();
   }
-  return TERM_DISPLAY_CENSOR_BAR_HEIGHT;
+  return fontSize * MENTION_CENSOR_HEIGHT_RATIO;
 }
 
 function getTermCensorBarY(bbox, barHeight, fontSize, options = {}) {
@@ -13952,7 +14401,7 @@ function getTermCensorBarY(bbox, barHeight, fontSize, options = {}) {
     }
     return null;
   }
-  if (fontSize <= LAYOUT.fontSize) {
+  if (!isTermCensorDisplay(fontSize, options.isDisplay)) {
     return bbox.y + (bbox.height - barHeight) / 2 + MENTION_CENSOR_TOP_OFFSET;
   }
   return (
@@ -14040,12 +14489,14 @@ function updateTermHitArea(textEl, hitEl, censorEl, options = {}) {
 
   if (censorEl) {
     const fontSize = getTermFontSize(textEl);
-    const isDisplaySize = fontSize > LAYOUT.fontSize;
+    // Decide regime by role (the selected Secolo title), not by a size threshold,
+    // so the bar never flips height/position mid-animation (which smears).
+    const isDisplay = isSelectedTitle;
     barHeight =
-      getTermCensorBarHeight(fontSize) +
-      (isDisplaySize ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0);
+      getTermCensorBarHeight(fontSize, isDisplay) +
+      (isDisplay ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0);
     const coreBarHeight =
-      barHeight - (isDisplaySize ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0);
+      barHeight - (isDisplay ? TERM_DISPLAY_CENSOR_BOTTOM_EXTEND : 0);
     barWidth = bbox.width + MENTION_CENSOR_WIDTH_PAD * 2;
     barX = bbox.x - MENTION_CENSOR_WIDTH_PAD;
     const blend = alignBottomToBaseline ? getSiblingCensorBaselineBlend() : 0;
@@ -14067,6 +14518,7 @@ function updateTermHitArea(textEl, hitEl, censorEl, options = {}) {
           : getTermCensorBarY(bbox, coreBarHeight, fontSize, {
               alignBottomToBaseline: true,
               textEl,
+              isDisplay,
             });
       if (baselineBarY == null) return;
       if (blend >= 0.999) {
@@ -14074,6 +14526,7 @@ function updateTermHitArea(textEl, hitEl, censorEl, options = {}) {
       } else {
         const glyphBarY = getTermCensorBarY(bbox, coreBarHeight, fontSize, {
           alignBottomToBaseline: false,
+          isDisplay,
         });
         barY = lerp(glyphBarY, baselineBarY, blend);
       }
@@ -14088,6 +14541,7 @@ function updateTermHitArea(textEl, hitEl, censorEl, options = {}) {
       // Glyph-centered (home-row relationship); textEl.y stays 0.
       barY = getTermCensorBarY(bbox, coreBarHeight, fontSize, {
         alignBottomToBaseline: false,
+        isDisplay,
       });
     }
   }
@@ -14352,9 +14806,13 @@ function computeFocusTermTargets(groupIndex, layout, widths, clickedIndex) {
 }
 
 function getFocusCarouselClipVerticalSpan() {
-  const pad = FOCUS_CAROUSEL_MASK_PAD;
-  const barHeight = TERM_CENSOR_BAR_HEIGHT;
-  const textHeight = LAYOUT.fontSize * 1.05;
+  // The gate masks + carousel clip must cover the *actual* (typography-scaled)
+  // sibling bars/text. Using the unscaled reference here let taller bars poke
+  // out above/below the mask while rotating — the "smeared remnants" artifact.
+  const scale = getMapTypographyScale();
+  const pad = FOCUS_CAROUSEL_MASK_PAD * scale;
+  const barHeight = TERM_CENSOR_BAR_HEIGHT * scale;
+  const textHeight = LAYOUT.fontSize * 1.05 * scale;
   const textTop = -textHeight / 2;
   const barTop =
     textTop +
@@ -14362,7 +14820,7 @@ function getFocusCarouselClipVerticalSpan() {
     MENTION_CENSOR_TOP_OFFSET;
   const barBottom = barTop + barHeight;
   // Keep the pre-fix vertical reach so gate masks + carousel clip stay stable.
-  const height = Math.max(barHeight + pad * 2, LAYOUT.fontSize * 1.9, 80);
+  const height = Math.max(barHeight + pad * 2, LAYOUT.fontSize * 1.9 * scale, 80 * scale);
   const barCenter = (barTop + barBottom) / 2;
   return {
     y: barCenter - height / 2,
@@ -15094,6 +15552,72 @@ function getCurrentBleedImageUrlForTerm(termName) {
   return pickTitleRowSharedImage(termName, layout.viewportWidth, layout.viewportHeight)?.url ?? null;
 }
 
+/**
+ * Temporary live tuner for the fold-3 resting height. Enabled with `?foldTune`.
+ * Arrow Up/Down nudge `termPageFold3CentreFrac` (Shift = fine step), re-cap the
+ * scroll bounds and re-snap fold 3 so the new height is visible immediately. The
+ * current value is shown in a small overlay — read it off, tell me the number,
+ * and I'll bake it in and remove this.
+ */
+function exposeFold3CentreTuner() {
+  if (!new URLSearchParams(location.search).has("foldTune")) return;
+
+  const overlay = document.createElement("div");
+  overlay.style.cssText = [
+    "position:fixed",
+    "top:12px",
+    "left:12px",
+    "z-index:99999",
+    "padding:8px 12px",
+    "background:rgba(0,0,0,0.82)",
+    "color:#fff",
+    "font:13px/1.4 monospace",
+    "border-radius:6px",
+    "pointer-events:none",
+    "white-space:pre",
+  ].join(";");
+  const render = () => {
+    overlay.textContent =
+      `fold3 height: ${termPageFold3CentreFrac.toFixed(3)}\n` +
+      `↑ higher  ↓ lower  (Shift = fine)`;
+  };
+  render();
+  document.body.appendChild(overlay);
+
+  const reSnap = () => {
+    render();
+    const vh = getLiveViewportHeight();
+    applyViewportTermScrollBounds(vh);
+    if (hasTermPageFold3Content()) {
+      animateTermPagePinSnapTo(getTermPageFold3SnapScrollTop(vh));
+    }
+  };
+
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+      const step = event.shiftKey ? 0.005 : 0.02;
+      const delta = event.key === "ArrowUp" ? -step : step;
+      termPageFold3CentreFrac = Math.min(
+        0.6,
+        Math.max(0, +(termPageFold3CentreFrac + delta).toFixed(3))
+      );
+      event.preventDefault();
+      reSnap();
+    },
+    true
+  );
+
+  globalThis.__FOLD3_TUNE__ = {
+    get: () => termPageFold3CentreFrac,
+    set: (value) => {
+      termPageFold3CentreFrac = Math.min(0.6, Math.max(0, Number(value) || 0));
+      reSnap();
+    },
+  };
+}
+
 function exposeBleedTextLabApi() {
   if (!isBleedTextLabMode()) return;
   const api = {
@@ -15263,6 +15787,7 @@ async function init() {
     bindGridToggle();
 
     exposeBleedTextLabApi();
+    exposeFold3CentreTuner();
 
     new ResizeObserver(() => {
       syncGridCssVars(viewport);

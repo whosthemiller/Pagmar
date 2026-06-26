@@ -5,15 +5,24 @@ body.is-splash-active .sun-app {
 }
 
 :root {
-  --splash-band: clamp(110px, 15vh, 180px);
-  --splash-quote-lh: 120px;
+  --splash-band: clamp(110px, 15vh, 360px);
+  /* Poster scaling: 144px quote / 24px body at the 1512px reference width,
+     scaling proportionally with viewport width so big screens look the same. */
+  --splash-quote-size: clamp(64px, 9.52vw, 392px);
+  --splash-quote-lh: clamp(80px, 7.94vw, 326px);
+  --splash-body-size: clamp(20px, 1.587vw, 66px);
+  --splash-body-lh: clamp(26px, 1.984vw, 82px);
+  /* Splash is a full-bleed poster: it keeps the base edge margin instead of the
+     centered large-screen grid margin used by the main app. */
+  --splash-margin: 10px;
+  --splash-gutter: 10px;
   --splash-col: calc(
-    (100vw - 2 * var(--grid-margin) - (var(--grid-columns) - 1) * var(--grid-gutter)) /
+    (100vw - 2 * var(--splash-margin) - (var(--grid-columns) - 1) * var(--splash-gutter)) /
       var(--grid-columns)
   );
-  --splash-span-19: calc(19 * var(--splash-col) + 18 * var(--grid-gutter));
-  --splash-span-15: calc(15 * var(--splash-col) + 14 * var(--grid-gutter));
-  --splash-span-14: calc(14 * var(--splash-col) + 13 * var(--grid-gutter));
+  --splash-span-19: calc(19 * var(--splash-col) + 18 * var(--splash-gutter));
+  --splash-span-15: calc(15 * var(--splash-col) + 14 * var(--splash-gutter));
+  --splash-span-14: calc(14 * var(--splash-col) + 13 * var(--splash-gutter));
   --splash-dismiss-duration: 0.55s;
 }
 
@@ -90,18 +99,20 @@ body.is-splash-active .sun-app {
 /* Quote — top-right, Secolo 144, 19 columns */
 .splash__quote {
   position: absolute;
-  top: var(--grid-margin);
-  right: var(--grid-margin);
+  top: var(--splash-margin);
+  right: var(--splash-margin);
   width: var(--splash-span-19);
   margin: 0;
   padding: 0;
   font-family: "Secolo", serif;
-  font-size: 144px;
+  font-size: var(--splash-quote-size);
   line-height: var(--splash-quote-lh);
   font-weight: normal;
   text-align: right;
-  /* Hanging opening quote: continuation lines align with body text, not with „ */
-  --splash-quote-mark-indent: 0.45em;
+  /* Hanging opening quote: lines 2/3 start as if an invisible „ precedes them,
+     so they align with the ה of המאבק. The indent equals the measured advance
+     width of „ in Secolo (317/1000 em), so it stays exact at any font size. */
+  --splash-quote-mark-indent: 0.317em;
   padding-inline-start: var(--splash-quote-mark-indent);
   text-indent: calc(-1 * var(--splash-quote-mark-indent));
   z-index: 3;
@@ -124,8 +135,8 @@ body.is-splash-active .sun-app {
   font-variation-settings: "MONO" 0, "slnt" 0;
   font-weight: 400;
   font-style: normal;
-  font-size: 24px;
-  line-height: 30px;
+  font-size: var(--splash-body-size);
+  line-height: var(--splash-body-lh);
   text-indent: 0;
   padding-inline-start: 0;
 }
@@ -133,16 +144,16 @@ body.is-splash-active .sun-app {
 /* Intro paragraph — bottom-right, Roobert regular 24/30, 14 columns */
 .splash__intro {
   position: absolute;
-  right: var(--grid-margin);
-  bottom: calc(var(--grid-margin) + 8px);
+  right: var(--splash-margin);
+  bottom: calc(var(--splash-margin) + 8px);
   width: var(--splash-span-15);
   margin: 0;
   padding: 0;
   font-family: var(--sun-prose-font);
   font-variation-settings: "MONO" 0, "slnt" 0;
   font-weight: 400;
-  font-size: 24px;
-  line-height: 30px;
+  font-size: var(--splash-body-size);
+  line-height: var(--splash-body-lh);
   text-align: right;
   z-index: 3;
   pointer-events: none;
@@ -172,14 +183,16 @@ body.is-splash-active .sun-app {
 /* Scroll hint — bottom-left, Roobert mono 14 */
 .splash__scroll-hint {
   position: absolute;
-  left: var(--grid-margin);
-  bottom: calc(var(--grid-margin) + 8px);
+  left: var(--splash-margin);
+  bottom: calc(var(--splash-margin) + 8px);
   margin: 0;
   padding: 0;
   font-family: var(--sun-mono-font);
   font-variation-settings: "MONO" 100, "slnt" 0;
   font-weight: 400;
-  font-size: 14px;
+  /* Scales with the splash poster (14px at the 1512px reference, growing
+     proportionally with viewport width like the quote/body text). */
+  font-size: clamp(14px, 0.926vw, 38px);
   line-height: 1.4;
   text-align: left;
   direction: ltr;
@@ -196,20 +209,19 @@ body.is-splash-active .sun-app {
 
 @media (max-width: 900px) {
   .splash__quote {
-    font-size: clamp(64px, 12vw, 144px);
-    line-height: 1;
+    --splash-quote-size: clamp(64px, 12vw, 144px);
     --splash-quote-lh: 1;
   }
 }
 
 @media (max-width: 640px) {
   .splash__quote {
-    width: calc(100% - 2 * var(--grid-margin));
+    width: calc(100% - 2 * var(--splash-margin));
     font-size: clamp(48px, 14vw, 96px);
   }
 
   .splash__intro {
-    width: calc(100% - 2 * var(--grid-margin));
+    width: calc(100% - 2 * var(--splash-margin));
     font-size: 20px;
     line-height: 26px;
   }

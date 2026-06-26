@@ -106,6 +106,30 @@ let reducedMotion = false;
 /** @type {CanvasRenderingContext2D | null} */
 let measureCtx = null;
 
+/**
+ * Viewport-driven typography scale applied to every glyph (Roobert + Secolo) so
+ * the animation runs at the same size as the settled title for the current
+ * screen, eliminating the size jump at the handoff on wide screens.
+ */
+let fontScale = 1;
+
+/** Effective rendered px size for a font spec at the current viewport scale. */
+function scaledSize(spec) {
+  return spec.size * fontScale;
+}
+
+/**
+ * Set the typography scale used by the font-scramble overlay. Cached metrics
+ * depend on the rendered size, so they are cleared whenever the scale changes.
+ * @param {number} scale
+ */
+export function setFontScrambleScale(scale) {
+  const next = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  if (next === fontScale) return;
+  fontScale = next;
+  clearFontScrambleMetricsCache();
+}
+
 function refreshReducedMotion() {
   reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -149,13 +173,13 @@ function maxSettleFrame(settleFrames) {
 }
 
 function fontCss(spec) {
-  return `${spec.weight} ${spec.size}px ${spec.family}`;
+  return `${spec.weight} ${scaledSize(spec)}px ${spec.family}`;
 }
 
 /** @param {HTMLElement} el @param {FontSpec} spec */
 function applyGlyphFont(el, spec) {
   el.style.fontFamily = spec.family;
-  el.style.fontSize = `${spec.size}px`;
+  el.style.fontSize = `${scaledSize(spec)}px`;
   el.style.fontWeight = String(spec.weight);
   el.style.fontVariationSettings = spec.variation;
 }
@@ -195,7 +219,7 @@ function measureBaselineInsetFromBottom(spec) {
   }
 
   const stage = document.createElement("div");
-  stage.style.cssText = `position:relative;width:160px;height:${Math.ceil(spec.size * 3)}px`;
+  stage.style.cssText = `position:relative;width:160px;height:${Math.ceil(scaledSize(spec) * 3)}px`;
 
   const root = document.createElement("span");
   root.style.cssText =
@@ -223,7 +247,7 @@ function measureBaselineInsetFromBottom(spec) {
   const descent =
     m.fontBoundingBoxDescent ??
     m.actualBoundingBoxDescent ??
-    spec.size * 0.25;
+    scaledSize(spec) * 0.25;
 
   return Math.max(0, rootRect.bottom - (cellRect.bottom - descent));
 }
@@ -233,10 +257,11 @@ function getFontMetrics(spec) {
   const cached = fontMetricsCache.get(spec.id);
   if (cached) return cached;
 
+  const size = scaledSize(spec);
   const fallback = {
-    ascent: spec.size * 0.75,
-    descent: spec.size * 0.25,
-    height: spec.size,
+    ascent: size * 0.75,
+    descent: size * 0.25,
+    height: size,
   };
 
   const dom = measureFontMetricsDom(spec);
@@ -283,7 +308,7 @@ function measureFontMetricsDom(spec) {
   body.textContent = "אקטגפ";
   probe.replaceChildren(body);
   const bodyRect = body.getBoundingClientRect();
-  const height = bodyRect.height || spec.size;
+  const height = bodyRect.height || scaledSize(spec);
 
   const withNun = document.createElement("span");
   withNun.style.display = "inline-block";

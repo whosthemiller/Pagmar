@@ -57,9 +57,10 @@ function tieHyphens(line) {
   // ASCII hyphen only → non-breaking hyphen (keep Hebrew maqaf visible in UI fonts)
   result = result.replace(/(?<=[\p{L}\d])-(?=[\p{L}\d])/gu, NB_HYPHEN);
 
-  // Prevent line break between a Hebrew letter and maqaf
+  // Never let a maqaf start a wrapped line: glue it to whatever precedes it
+  // (Hebrew letter, digit, quote, etc.) with a word joiner.
   result = result.replace(
-    new RegExp(`(?<=[\\p{Script=Hebrew}])${MAQAF}`, "gu"),
+    new RegExp(`(?<=\\S)${MAQAF}`, "gu"),
     `\u2060${MAQAF}`
   );
 

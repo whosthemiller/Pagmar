@@ -4,6 +4,7 @@
  */
 
 import { applyBlockTypography } from "./typography.js";
+import { syncGridCssVars } from "./grid-metrics.js";
 import {
   initLetterShuffle,
   startLetterShuffle,
@@ -50,6 +51,30 @@ const imageBandEl = splashEl?.querySelector(".splash__image-band");
 const imageEl = splashEl?.querySelector(".splash__image");
 const canvasEl = splashEl?.querySelector(".splash__pixel-canvas");
 const introEl = splashEl?.querySelector(".splash__intro");
+const scrollHintEl = splashEl?.querySelector(".splash__scroll-hint");
+
+/** Matches --splash-margin (10px) + the extra 8px bottom offset of the text. */
+const SPLASH_TEXT_BOTTOM_OFFSET = 18;
+/** Breathing space kept between the top of the bottom text and the image edge. */
+const SPLASH_BAND_GAP = 16;
+
+/**
+ * Size the bottom band to the actual height of the bottom text so the image's
+ * lower edge always clears the intro paragraph and scroll hint — on any screen
+ * size, however many lines the text wraps to. The band never shrinks below the
+ * design value (clamp(110px, 15vh, 360px)).
+ */
+function updateSplashBand() {
+  if (!splashEl) return;
+  const introHeight = introEl?.offsetHeight ?? 0;
+  const hintHeight = scrollHintEl?.offsetHeight ?? 0;
+  const textHeight = Math.max(introHeight, hintHeight);
+
+  const designBand = Math.min(360, Math.max(110, window.innerHeight * 0.15));
+  const needed = SPLASH_TEXT_BOTTOM_OFFSET + textHeight + SPLASH_BAND_GAP;
+  const band = Math.max(designBand, needed);
+  splashEl.style.setProperty("--splash-band", `${Math.round(band)}px`);
+}
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -524,9 +549,16 @@ async function loadSplashConfig() {
 async function initSplash() {
   if (!splashEl || !imageEl) return;
 
+  syncGridCssVars();
   initLetterShuffle();
   applyIntroTypography();
+  updateSplashBand();
   addScrollListeners();
+
+  // Fonts change the wrapped line count, so re-measure once they're ready.
+  if (document.fonts?.ready) {
+    document.fonts.ready.then(() => updateSplashBand()).catch(() => {});
+  }
 
   try {
     const config = await loadSplashConfig();
@@ -547,6 +579,8 @@ async function initSplash() {
   window.addEventListener(
     "resize",
     () => {
+      syncGridCssVars();
+      updateSplashBand();
       if (!active) return;
       clearPixelation();
     },

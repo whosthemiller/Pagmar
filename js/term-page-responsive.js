@@ -1,5 +1,22 @@
 /** Responsive metrics and column tiers for the scrollable term page. */
 
+import { getMapTypographyScale, getViewportHeightScale } from "./viewport-layout.js";
+
+/**
+ * The selected term title scales by the (width-based) map typography scale,
+ * while the title-band metrics below scale by viewport height and plateau at
+ * their max on tall screens. On true 4K canvases the title therefore outgrows
+ * its band and creeps up into the bleed image, swallowing the small gap above
+ * it. Grow the band height, baseline inset and image overlap in lockstep with
+ * the title once it passes the 2560px-era 1.6x cap, so the header is a uniform
+ * scale-up of the (correct) 2560px look at every size.
+ */
+const TITLE_BAND_BASE_TYPOGRAPHY_SCALE = 1.6;
+
+function getWideTitleBandFactor() {
+  return Math.max(1, getMapTypographyScale() / TITLE_BAND_BASE_TYPOGRAPHY_SCALE);
+}
+
 export const TERM_PAGE_RESPONSIVE = {
   compactMaxWidth: 640,
   narrowMaxWidth: 900,
@@ -8,16 +25,23 @@ export const TERM_PAGE_RESPONSIVE = {
   /** How far the bleed image extends below the title baseline into the band (px). */
   bleedImageBandOverlap: { min: 32, ratio: 0.048, max: 64 },
   /** Gap between definition and inline image (fold 2). */
-  scrollDefinitionImageGap: { min: 56, ratio: 0.128, max: 132 },
+  scrollDefinitionImageGap: { min: 44, ratio: 0.1, max: 108 },
+  /**
+   * Floor the fold-2 inline image may shrink to (fraction of viewport height).
+   * Stacked tiers go lower because the meta sits below the image and needs room.
+   */
+  scrollImageMinFactor: { wide: 0.3, narrow: 0.25, compact: 0.25 },
   /** Gap before fold 3 (details image + labels). */
   scrollBlockGap: { min: 112, ratio: 0.213, max: 220 },
   scrollContentOffsetY: { min: 12, ratio: 0.022, max: 28 },
   groupPinExtraRise: { min: 28, ratio: 0.044, max: 52 },
   scrollPaddingBottom: { min: 100, ratio: 0.155, max: 160 },
   metaBelowImageGap: { min: 20, ratio: 0.032, max: 36 },
-  fold2ChapterMinRatio: 0.48,
+  /** Desktop reference width — wide tier applies above narrowMaxWidth. */
+  wideDesktopMinWidth: 1512,
+  fold2ChapterMinRatio: 0.6,
   /** Minimum fold-3 chapter height as a fraction of viewport height. */
-  fold3ChapterMinRatio: 0.48,
+  fold3ChapterMinRatio: 0.6,
   imageHeightFactor: { wide: 0.43, narrow: 0.4, compact: 0.37 },
 };
 
@@ -38,15 +62,24 @@ export function getTermPageLayoutTier(viewportWidth) {
 }
 
 export function getTermPageTitleBandHeightPx(viewportHeight) {
-  return scaleFromViewport(TERM_PAGE_RESPONSIVE.titleBand, viewportHeight);
+  return Math.round(
+    scaleFromViewport(TERM_PAGE_RESPONSIVE.titleBand, viewportHeight) *
+      getWideTitleBandFactor()
+  );
 }
 
 export function getBleedImageBandOverlapPx(viewportHeight) {
-  return scaleFromViewport(TERM_PAGE_RESPONSIVE.bleedImageBandOverlap, viewportHeight);
+  return Math.round(
+    scaleFromViewport(TERM_PAGE_RESPONSIVE.bleedImageBandOverlap, viewportHeight) *
+      getWideTitleBandFactor()
+  );
 }
 
 export function getTermPageTitleBaselineInsetPx(viewportHeight) {
-  return scaleFromViewport(TERM_PAGE_RESPONSIVE.titleBaseline, viewportHeight);
+  return Math.round(
+    scaleFromViewport(TERM_PAGE_RESPONSIVE.titleBaseline, viewportHeight) *
+      getWideTitleBandFactor()
+  );
 }
 
 export function getTermPageScrollDefinitionImageGapPx(viewportHeight) {
@@ -73,12 +106,23 @@ export function getTermPageMetaBelowImageGapPx(viewportHeight) {
   return scaleFromViewport(TERM_PAGE_RESPONSIVE.metaBelowImageGap, viewportHeight);
 }
 
+/**
+ * Minimum height a fold "chapter" reserves so that snapping to the next fold
+ * scrolls the previous one mostly out of view (as a fraction of viewport height).
+ */
 export function getTermPageFold2ChapterMinPx(viewportHeight) {
   return Math.round(viewportHeight * TERM_PAGE_RESPONSIVE.fold2ChapterMinRatio);
 }
 
 export function getTermPageFold3ChapterMinPx(viewportHeight) {
   return Math.round(viewportHeight * TERM_PAGE_RESPONSIVE.fold3ChapterMinRatio);
+}
+
+export function getTermPageScrollImageMinHeightPx(viewportHeight, tier = "wide") {
+  const factor =
+    TERM_PAGE_RESPONSIVE.scrollImageMinFactor[tier] ??
+    TERM_PAGE_RESPONSIVE.scrollImageMinFactor.wide;
+  return Math.round(viewportHeight * factor);
 }
 
 export function getTermPageScrollImageHeightFactor(tier) {
@@ -184,6 +228,10 @@ export function syncTermPageResponsiveVars(viewportEl, viewportWidth, viewportHe
   root.style.setProperty(
     "--term-page-scroll-image-height-factor",
     String(getTermPageScrollImageHeightFactor(tier))
+  );
+  root.style.setProperty(
+    "--term-page-block-gap",
+    `${Math.round(36 * getViewportHeightScale(viewportHeight))}px`
   );
 
   viewportEl?.classList.toggle("is-term-scroll-compact", tier === "compact");
