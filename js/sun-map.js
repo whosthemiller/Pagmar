@@ -8113,7 +8113,7 @@ function syncRayFixedImages(layout) {
           runFixedThumbnailHideAnimation(existing, url, pixelWidth, pixelHeight, () => {
             existing.remove();
             flushPendingTitleRowBleedReveal();
-            if (currentLayout) syncRayFixedImages(currentLayout);
+            scheduleFixedRowRelayout();
           });
         } else {
           existing.remove();
@@ -8342,6 +8342,25 @@ function getFixedRowImageLoader() {
   return fixedRowImageLoaderEl;
 }
 
+/** @type {number | null} */
+let fixedRowRelayoutFrame = null;
+
+/**
+ * Coalesce fixed-row image relayout into a single pass per frame. Async image
+ * loads complete one-by-one (slowly on the network), and running the heavy
+ * reflow work (`syncRayFixedImages` + `applyAllRowFixedPushes`) once per load
+ * saturates the main thread. Batching keeps the page responsive.
+ */
+function scheduleFixedRowRelayout() {
+  if (fixedRowRelayoutFrame !== null) return;
+  fixedRowRelayoutFrame = requestAnimationFrame(() => {
+    fixedRowRelayoutFrame = null;
+    if (!currentLayout) return;
+    syncRayFixedImages(currentLayout);
+    applyAllRowFixedPushes(currentLayout);
+  });
+}
+
 /** @returns {string | null} data URL, or null while the source image is still loading */
 function resolvePixelatedFixedImageHref(url, width, height, factor = LAYOUT.titleRowFixedPixelMaxFactor) {
   if (!url || width <= 0 || height <= 0) return null;
@@ -8375,10 +8394,7 @@ function resolvePixelatedFixedImageHref(url, width, height, factor = LAYOUT.titl
     pixelatedFixedImagePending.add(cacheKey);
     assignPreloadedTermImage(getFixedRowImageLoader(), url).then(() => {
       pixelatedFixedImagePending.delete(cacheKey);
-      if (currentLayout) {
-        syncRayFixedImages(currentLayout);
-        applyAllRowFixedPushes(currentLayout);
-      }
+      scheduleFixedRowRelayout();
     });
   }
   return null;
