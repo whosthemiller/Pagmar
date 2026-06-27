@@ -77,6 +77,7 @@ import {
   runNavEnterScramble,
   runNavTypewriterEnter,
   PAGE_TAGS_ROUTE_TIMING,
+  PAGE_TIMELINE_ROUTE_TIMING,
 } from "./page-nav-scramble.js";
 import {
   initSiteNav,
@@ -1005,6 +1006,7 @@ const {
   pointOnArc,
   rayFrame,
   getOverviewHitRadius,
+  resetFitCache: resetOverviewFitCache,
 } = overviewGeo;
 
 /** Fractional offset so horizontalSlot sits exactly at angle π. */
@@ -13414,7 +13416,7 @@ function navigateViaHome(onHomeReady) {
  * @param {() => void} onHomeReady
  * @returns {boolean}
  */
-function routeViaHomeScramble(onHomeReady) {
+function routeViaHomeScramble(onHomeReady, timing = PAGE_TAGS_ROUTE_TIMING) {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) {
     return false;
   }
@@ -13424,7 +13426,8 @@ function routeViaHomeScramble(onHomeReady) {
       "about",
       () => hideSunAbout(),
       "map",
-      onHomeReady
+      onHomeReady,
+      timing
     );
     return true;
   }
@@ -13435,7 +13438,7 @@ function routeViaHomeScramble(onHomeReady) {
       () => hideSunTermsIndex(),
       "map",
       onHomeReady,
-      PAGE_TAGS_ROUTE_TIMING
+      timing
     );
     return true;
   }
@@ -13446,7 +13449,7 @@ function routeViaHomeScramble(onHomeReady) {
       () => snapOverviewClosed(),
       "map",
       onHomeReady,
-      PAGE_TAGS_ROUTE_TIMING
+      timing
     );
     return true;
   }
@@ -13531,6 +13534,20 @@ function navigateIndexToAbout() {
       showSunAbout();
     },
     "about",
+    syncNavAfterPageEnter,
+    PAGE_TAGS_ROUTE_TIMING
+  );
+}
+
+function navigateAboutToIndex() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "about",
+    () => {
+      hideSunAbout();
+      showSunTermsIndex();
+    },
+    "index",
     syncNavAfterPageEnter,
     PAGE_TAGS_ROUTE_TIMING
   );
@@ -13679,11 +13696,33 @@ function navigateToTermsIndex() {
     startUnfocusAnimation({ toTermsIndex: true });
     return;
   }
+  if (isSunAboutVisible()) {
+    navigateAboutToIndex();
+    return;
+  }
   if (isOverviewTagsMode()) {
     navigateTagsToIndex();
     return;
   }
   routeViaHomeScramble(revealTermsIndex);
+}
+
+/** Switch tags ↔ timeline in place — no home-map detour. */
+function navigateOverviewSubMode(mode) {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  if (!isInOverview() || overviewSubMode === mode) return;
+
+  resetOverviewFitCache();
+  overviewOverflowPasses = 0;
+  setOverviewSubModeInternal(mode);
+  overviewTarget = 1;
+  overviewProgress = 1;
+  cancelOverviewAnimation();
+  cancelScrollMotion();
+  clearTimeout(snapDebounceTimer);
+  refreshMapLayoutFromViewport();
+  if (currentLayout) render(currentLayout);
+  syncNavAfterPageEnter();
 }
 
 /** @param {"filter" | "timeline"} mode */
@@ -13697,7 +13736,7 @@ function navigateToOverviewMode(mode) {
       setOverviewSubModeInternal(mode);
       setOverviewTarget(1);
       syncNavAfterPageEnter();
-    });
+    }, PAGE_TIMELINE_ROUTE_TIMING);
     return;
   }
 
@@ -13710,7 +13749,7 @@ function navigateToOverviewMode(mode) {
       setOverviewSubModeInternal(mode);
       setOverviewTarget(1);
       syncNavAfterPageEnter();
-    });
+    }, PAGE_TIMELINE_ROUTE_TIMING);
     return;
   }
   if (isFocusActive()) {
@@ -13730,15 +13769,7 @@ function navigateToOverviewMode(mode) {
     return;
   }
   if (overviewSubMode !== mode) {
-    routeViaHomeScramble(() => {
-      if (mode === "filter") {
-        navigateHomeToTags();
-        return;
-      }
-      setOverviewSubModeInternal(mode);
-      setOverviewTarget(1);
-      syncNavAfterPageEnter();
-    });
+    navigateOverviewSubMode(mode);
   }
 }
 

@@ -2701,12 +2701,21 @@ line.letter-shuffle-underline {
 }
 
 .sun-about__side {
+  position: relative;
   grid-column: 15 / span 8;
   align-self: stretch;
   display: flex;
   flex-direction: column;
   gap: calc(28px * var(--map-typography-scale));
   min-width: 0;
+}
+
+.sun-about__logo-canvas {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  image-rendering: pixelated;
+  z-index: 2;
 }
 
 .sun-about__logo {
@@ -2778,9 +2787,13 @@ line.letter-shuffle-underline {
   line-height: inherit;
   cursor: pointer;
   pointer-events: auto;
-  text-decoration: underline;
+  text-decoration: none;
   text-decoration-thickness: 0.08em;
   text-underline-offset: 0.12em;
+}
+
+.sun-about__credit-link:hover {
+  text-decoration: underline;
 }
 
 /* Large desktop — spacing grows gently with viewport height; grid margin synced in JS. */

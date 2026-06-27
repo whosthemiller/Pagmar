@@ -25,6 +25,11 @@ export const PAGE_TAGS_ROUTE_TIMING = {
   exitMs: 95,
   enterMs: 95,
 };
+/** Tags/index/about ↔ timeline — brief home pass only. */
+export const PAGE_TIMELINE_ROUTE_TIMING = {
+  exitMs: 55,
+  enterMs: 55,
+};
 
 /** @type {Record<string, string[]>} */
 const VIEW_SELECTORS = {

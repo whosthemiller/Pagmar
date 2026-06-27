@@ -17,7 +17,7 @@ const FAST_LIGHT_CONFIG = {
 };
 
 /** Index home page — slower than nav/hints, faster than map shuffle. */
-const INDEX_LIGHT_CONFIG = {
+export const INDEX_LIGHT_CONFIG = {
   cycles: 3,
   frameMs: 11,
   staggerMs: 6,
@@ -761,7 +761,7 @@ export function estimateLetterShuffleDurationMs(text) {
 
 function glyphAtFrame(final, index, frame, settleFrames) {
   if (frame >= settleFrames[index]) return final;
-  if (final === " " || final === "\u00a0") return final;
+  if (final === " " || final === "\u00a0" || final === "\n" || final === "\t") return final;
   return randomGlyph();
 }
 
@@ -1097,6 +1097,91 @@ export function playAnnotatedTypewriterScrambleTo(root, html, onComplete, option
       state.step += state.charsPerStep;
     }
     state.timerId = window.setTimeout(tick, state.frameMs);
+  };
+
+  root.dataset.letterShuffleActive = "1";
+  activeStates.set(root, state);
+  tick();
+  return true;
+}
+
+function renderAnnotatedSettleFrame(state) {
+  const { nodes, frame, settleFrames } = state;
+  for (const entry of nodes) {
+    let out = "";
+    for (let i = 0; i < entry.graphemes.length; i++) {
+      out += glyphAtFrame(entry.graphemes[i], entry.start + i, frame, settleFrames);
+    }
+    entry.node.textContent = out;
+  }
+}
+
+/**
+ * Annotation-aware settle reveal — the index-entrance look (every character starts
+ * scrambled and settles to its final glyph in random order), but markup-preserving:
+ * it rebuilds `html` into `root` and only swaps text-node contents, so spans, <br>
+ * and links survive intact. Unlike the continuous-settle light shuffle it never
+ * flattens markup or leaves a lingering underline.
+ *
+ * @param {Element | null | undefined} root
+ * @param {string} html annotated markup
+ * @param {() => void} [onComplete]
+ * @param {typeof CONFIG} [config]
+ * @returns {boolean}
+ */
+export function playAnnotatedSettleScrambleTo(root, html, onComplete, config = INDEX_LIGHT_CONFIG) {
+  if (!root) {
+    onComplete?.();
+    return false;
+  }
+  const source = html ?? "";
+  if (!source.trim()) {
+    root.innerHTML = "";
+    onComplete?.();
+    return false;
+  }
+  if (reducedMotion) {
+    root.innerHTML = source;
+    onComplete?.();
+    return false;
+  }
+
+  abortLetterShuffle(root);
+
+  root.innerHTML = source;
+  const { nodes, total } = collectAnnotatedTextNodes(root);
+  if (!total) {
+    root.innerHTML = source;
+    onComplete?.();
+    return false;
+  }
+
+  const state = {
+    root,
+    original: source,
+    mode: "annotated-typewriter",
+    nodes,
+    total,
+    settleFrames: buildSettleFrames(total, config),
+    frame: 0,
+    timerId: null,
+    onComplete,
+    config,
+  };
+
+  const tick = () => {
+    if (!isActiveShuffleState(state)) return;
+
+    renderAnnotatedSettleFrame(state);
+    state.frame += 1;
+
+    if (state.frame > maxSettleFrame(state.settleFrames, state.config)) {
+      finishAnnotatedTypewriter(state);
+      return;
+    }
+
+    if (!isActiveShuffleState(state)) return;
+    state.timerId = window.setTimeout(tick, state.config.frameMs);
   };
 
   root.dataset.letterShuffleActive = "1";

@@ -1,4 +1,8 @@
-import { bindLetterShuffleDelegation } from "./letter-shuffle.js";
+import {
+  bindLetterShuffleDelegation,
+  playAnnotatedSettleScrambleTo,
+  abortLetterShuffle,
+} from "./letter-shuffle.js";
 import { syncGridCssVars } from "./grid-metrics.js";
 import { applyTypographyRules } from "./typography.js";
 
@@ -172,6 +176,7 @@ function bindCensorInteraction() {
   document.addEventListener("click", handleDocumentClickForCensor);
   window.addEventListener("resize", () => {
     clearCensor();
+    clearLogoReveal();
     alignAboutLogo();
   });
 }
@@ -277,6 +282,182 @@ function buildDom() {
   domBuilt = true;
 }
 
+/**
+ * The text-bearing About elements, in reading order. The intro paragraphs and the
+ * project line carry inline markup (the brand-link span, the project `<br>`, the
+ * credit link), so the scramble must preserve it — hence the annotated settle
+ * reveal rather than the markup-flattening continuous-settle used by the page
+ * transition.
+ * @returns {HTMLElement[]}
+ */
+function getAboutScrambleTargets() {
+  if (!rootEl) return [];
+  return [
+    ...rootEl.querySelectorAll(
+      ".sun-about__intro, .sun-about__project, .sun-about__credit-heading, .sun-about__credit-value"
+    ),
+  ].filter((el) => el instanceof HTMLElement);
+}
+
+/**
+ * Entrance scramble: reveal each block with the index-entrance settle scramble
+ * (all characters scramble, then settle in random order). Each block's box is
+ * pinned to its settled height (overflow hidden) for the duration so the varying
+ * widths of the random glyphs can't reflow the column and shift the logo or scroll.
+ */
+function playAboutEnterScramble() {
+  for (const el of getAboutScrambleTargets()) {
+    const html = el.innerHTML;
+    const height = el.getBoundingClientRect().height;
+    if (height > 0.5) {
+      el.style.height = `${Math.ceil(height)}px`;
+      el.style.overflow = "hidden";
+    }
+    playAnnotatedSettleScrambleTo(el, html, () => {
+      el.style.removeProperty("height");
+      el.style.removeProperty("overflow");
+    });
+  }
+}
+
+function abortAboutEnterScramble() {
+  for (const el of getAboutScrambleTargets()) {
+    abortLetterShuffle(el);
+    el.style.removeProperty("height");
+    el.style.removeProperty("overflow");
+  }
+}
+
+/** Pixelation reveal for the Bezalel logo — mirrors the splash entrance glitch. */
+const LOGO_REVEAL = { durationMs: 700, maxFactor: 18 };
+
+/** @type {HTMLCanvasElement | null} */
+let logoOffscreen = null;
+/** @type {HTMLCanvasElement | null} */
+let logoCanvas = null;
+let logoRevealFrame = 0;
+let logoRevealPending = false;
+
+function prefersReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function getLogoOffscreen() {
+  if (!logoOffscreen) logoOffscreen = document.createElement("canvas");
+  return logoOffscreen;
+}
+
+/**
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {CanvasImageSource} img
+ * @param {number} destW
+ * @param {number} destH
+ * @param {number} factor
+ */
+function drawPixelatedLogo(ctx, img, destW, destH, factor) {
+  const f = Math.max(1, factor);
+  const lowW = Math.max(1, Math.round(destW / f));
+  const lowH = Math.max(1, Math.round(destH / f));
+  const off = getLogoOffscreen();
+  off.width = lowW;
+  off.height = lowH;
+  const offCtx = off.getContext("2d");
+  if (!offCtx) return;
+  offCtx.imageSmoothingEnabled = false;
+  offCtx.clearRect(0, 0, lowW, lowH);
+  offCtx.drawImage(img, 0, 0, lowW, lowH);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, destW, destH);
+  ctx.drawImage(off, 0, 0, lowW, lowH, 0, 0, destW, destH);
+}
+
+function clearLogoReveal() {
+  logoRevealPending = false;
+  if (logoRevealFrame) {
+    cancelAnimationFrame(logoRevealFrame);
+    logoRevealFrame = 0;
+  }
+  if (logoCanvas) {
+    logoCanvas.remove();
+    logoCanvas = null;
+  }
+  const logo = rootEl?.querySelector(".sun-about__logo");
+  if (logo instanceof HTMLElement) logo.style.removeProperty("visibility");
+}
+
+/** @param {HTMLImageElement} logo */
+function startLogoReveal(logo) {
+  if (!rootEl || !isVisible) return;
+  const parent = logo.parentElement;
+  if (!(parent instanceof HTMLElement)) return;
+
+  const parentRect = parent.getBoundingClientRect();
+  const logoRect = logo.getBoundingClientRect();
+  if (logoRect.width < 1 || logoRect.height < 1) return;
+  if (!logo.complete || logo.naturalWidth < 1) return;
+
+  clearLogoReveal();
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const canvas = document.createElement("canvas");
+  canvas.className = "sun-about__logo-canvas";
+  canvas.setAttribute("aria-hidden", "true");
+  canvas.width = Math.round(logoRect.width * dpr);
+  canvas.height = Math.round(logoRect.height * dpr);
+  canvas.style.left = `${logoRect.left - parentRect.left}px`;
+  canvas.style.top = `${logoRect.top - parentRect.top}px`;
+  canvas.style.width = `${logoRect.width}px`;
+  canvas.style.height = `${logoRect.height}px`;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  parent.appendChild(canvas);
+  logoCanvas = canvas;
+  logo.style.visibility = "hidden";
+
+  const start = performance.now();
+  const frame = (now) => {
+    if (!isVisible || logoCanvas !== canvas) return;
+    const t = Math.min(1, (now - start) / LOGO_REVEAL.durationMs);
+    const eased = t * (2 - t);
+    const factor = Math.max(1, Math.round(1 + (LOGO_REVEAL.maxFactor - 1) * (1 - eased)));
+    drawPixelatedLogo(ctx, logo, canvas.width, canvas.height, factor);
+    if (t < 1) {
+      logoRevealFrame = requestAnimationFrame(frame);
+    } else {
+      logoRevealFrame = 0;
+      clearLogoReveal();
+    }
+  };
+  logoRevealFrame = requestAnimationFrame(frame);
+}
+
+/**
+ * Reveal the logo with the splash-style pixelation glitch on entrance. Waits for
+ * the SVG to decode (first show) and for layout/alignment to settle so the canvas
+ * overlay lands exactly on the logo's box.
+ */
+function playLogoPixelReveal() {
+  if (!rootEl || prefersReducedMotion()) return;
+  const logo = rootEl.querySelector(".sun-about__logo");
+  if (!(logo instanceof HTMLImageElement)) return;
+
+  logoRevealPending = true;
+  const begin = () => {
+    if (!isVisible || !logoRevealPending) return;
+    logoRevealPending = false;
+    requestAnimationFrame(() => startLogoReveal(logo));
+  };
+
+  if (logo.complete && logo.naturalWidth > 0) {
+    begin();
+  } else {
+    logo.addEventListener("load", begin, { once: true });
+  }
+}
+
 /** Align the logo's top edge with the top of the last intro paragraph. */
 function alignAboutLogo() {
   if (!rootEl || !isVisible) return;
@@ -313,10 +494,16 @@ function setVisibleState(visible) {
   if (visible) {
     syncGridCssVars(viewportEl);
     rootEl.scrollTop = 0;
-    requestAnimationFrame(alignAboutLogo);
+    playAboutEnterScramble();
+    requestAnimationFrame(() => {
+      alignAboutLogo();
+      playLogoPixelReveal();
+    });
   } else {
     isSelectingCensor = false;
     clearCensor();
+    clearLogoReveal();
+    abortAboutEnterScramble();
   }
 }
 
@@ -336,10 +523,11 @@ export function hideSunAbout() {
 }
 
 /**
- * The About content is intentionally excluded from the page-transition scramble:
- * the heavy letter-shuffle attaches lingering underlines and flattens markup (the
- * brand-link span and the project line break). The only underline on this view is
- * the brand phrase's permanent CSS underline.
+ * The About content is intentionally excluded from the page-transition (continuous
+ * + settle) scramble: that heavy letter-shuffle attaches lingering underlines and
+ * flattens markup (the brand-link span and the project line break). Its entrance
+ * scramble is instead driven by {@link playAboutEnterScramble} on show, using the
+ * markup-preserving annotated settle reveal.
  * @returns {HTMLElement[]}
  */
 export function getSunAboutScrambleTargets() {
