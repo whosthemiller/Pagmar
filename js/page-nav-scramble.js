@@ -16,19 +16,27 @@ import {
 } from "./sun-overview-terms-grid.js";
 
 const NAV_LABELS = "#site-nav .site-nav__label";
-/** Continuous scramble on exit before page switch. */
-const PAGE_EXIT_MS = 75;
-/** Continuous scramble on enter before settling to final text. */
-const PAGE_ENTER_MS = 75;
-/** Home/index ↔ tags — longer beat so the transition reads clearly. */
-export const PAGE_TAGS_ROUTE_TIMING = {
+/** Loading overlay label — quick beat before the app reveals. */
+const LOADING_SCRAMBLE_MS = 75;
+/** Standard exit/enter beat for page-to-page navigation (non-term). */
+export const PAGE_ROUTE_TIMING = {
   exitMs: 95,
   enterMs: 95,
 };
-/** Tags/index/about ↔ timeline — brief home pass only. */
-export const PAGE_TIMELINE_ROUTE_TIMING = {
-  exitMs: 55,
-  enterMs: 55,
+/** Timeline ring is sparse (most terms year-faded at the latest year), so its
+ * scramble leg gets a longer beat than the standard 95ms to read as a deliberate
+ * scramble rather than a quick flicker. Only the timeline side is slowed — the
+ * other page in the transition keeps the standard beat. */
+const PAGE_TIMELINE_LEG_MS = 150;
+/** Transition entering the timeline: only the enter (timeline) leg is slowed. */
+export const PAGE_TIMELINE_ENTER_TIMING = {
+  exitMs: PAGE_ROUTE_TIMING.exitMs,
+  enterMs: PAGE_TIMELINE_LEG_MS,
+};
+/** Transition leaving the timeline: only the exit (timeline) leg is slowed. */
+export const PAGE_TIMELINE_EXIT_TIMING = {
+  exitMs: PAGE_TIMELINE_LEG_MS,
+  enterMs: PAGE_ROUTE_TIMING.enterMs,
 };
 
 /** @type {Record<string, string[]>} */
@@ -200,7 +208,7 @@ function settleAllContinuous(onComplete) {
 }
 
 /** @param {() => void} [onComplete] @param {number} [enterMs] */
-function scheduleEnterSettle(onComplete, enterMs = PAGE_ENTER_MS) {
+function scheduleEnterSettle(onComplete, enterMs = PAGE_ROUTE_TIMING.enterMs) {
   clearEnterTimer();
   enterTimerId = window.setTimeout(() => {
     enterTimerId = null;
@@ -216,7 +224,7 @@ function scheduleEnterSettle(onComplete, enterMs = PAGE_ENTER_MS) {
  * @param {() => void} [onComplete]
  * @param {number} [enterMs]
  */
-export function scrambleIndexContentEnter(onComplete, enterMs = PAGE_ENTER_MS) {
+export function scrambleIndexContentEnter(onComplete, enterMs = PAGE_ROUTE_TIMING.enterMs) {
   clearEnterTimer();
   indexEnterScrambleActive = true;
   resetNavExitScramble();
@@ -234,7 +242,7 @@ export function scrambleIndexContentEnter(onComplete, enterMs = PAGE_ENTER_MS) {
  * @param {() => void} [onComplete]
  * @param {number} [exitMs]
  */
-export function scrambleExitView(view, onComplete, exitMs = PAGE_EXIT_MS) {
+export function scrambleExitView(view, onComplete, exitMs = PAGE_ROUTE_TIMING.exitMs) {
   clearExitTimer();
   clearEnterTimer();
   abortExitContentContinuous();
@@ -254,7 +262,7 @@ export function scrambleExitView(view, onComplete, exitMs = PAGE_EXIT_MS) {
 }
 
 /** @param {PageScrambleView} view @param {() => void} [onComplete] @param {number} [enterMs] */
-function scrambleEnterView(view, onComplete, enterMs = PAGE_ENTER_MS) {
+function scrambleEnterView(view, onComplete, enterMs = PAGE_ROUTE_TIMING.enterMs) {
   if (view === "index") {
     scrambleIndexContentEnter(onComplete, enterMs);
     return;
@@ -264,6 +272,30 @@ function scrambleEnterView(view, onComplete, enterMs = PAGE_ENTER_MS) {
   startEnterNavScramble();
   trackContinuousStart(collectContentElements(view));
   scheduleEnterSettle(onComplete, enterMs);
+}
+
+/**
+ * Keep an in-progress enter scramble alive across DOM rebuilds. The SVG ring is
+ * re-rendered (svg.innerHTML replaced) every frame during the overview zoom,
+ * which orphans the continuous scramble {@link scrambleEnterView} started on its
+ * term labels. Calling this after each render re-scrambles the freshly rendered
+ * nodes and prunes the detached ones, so the ring scrambles for the same beat as
+ * the rest of the transition regardless of route (zoom vs. snap). No-op outside
+ * the enter-scramble window (enterTimerId set, pre-settle).
+ * @param {Element[]} elements
+ */
+export function maintainEnterScramble(elements) {
+  if (enterTimerId == null || !elements.length) return;
+  for (const el of [...activeContinuousElements]) {
+    if (!el.isConnected) {
+      stopContinuousScramble(el, { restore: false });
+      activeContinuousElements.delete(el);
+    }
+  }
+  for (const el of elements) {
+    if (activeContinuousElements.has(el)) continue;
+    if (startContinuousScramble(el)) activeContinuousElements.add(el);
+  }
 }
 
 /** @param {PageScrambleView} view @param {() => void} [onComplete] */
@@ -281,11 +313,11 @@ export function scheduleEnterPageScramble(view, onComplete) {
  * @param {{ exitMs?: number, enterMs?: number }} [timing]
  * @returns {boolean}
  */
-export function runExitScrambleThen(exitView, then, timing = {}) {
+export function runExitScrambleThen(exitView, then, timing = PAGE_ROUTE_TIMING) {
   if (pageNavTransitionActive) return false;
   pageNavTransitionActive = true;
-  const exitMs = timing.exitMs ?? PAGE_EXIT_MS;
-  const enterMs = timing.enterMs ?? PAGE_ENTER_MS;
+  const exitMs = timing.exitMs;
+  const enterMs = timing.enterMs;
   scrambleExitView(exitView, () => {
     then(enterMs);
     abortExitContentContinuous();
@@ -306,9 +338,9 @@ export function runPageNavScrambleTransition(
   performSwitch,
   enterView,
   onEnterComplete,
-  timing = {}
+  timing = PAGE_ROUTE_TIMING
 ) {
-  const enterMs = timing.enterMs ?? PAGE_ENTER_MS;
+  const enterMs = timing.enterMs;
   return runExitScrambleThen(
     exitView,
     () => {
@@ -366,7 +398,7 @@ export function runLoadingBarExitScramble(loadingLabel, onComplete) {
     if (!settleFromContinuousScramble(loadingLabel, onComplete, { config: PAGE_NAV_SCRAMBLE_CONFIG })) {
       onComplete?.();
     }
-  }, PAGE_ENTER_MS);
+  }, LOADING_SCRAMBLE_MS);
 }
 
 /**

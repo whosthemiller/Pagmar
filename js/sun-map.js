@@ -62,6 +62,7 @@ import {
   showSunAbout,
   hideSunAbout,
   isSunAboutVisible,
+  playSunAboutExitScramble,
 } from "./sun-about.js";
 import {
   initSunOverviewTermsGrid,
@@ -76,8 +77,10 @@ import {
   cancelPageNavScramble,
   runNavEnterScramble,
   runNavTypewriterEnter,
-  PAGE_TAGS_ROUTE_TIMING,
-  PAGE_TIMELINE_ROUTE_TIMING,
+  maintainEnterScramble,
+  PAGE_ROUTE_TIMING,
+  PAGE_TIMELINE_ENTER_TIMING,
+  PAGE_TIMELINE_EXIT_TIMING,
 } from "./page-nav-scramble.js";
 import {
   initSiteNav,
@@ -3617,18 +3620,8 @@ function tickUnfocus(now) {
   } else if (pendingOverviewMode) {
     const mode = pendingOverviewMode;
     pendingOverviewMode = null;
-    if (mode === "timeline") {
-      forceOverviewReset();
-      syncNavAfterPageEnter();
-      pendingAfterHome = () => {
-        enterOverviewAfterUnfocus(mode);
-        syncNavAfterPageEnter();
-      };
-      flushPendingAfterHome();
-    } else {
-      enterOverviewAfterUnfocus(mode);
-      syncNavAfterPageEnter();
-    }
+    enterOverviewAfterUnfocus(mode);
+    syncNavAfterPageEnter();
   } else if (pendingTermsIndex) {
     pendingTermsIndex = false;
     revealTermsIndex();
@@ -13372,11 +13365,23 @@ function runAfterOverviewClose(onHomeReady) {
 }
 
 /**
+ * Pick directional timing so only the timeline side of a transition is slowed.
+ * @param {"filter" | "timeline"} toMode destination overview mode (enter leg)
+ * @param {"filter" | "timeline"} [fromMode] source overview mode (exit leg)
+ */
+function pageTimingForOverviewMode(toMode, fromMode = toMode) {
+  if (toMode === "timeline") return PAGE_TIMELINE_ENTER_TIMING;
+  if (fromMode === "timeline") return PAGE_TIMELINE_EXIT_TIMING;
+  return PAGE_ROUTE_TIMING;
+}
+
+/**
  * Route navigation through the home map view before continuing.
  * @param {() => void} onHomeReady
+ * @param {{ exitMs: number, enterMs: number }} [timing]
  * @returns {boolean}
  */
-function navigateViaHome(onHomeReady) {
+function navigateViaHome(onHomeReady, timing = PAGE_ROUTE_TIMING) {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) {
     return false;
   }
@@ -13386,7 +13391,8 @@ function navigateViaHome(onHomeReady) {
       "about",
       () => hideSunAbout(),
       "map",
-      onHomeReady
+      onHomeReady,
+      timing
     );
     return true;
   }
@@ -13396,7 +13402,8 @@ function navigateViaHome(onHomeReady) {
       "index",
       () => hideSunTermsIndex(),
       "map",
-      onHomeReady
+      onHomeReady,
+      timing
     );
     return true;
   }
@@ -13416,7 +13423,7 @@ function navigateViaHome(onHomeReady) {
  * @param {() => void} onHomeReady
  * @returns {boolean}
  */
-function routeViaHomeScramble(onHomeReady, timing = PAGE_TAGS_ROUTE_TIMING) {
+function routeViaHomeScramble(onHomeReady, timing = PAGE_ROUTE_TIMING) {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) {
     return false;
   }
@@ -13446,7 +13453,7 @@ function routeViaHomeScramble(onHomeReady, timing = PAGE_TAGS_ROUTE_TIMING) {
   if (isInOverview()) {
     runPageNavScrambleTransition(
       "overview",
-      () => snapOverviewClosed(),
+      () => beginOverviewClose(),
       "map",
       onHomeReady,
       timing
@@ -13460,11 +13467,15 @@ function routeViaHomeScramble(onHomeReady, timing = PAGE_TAGS_ROUTE_TIMING) {
 
 function navigateToHome() {
   if (isSunAboutVisible()) {
+    // Mirror home→about (navigateHomeToAbout): scramble the About text out during
+    // the exit phase, then the same timing so the two directions match.
+    playSunAboutExitScramble();
     runPageNavScrambleTransition(
       "about",
       () => hideSunAbout(),
       "map",
-      syncNavAfterPageEnter
+      syncNavAfterPageEnter,
+      PAGE_ROUTE_TIMING
     );
     return;
   }
@@ -13474,7 +13485,8 @@ function navigateToHome() {
       "index",
       () => hideSunTermsIndex(),
       "map",
-      syncNavAfterPageEnter
+      syncNavAfterPageEnter,
+      PAGE_ROUTE_TIMING
     );
     return;
   }
@@ -13501,7 +13513,8 @@ function revealTermsIndex() {
     "map",
     () => showSunTermsIndex(),
     "index",
-    syncNavAfterPageEnter
+    syncNavAfterPageEnter,
+    PAGE_ROUTE_TIMING
   );
 }
 
@@ -13510,7 +13523,8 @@ function revealAbout() {
     "map",
     () => showSunAbout(),
     "about",
-    syncNavAfterPageEnter
+    syncNavAfterPageEnter,
+    PAGE_ROUTE_TIMING
   );
 }
 
@@ -13521,7 +13535,7 @@ function navigateHomeToAbout() {
     () => showSunAbout(),
     "about",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
   );
 }
 
@@ -13535,7 +13549,7 @@ function navigateIndexToAbout() {
     },
     "about",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
   );
 }
 
@@ -13549,21 +13563,23 @@ function navigateAboutToIndex() {
     },
     "index",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
   );
 }
 
 function navigateOverviewToAbout() {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  const timing = pageTimingForOverviewMode("filter", overviewSubMode);
   runPageNavScrambleTransition(
     "overview",
     () => {
-      snapOverviewClosed();
+      // About covers the viewport — snap overview closed instead of zooming out over home.
+      beginOverviewClose({ snap: true });
       showSunAbout();
     },
     "about",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    timing
   );
 }
 
@@ -13573,11 +13589,28 @@ function navigateAboutToTags() {
     "about",
     () => {
       hideSunAbout();
-      snapOverviewOpen("filter");
+      beginOverviewOpen("filter");
     },
     "overview",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
+  );
+}
+
+function navigateAboutToTimeline() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  // About uses its own markup-preserving scramble (not page-nav continuous targets).
+  playSunAboutExitScramble();
+  runPageNavScrambleTransition(
+    "about",
+    () => {
+      hideSunAbout();
+      // Snap into timeline — skip the home-map zoom-in beat between about and timeline.
+      beginOverviewOpen("timeline", { snap: true });
+    },
+    "overview",
+    syncNavAfterPageEnter,
+    PAGE_TIMELINE_ENTER_TIMING
   );
 }
 
@@ -13602,29 +13635,47 @@ function navigateToAbout() {
   routeViaHomeScramble(revealAbout);
 }
 
-/** @param {"filter" | "timeline"} mode */
-function snapOverviewOpen(mode) {
-  setOverviewSubModeInternal(mode);
-  overviewTarget = 1;
-  overviewProgress = 1;
-  cancelOverviewAnimation();
+/** @param {"filter" | "timeline"} mode @param {{ snap?: boolean }} [options] */
+function beginOverviewOpen(mode, { snap = false } = {}) {
   cancelScrollMotion();
   clearTimeout(snapDebounceTimer);
+  // Set the target first so isInOverview() is true, then switch sub-mode — this
+  // makes the tags grid show immediately so the enter scramble lands on its
+  // labels instead of falling back to the home-map text.
+  setOverviewTarget(1);
+  setOverviewSubModeInternal(mode);
   syncOverviewTermsGridVisibility();
-  if (mode === "timeline") {
-    syncTimelineScrollHint();
+  if (snap) {
+    overviewProgress = 1;
+    cancelOverviewAnimation();
+    refreshMapLayoutFromViewport();
+    if (currentLayout) render(currentLayout);
+    if (mode === "timeline") syncTimelineScrollHint();
   }
-  refreshMapLayoutFromViewport();
-  if (currentLayout) render(currentLayout);
 }
 
-function snapOverviewClosed() {
+/** @param {{ snap?: boolean }} [options] */
+function beginOverviewClose({ snap = false } = {}) {
+  cancelScrollMotion();
+  clearTimeout(snapDebounceTimer);
+
+  if (overviewSubMode === "timeline" && !snap) {
+    // Timeline keeps the SVG ring visible (no covering grid), so the zoom-out
+    // tween IS the animation here — mirror of the timeline zoom-in.
+    setOverviewTarget(0);
+    return;
+  }
+
+  // Tags: the grid covers the sun, so the zoom isn't visible and the page-nav
+  // scramble is the animation. Snap the overview state closed — the exact mirror
+  // of the open direction (tags scramble out, grid hides, sun snaps to home and
+  // scrambles in) with no mid-transition gap where the tags vanish.
+  cancelOverviewAnimation();
   overviewTarget = 0;
   overviewProgress = 0;
-  cancelOverviewAnimation();
-  hideSunOverviewTermsGrid();
   hideTimelineEventHint({ immediate: true });
   hideTimelineScrollHint();
+  syncOverviewTermsGridVisibility();
   refreshMapLayoutFromViewport();
   if (currentLayout) render(currentLayout);
 }
@@ -13635,11 +13686,26 @@ function navigateIndexToTags() {
     "index",
     () => {
       hideSunTermsIndex();
-      snapOverviewOpen("filter");
+      beginOverviewOpen("filter");
     },
     "overview",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
+  );
+}
+
+function navigateIndexToTimeline() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "index",
+    () => {
+      hideSunTermsIndex();
+      // Snap into timeline — skip the home-map zoom-in beat between index and timeline.
+      beginOverviewOpen("timeline", { snap: true });
+    },
+    "overview",
+    syncNavAfterPageEnter,
+    PAGE_TIMELINE_ENTER_TIMING
   );
 }
 
@@ -13647,10 +13713,21 @@ function navigateHomeToTags() {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
   runPageNavScrambleTransition(
     "map",
-    () => snapOverviewOpen("filter"),
+    () => beginOverviewOpen("filter"),
     "overview",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
+  );
+}
+
+function navigateHomeToTimeline() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "map",
+    () => beginOverviewOpen("timeline"),
+    "overview",
+    syncNavAfterPageEnter,
+    PAGE_TIMELINE_ENTER_TIMING
   );
 }
 
@@ -13658,10 +13735,10 @@ function navigateTagsToHome() {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
   runPageNavScrambleTransition(
     "overview",
-    () => snapOverviewClosed(),
+    () => beginOverviewClose(),
     "map",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
   );
 }
 
@@ -13669,10 +13746,10 @@ function navigateTimelineToHome() {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
   runPageNavScrambleTransition(
     "overview",
-    () => snapOverviewClosed(),
+    () => beginOverviewClose(),
     "map",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_TIMELINE_EXIT_TIMING
   );
 }
 
@@ -13681,12 +13758,27 @@ function navigateTagsToIndex() {
   runPageNavScrambleTransition(
     "overview",
     () => {
-      snapOverviewClosed();
+      beginOverviewClose();
       showSunTermsIndex();
     },
     "index",
     syncNavAfterPageEnter,
-    PAGE_TAGS_ROUTE_TIMING
+    PAGE_ROUTE_TIMING
+  );
+}
+
+function navigateTimelineToIndex() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "overview",
+    () => {
+      // Index covers the viewport — snap timeline closed instead of zooming out over home.
+      beginOverviewClose({ snap: true });
+      showSunTermsIndex();
+    },
+    "index",
+    syncNavAfterPageEnter,
+    PAGE_TIMELINE_EXIT_TIMING
   );
 }
 
@@ -13704,25 +13796,35 @@ function navigateToTermsIndex() {
     navigateTagsToIndex();
     return;
   }
+  if (isOverviewTimelineMode()) {
+    navigateTimelineToIndex();
+    return;
+  }
   routeViaHomeScramble(revealTermsIndex);
 }
 
-/** Switch tags ↔ timeline in place — no home-map detour. */
+/** Switch tags ↔ timeline in place — scramble + relayout, no home detour. */
 function navigateOverviewSubMode(mode) {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
   if (!isInOverview() || overviewSubMode === mode) return;
 
-  resetOverviewFitCache();
-  overviewOverflowPasses = 0;
-  setOverviewSubModeInternal(mode);
-  overviewTarget = 1;
-  overviewProgress = 1;
-  cancelOverviewAnimation();
-  cancelScrollMotion();
-  clearTimeout(snapDebounceTimer);
-  refreshMapLayoutFromViewport();
-  if (currentLayout) render(currentLayout);
-  syncNavAfterPageEnter();
+  const timing = pageTimingForOverviewMode(mode, overviewSubMode);
+
+  runPageNavScrambleTransition(
+    "overview",
+    () => {
+      resetOverviewFitCache();
+      overviewOverflowPasses = 0;
+      setOverviewSubModeInternal(mode);
+      cancelScrollMotion();
+      clearTimeout(snapDebounceTimer);
+      refreshMapLayoutFromViewport();
+      if (currentLayout) render(currentLayout);
+    },
+    "overview",
+    syncNavAfterPageEnter,
+    timing
+  );
 }
 
 /** @param {"filter" | "timeline"} mode */
@@ -13732,11 +13834,7 @@ function navigateToOverviewMode(mode) {
       navigateAboutToTags();
       return;
     }
-    routeViaHomeScramble(() => {
-      setOverviewSubModeInternal(mode);
-      setOverviewTarget(1);
-      syncNavAfterPageEnter();
-    }, PAGE_TIMELINE_ROUTE_TIMING);
+    navigateAboutToTimeline();
     return;
   }
 
@@ -13745,11 +13843,7 @@ function navigateToOverviewMode(mode) {
       navigateIndexToTags();
       return;
     }
-    routeViaHomeScramble(() => {
-      setOverviewSubModeInternal(mode);
-      setOverviewTarget(1);
-      syncNavAfterPageEnter();
-    }, PAGE_TIMELINE_ROUTE_TIMING);
+    navigateIndexToTimeline();
     return;
   }
   if (isFocusActive()) {
@@ -13759,6 +13853,10 @@ function navigateToOverviewMode(mode) {
   if (!isInOverview()) {
     if (mode === "filter" && isAtHomeView()) {
       navigateHomeToTags();
+      return;
+    }
+    if (mode === "timeline" && isAtHomeView()) {
+      navigateHomeToTimeline();
       return;
     }
     navigateViaHome(() => {
@@ -13852,7 +13950,11 @@ function syncTimelineHintFromYearScroll() {
 }
 
 function syncOverviewTermsGridVisibility() {
-  if (isOverviewTagsMode()) {
+  // Tie grid visibility to the *target*, not the current progress: while the
+  // overview is zooming out (target 0, progress still high) the grid must hide
+  // immediately so the sun reappears and the zoom-out reads as one smooth move
+  // instead of the grid snapping away at the very end.
+  if (overviewTarget > 0 && isOverviewTagsMode()) {
     showSunOverviewTermsGrid();
   } else {
     hideSunOverviewTermsGrid();
@@ -13921,7 +14023,9 @@ function setOverviewTarget(value) {
 }
 
 function tickOverview() {
-  if (isFocusActive() || isTermNavigating()) {
+  const closingDuringFocus =
+    isFocusActive() && overviewTarget <= 0 && overviewProgress > 0.002;
+  if ((isFocusActive() || isTermNavigating()) && !closingDuringFocus) {
     cancelOverviewAnimation();
     return;
   }
@@ -13955,7 +14059,11 @@ function tickOverview() {
   currentLayout = computeLayout(viewport.clientWidth, viewport.clientHeight);
   render(currentLayout);
   syncOverviewTermsGridVisibility();
-  if (overviewSubMode === "timeline" && overviewProgress > 0.02) {
+  // Only resurface the scroll hint while the timeline is the *destination*
+  // (target > 0). When closing the timeline (target 0) the zoom is still
+  // mid-flight, so without this guard the hint would flash back on top of the
+  // home/index/about page we're navigating to.
+  if (overviewSubMode === "timeline" && overviewTarget > 0 && overviewProgress > 0.02) {
     syncTimelineScrollHint();
   }
 }
@@ -14290,6 +14398,12 @@ function finalizeRender(layout) {
   syncIdleGallery(layout);
   correctOverviewOverflow(layout);
   applySunFilterTestOpacity(svgEl);
+  // The timeline zoom rebuilds the ring every frame, orphaning the page-nav
+  // enter scramble on its labels. Re-apply it so the ring scrambles for the same
+  // beat as snap routes (index/about/tags → timeline). No-op outside the enter window.
+  if (overviewSubMode === "timeline" && isInOverview()) {
+    maintainEnterScramble([...svgEl.querySelectorAll("text.sun-term")]);
+  }
   syncSiteNavFromMap(getActiveNavTarget);
   positionTermBackLink();
   repositionTimelineEventHint();
@@ -14476,7 +14590,10 @@ function startFocusAnimation(clickedIndex) {
     transitionBleedBackdropToTermPage();
   }
 
-  forceOverviewReset();
+  const overviewClosing = overviewTarget <= 0 && overviewProgress > 0.02;
+  if (!overviewClosing) {
+    forceOverviewReset();
+  }
 
   cancelFocusAnimation();
   render(currentLayout);
@@ -14684,7 +14801,7 @@ function handleMapTermPointerActivate(event) {
     const overviewTarget = resolveOverviewTermClickTarget(event);
     if (!overviewTarget) return false;
     event.preventDefault();
-    navigateViaHome(() => openTermById(overviewTarget.termId));
+    openTermById(overviewTarget.termId);
     return true;
   }
 
@@ -16118,7 +16235,7 @@ async function init() {
         rootEl: document.getElementById("sun-terms-index-root"),
         viewportEl: viewport,
         onTermSelect: (termId) => {
-          navigateViaHome(() => openTermById(termId));
+          openTermById(termId);
         },
       });
       initSunAbout({
@@ -16133,7 +16250,7 @@ async function init() {
         rootEl: document.getElementById("sun-overview-terms-root"),
         viewportEl: viewport,
         onTermSelect: (termId) => {
-          navigateViaHome(() => openTermById(termId));
+          openTermById(termId);
         },
       });
       setSunOverviewTermsGridRebuildGuard(

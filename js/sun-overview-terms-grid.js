@@ -599,6 +599,7 @@ function setVisibleState(visible) {
     return;
   }
 
+  const wasVisible = isVisible;
   rootEl.hidden = !visible;
 
   if (viewportEl) {
@@ -607,7 +608,10 @@ function setVisibleState(visible) {
 
   isVisible = visible;
 
-  if (visible) {
+  // Only (re)build on the hidden→visible transition. The overview zoom tween
+  // calls show() every frame; rebuilding each time would wipe the enter
+  // scramble running on the term labels.
+  if (visible && !wasVisible) {
     syncGridCssVars(viewportEl);
     rootEl.scrollTop = 0;
     rebuildGrid();

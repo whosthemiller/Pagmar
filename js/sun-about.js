@@ -511,6 +511,18 @@ export function isSunAboutVisible() {
   return isVisible;
 }
 
+/**
+ * Exit scramble: re-run the markup-preserving block scramble on the About text
+ * so it visibly scrambles out before the page transition hides it. Mirrors the
+ * entrance ({@link playAboutEnterScramble}) for the reverse direction. The hide
+ * (setVisibleState(false) → abortAboutEnterScramble) cleans up if it's still
+ * running when the swap happens.
+ */
+export function playSunAboutExitScramble() {
+  if (!isVisible) return;
+  playAboutEnterScramble();
+}
+
 export function showSunAbout() {
   if (!rootEl) return;
   buildDom();
