@@ -367,13 +367,17 @@ function lockLightShuffleWidth(root) {
     width: root.style.width,
     boxSizing: root.style.boxSizing,
     whiteSpace: root.style.whiteSpace,
-    overflow: root.style.overflow,
+    clipPath: root.style.clipPath,
   };
   root.style.display = "inline-block";
   root.style.width = `${rect.width}px`;
   root.style.boxSizing = "border-box";
   root.style.whiteSpace = "nowrap";
-  root.style.overflow = "hidden";
+  // Clip the wider random glyphs with clip-path rather than `overflow: hidden`:
+  // on an inline-block, overflow != visible moves the baseline to the bottom
+  // margin edge, which lifts the box above the text baseline and grows the line
+  // box — making the bottom-anchored splash intro jump in height on hover.
+  root.style.clipPath = "inset(0)";
   return saved;
 }
 
@@ -383,7 +387,7 @@ function restoreLightShuffleWidth(root, saved) {
   root.style.width = saved.width;
   root.style.boxSizing = saved.boxSizing;
   root.style.whiteSpace = saved.whiteSpace;
-  root.style.overflow = saved.overflow;
+  root.style.clipPath = saved.clipPath;
 }
 
 function applyHtmlLayoutLock(root, widthPx, metrics) {

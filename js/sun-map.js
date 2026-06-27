@@ -360,7 +360,12 @@ const LAYOUT = {
   snapOvershoot: 5.8,
   overviewHitRadiusNormal: 0.86,
   overviewHitRadiusOverview: 0.58,
-  overviewLerp: 0.08,
+  /**
+   * Duration (ms) of the overview/timeline zoom. Driven by an ease-in-out tween
+   * (gentle start + gentle stop) instead of a frame-based lerp, so the larger
+   * timeline ring doesn't whip its labels around on entry. Lower = snappier.
+   */
+  overviewTweenMs: 600,
   overviewRadiusFactor: 0.38,
   overviewRadiusScale: 0.92,
   /** Vertical nudge for tags overview (makes room for the terms grid). */
@@ -710,6 +715,9 @@ function refreshMapLayoutFromViewport() {
 }
 let overviewTarget = 0;
 let overviewAnimFrame = null;
+/** Time-based overview zoom tween state (eased start/stop, set on each retarget). */
+let overviewAnimStartTime = 0;
+let overviewAnimFromProgress = 0;
 /** @type {{ key: string, value: string } | null} */
 let pendingOverviewCensorFilter = null;
 /** @type {"filter" | "timeline" | null} */
@@ -1618,6 +1626,67 @@ function getTermPageFold2PinnedHeaderBottomPx(viewportHeight) {
 }
 
 /**
+ * Gap kept between the bottom of the fold-2 content (image caption / meta) and
+ * the viewport bottom when the block is anchored to the foot of the fold — i.e.
+ * "slightly above the bottom edge", scaling gently with viewport height.
+ */
+function getTermPageFold2BottomAnchorMarginPx(viewportHeight) {
+  return scaleLayoutPx(108, viewportHeight);
+}
+
+/**
+ * On tall screens the fold-2 block (definition + inline image + meta) is sized to
+ * a fixed proportion of the viewport, so it clusters near the top of the fold and
+ * leaves a large empty band at the bottom. Rather than resize the image (its
+ * proportion is owned by getTermPageScrollImageHeightPx), push the image+meta
+ * block straight down so its bottom lands a small margin above the viewport
+ * bottom, keeping the whole composition inside one fold.
+ *
+ * At the fold-2 snap a page offset Y appears at screen y = headerBottom + Y, so
+ * the target page-space content bottom is `viewportHeight - margin - headerBottom`.
+ * The pinned header routinely rests shorter than this projection, which only
+ * lifts the block further from the edge — never below it — so the estimate stays
+ * safe. Returns the extra downward offset for the image block (>= 0).
+ *
+ * @param {number} viewportHeight
+ * @param {number} naturalContentBottomInPage fold-2 content bottom (page px) before any drop.
+ */
+function getTermPageFold2BottomAnchorDropPx(
+  viewportHeight,
+  naturalContentBottomInPage,
+  pageTop
+) {
+  const headerBottom = getTermPageFold2PinnedHeaderBottomPx(viewportHeight);
+  // Screen-top of the definition once it settles at the fold-2 snap. The snap is
+  // `max(headerPinSnap, pageTop - headerBottom)`, so the definition rests at
+  // `min(headerBottom, pageTop - headerPinSnap)` below the viewport top — when
+  // the pin floor dominates, the whole block rides higher and would reopen the
+  // gap unless we account for it. Use the calibrated header estimate (stable
+  // during layout, unlike the live projection which swings while hidden).
+  const headerPinSnap = getTermHeaderPinSnapScrollTop(viewportHeight);
+  const defTopRest = Math.min(headerBottom, Math.max(0, pageTop - headerPinSnap));
+  const margin = getTermPageFold2BottomAnchorMarginPx(viewportHeight);
+  // At that snap a page offset Y renders at screen y = Y + defTopRest, so anchor
+  // the content bottom `margin` above the viewport bottom.
+  const targetBottomInPage = viewportHeight - margin - defTopRest;
+  return Math.max(0, Math.round(targetBottomInPage - naturalContentBottomInPage));
+}
+
+/**
+ * Page-relative top of the fold-2 inline-image block. Reads the live position
+ * (which already includes the bottom-anchor drop applied at layout time) so the
+ * snap getters stay in lockstep with the rendered layout, and falls back to the
+ * natural definition-stacked position before the first layout pass.
+ */
+function getTermPageFold2ImageBlockTopInPagePx(viewportHeight = getLiveViewportHeight()) {
+  const natural =
+    (termDefinitionEl?.offsetHeight ?? 0) +
+    getTermPageScrollDefinitionImageGapPx(viewportHeight);
+  const actual = parseFloat(termImagesEl?.style.top ?? "");
+  return Number.isFinite(actual) && actual > 0 ? actual : natural;
+}
+
+/**
  * Height of the fold-2 inline image. Starts from the tier factor, but shrinks
  * (down to a floor) when the definition is tall so the definition, gap, image
  * and the meta hanging off it all stay within a single fold.
@@ -1931,9 +2000,7 @@ function getTermPageFold2EndInPagePx(viewportHeight = getLiveViewportHeight()) {
     return 0;
   }
 
-  const definitionImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
-  const definitionHeight = termDefinitionEl.offsetHeight;
-  const imagesBlockTop = definitionHeight + definitionImageGap;
+  const imagesBlockTop = getTermPageFold2ImageBlockTopInPagePx(viewportHeight);
   const imagesHeight = termImagesEl?.offsetHeight || 0;
   const imagesBottomInPage = imagesBlockTop + imagesHeight;
 
@@ -1962,9 +2029,7 @@ function getTermPageFold2ContentBottomInPagePx(viewportHeight = getLiveViewportH
     return 0;
   }
 
-  const definitionImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
-  const definitionHeight = termDefinitionEl.offsetHeight;
-  const imagesBlockTop = definitionHeight + definitionImageGap;
+  const imagesBlockTop = getTermPageFold2ImageBlockTopInPagePx(viewportHeight);
   const imagesHeight = termImagesEl?.offsetHeight || 0;
   let bottom = imagesBlockTop + imagesHeight;
 
@@ -2598,6 +2663,7 @@ function getTermScrollLiftGroup() {
 }
 
 function applyTermPageScrollLiftTransform() {
+  positionTermBackLink();
   const scrollTop = viewport?.scrollTop ?? 0;
   const canLift =
     isViewportTermScrollable() ||
@@ -3952,6 +4018,7 @@ function startSameGroupTermSwitch(newTermIndex) {
 function navigateToTerm(termId) {
   if (isTermNavigating()) return;
   if (focusState?.phase !== "locked") return;
+  if (isTermPageFontScrambleInteractionBlocked()) return;
 
   const location = findTermLocation(termId);
   if (!location) return;
@@ -4719,7 +4786,16 @@ function syncSameObjectHoverDuringScroll() {
   setSameObjectTermHover(termId, target);
 }
 
+function isTermPageFontScrambleInteractionBlocked() {
+  if (focusState?.phase !== "locked") return false;
+  return (
+    !termPageSelectedFontSettled ||
+    (viewport?.classList.contains("is-term-font-scrambling") ?? false)
+  );
+}
+
 function allowSameObjectHoverActivation() {
+  if (isTermPageFontScrambleInteractionBlocked()) return false;
   if (isSameObjectHoverReenterGuardActive()) return false;
   if (isSameObjectHoverScrollGuardActive()) return false;
   if (sameObjectHoverAwaitingReenter) clearSameObjectHoverReenterGate();
@@ -4752,6 +4828,9 @@ function clearHoverSourceMarks() {
 
 function setHoverSourceMark(sourceEl) {
   clearHoverSourceMarks();
+  // Title-row similar terms stay fully censored — don't mark them as hovered
+  // (which would underline the covered glyphs). Only inline body mentions do.
+  if (sourceEl?.classList.contains("sun-term-wrap")) return;
   sourceEl?.classList.add("is-mention-hovered");
 }
 
@@ -4763,12 +4842,8 @@ function applyRevealedMentionMarks(termId, sourceEl = null) {
       mention.classList.add("is-mention-revealed");
     }
   }
-  if (svgEl) {
-    const titleSelector = `.sun-ray.is-active .sun-term-wrap[data-term-id="${CSS.escape(termId)}"]:not(.is-selected)`;
-    for (const wrap of svgEl.querySelectorAll(titleSelector)) {
-      wrap.classList.add("is-mention-revealed");
-    }
-  }
+  // The similar terms in the title row stay censored on the term page — never
+  // uncensor them on hover. Only inline body mentions reveal.
   setHoverSourceMark(sourceEl);
 }
 
@@ -5626,6 +5701,65 @@ function bindBackNavigation() {
     startUnfocusAnimation();
   };
   backFixedEl?.addEventListener("pointerover", onBackHover, true);
+}
+
+/** @type {SVGGElement | null} */
+let hoveredBackLinkWrap = null;
+
+function clearTermBackLinkHover() {
+  if (!hoveredBackLinkWrap) return;
+  stopLetterShuffle(getLetterShuffleTarget(hoveredBackLinkWrap));
+  hoveredBackLinkWrap.classList.remove("is-hovered");
+  hoveredBackLinkWrap = null;
+}
+
+/** @param {SVGGElement} wrap */
+function setTermBackLinkHover(wrap) {
+  if (hoveredBackLinkWrap === wrap) return;
+  clearTermBackLinkHover();
+  hoveredBackLinkWrap = wrap;
+  wrap.classList.add("is-hovered");
+  startLetterShuffle(getLetterShuffleTarget(wrap));
+}
+
+function bindTermBackLink() {
+  svgEl?.addEventListener(
+    "pointerover",
+    (event) => {
+      if (focusState?.phase !== "locked" || isTermNavigating()) return;
+      const hit = event.target.closest(".sun-back-link-hit");
+      if (!hit) return;
+      const wrap = hit.closest(".sun-back-link");
+      if (!wrap) return;
+      const related = event.relatedTarget;
+      if (related instanceof Node && wrap.contains(related)) return;
+      setTermBackLinkHover(wrap);
+    },
+    true
+  );
+
+  svgEl?.addEventListener(
+    "pointerout",
+    (event) => {
+      const hit = event.target.closest(".sun-back-link-hit");
+      if (!hit) return;
+      const wrap = hit.closest(".sun-back-link");
+      if (!wrap) return;
+      const related = event.relatedTarget;
+      if (related instanceof Node && wrap.contains(related)) return;
+      clearTermBackLinkHover();
+    },
+    true
+  );
+
+  svgEl?.addEventListener("click", (event) => {
+    if (focusState?.phase !== "locked" || isTermNavigating()) return;
+    if (!event.target.closest(".sun-back-link-hit")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearTermBackLinkHover();
+    startUnfocusAnimation();
+  });
 }
 
 function getBackMiniRayScreenLeft(anchor, rotationDeg, localX, width, textAnchor) {
@@ -6947,9 +7081,8 @@ function refreshTermPageLabelNavLayout() {
   if (!term || !termDefinitionEl) return;
 
   const viewportHeight = getLiveViewportHeight();
-  const definitionImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
   const definitionHeight = termDefinitionEl.offsetHeight;
-  const imagesBlockTop = definitionHeight + definitionImageGap;
+  const imagesBlockTop = getTermPageFold2ImageBlockTopInPagePx(viewportHeight);
   const imagesHeight = termImagesEl?.offsetHeight || 0;
   const imagesBottomInPage = imagesBlockTop + imagesHeight;
 
@@ -9914,11 +10047,37 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
     termChanged
   );
 
-  const imagesBlockTop = definitionHeight + definitionImageGap;
+  // Position the block at its natural (definition-stacked) spot first so the
+  // meta can be measured, then anchor the whole image+meta block to the foot of
+  // the fold on tall screens (pushing it down without resizing the image).
+  const imagesBlockTopNatural = definitionHeight + definitionImageGap;
+  layoutTermPageScrollMeta(
+    pageTop + imagesBlockTopNatural,
+    imageHeight,
+    term,
+    !termChanged
+  );
+
+  let naturalContentBottom = imagesBlockTopNatural + imagesHeight;
+  if (termMetaEl && !termMetaEl.hidden) {
+    naturalContentBottom = Math.max(
+      naturalContentBottom,
+      termMetaEl.offsetTop + termMetaEl.offsetHeight - pageTop
+    );
+  }
+
+  const fold2Drop = getTermPageFold2BottomAnchorDropPx(
+    viewportHeight,
+    naturalContentBottom,
+    pageTop
+  );
+  const imagesBlockTop = imagesBlockTopNatural + fold2Drop;
   const imagesBottomInPage = imagesBlockTop + imagesHeight;
   const imageTop = pageTop + imagesBlockTop;
-
-  layoutTermPageScrollMeta(imageTop, imageHeight, term, !termChanged);
+  if (fold2Drop > 0) {
+    termImagesEl.style.top = `${Math.round(imagesBlockTop)}px`;
+    layoutTermPageScrollMeta(imageTop, imageHeight, term, true);
+  }
 
   let fold2BottomInPage = imagesBottomInPage;
   if (termMetaEl && !termMetaEl.hidden) {
@@ -11496,6 +11655,100 @@ function getSelectedTermTextEl() {
   return getSelectedTermWrap()?.querySelector(".sun-term") ?? null;
 }
 
+function getTermBackLinkWrap() {
+  return getFocusRayGroup()?.querySelector(".sun-back-link") ?? null;
+}
+
+function removeTermBackLink() {
+  clearTermBackLinkHover();
+  getTermBackLinkWrap()?.remove();
+}
+
+function createTermBackLink(parent) {
+  const wrap = document.createElementNS(SVG_NS, "g");
+  wrap.setAttribute("class", "sun-back-link");
+  wrap.dataset.backLink = "1";
+
+  const hit = document.createElementNS(SVG_NS, "rect");
+  hit.setAttribute("class", "sun-back-link-hit");
+  hit.setAttribute("fill", "rgba(0,0,0,0.001)");
+
+  const text = document.createElementNS(SVG_NS, "text");
+  text.setAttribute("class", "sun-term sun-back-link-text");
+  text.setAttribute("x", "0");
+  text.setAttribute("y", "0");
+  text.setAttribute("text-anchor", "start");
+  text.setAttribute("dominant-baseline", "alphabetic");
+  text.textContent = "→ חזרה";
+
+  wrap.append(hit, text);
+  parent.appendChild(wrap);
+  return wrap;
+}
+
+/** Absolute (client) X of the grid's right content edge — the mini-sun column. */
+function getTermBackLinkTargetScreenX() {
+  const metrics = getGridMetrics();
+  return metrics.gridLeft + metrics.gridWidth;
+}
+
+/**
+ * The back link lives beside the title in its parent group (so it rides every
+ * group transform), but is right-aligned to the grid's rightmost column in
+ * screen space. The locked focus ray has rotation 0, so a CTM inverse maps the
+ * target screen X straight into the group's local space.
+ */
+function positionTermBackLink() {
+  const titleWrap = getSelectedTermWrap();
+  const titleText = titleWrap?.querySelector(".sun-term");
+  const onTermPage =
+    focusState?.phase === "locked" &&
+    termPageSelectedFontSettled &&
+    Boolean(titleText);
+
+  if (!onTermPage || !titleWrap || !svgEl) {
+    removeTermBackLink();
+    return;
+  }
+
+  const parent = titleWrap.parentNode;
+  if (!parent) {
+    removeTermBackLink();
+    return;
+  }
+
+  let wrap = getTermBackLinkWrap();
+  if (!wrap) wrap = createTermBackLink(parent);
+  else if (wrap.parentNode !== parent) parent.appendChild(wrap);
+
+  const backText = wrap.querySelector(".sun-back-link-text");
+  const hitEl = wrap.querySelector(".sun-back-link-hit");
+  if (!backText || !hitEl) return;
+
+  backText.setAttribute("y", titleText.getAttribute("y") || "0");
+
+  const ctm = parent.getScreenCTM();
+  if (!ctm) return;
+  const point = svgEl.createSVGPoint();
+  point.x = getTermBackLinkTargetScreenX();
+  point.y = 0;
+  const targetLocalRight = point.matrixTransform(ctm.inverse()).x;
+
+  backText.setAttribute("x", "0");
+  const measured = backText.getBBox();
+  if (measured.width > 0) {
+    const shift = targetLocalRight - (measured.x + measured.width);
+    backText.setAttribute("x", String(shift));
+  }
+
+  const bbox = backText.getBBox();
+  const pad = 4;
+  hitEl.setAttribute("x", String(bbox.x - pad));
+  hitEl.setAttribute("y", String(bbox.y - pad));
+  hitEl.setAttribute("width", String(bbox.width + pad * 2));
+  hitEl.setAttribute("height", String(bbox.height + pad * 2));
+}
+
 function getRightmostCensoredTermWrap() {
   const rayGroup = getFocusRayGroup();
   if (!rayGroup) return null;
@@ -12669,6 +12922,7 @@ function runSelectedTermFontScramble(onComplete) {
   }
 
   termPageSelectedFontSettled = false;
+  clearSameObjectMentionHover();
   termPageCensoredFrozenScreenAlign = null;
   termPageFrozenSecoloBaselineScreenY = null;
   clearSelectedTermDisplayFont(textEl);
@@ -13476,6 +13730,10 @@ function setOverviewTarget(value) {
     flushPendingAfterHome();
     return;
   }
+  // (Re)anchor the eased tween from wherever the zoom currently sits so a
+  // mid-flight retarget (e.g. open then close) stays smooth instead of jumping.
+  overviewAnimStartTime = performance.now();
+  overviewAnimFromProgress = overviewProgress;
   if (!overviewAnimFrame) {
     overviewAnimFrame = requestAnimationFrame(tickOverview);
   }
@@ -13487,8 +13745,11 @@ function tickOverview() {
     return;
   }
 
-  const diff = overviewTarget - overviewProgress;
-  if (Math.abs(diff) < 0.002) {
+  const durationMs = Math.max(1, LAYOUT.overviewTweenMs);
+  const elapsed = performance.now() - overviewAnimStartTime;
+  const t = clamp(elapsed / durationMs, 0, 1);
+  const done = t >= 1 || Math.abs(overviewTarget - overviewAnimFromProgress) < 0.002;
+  if (done) {
     const closingOverview = overviewTarget === 0 && overviewProgress > 0.001;
     overviewProgress = overviewTarget;
     overviewAnimFrame = null;
@@ -13503,7 +13764,9 @@ function tickOverview() {
     flushPendingAfterHome();
     syncOverviewTermsGridVisibility();
   } else {
-    overviewProgress += diff * LAYOUT.overviewLerp;
+    overviewProgress =
+      overviewAnimFromProgress +
+      (overviewTarget - overviewAnimFromProgress) * easeInOutCubic(t);
     overviewAnimFrame = requestAnimationFrame(tickOverview);
   }
 
@@ -13799,6 +14062,7 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
 
 function finalizeRender(layout) {
   clearTermHover();
+  clearTermBackLinkHover();
   if (hoveredTitleRowTermId && !isFocusActive()) {
     restoreOverviewTermHoverFromState();
   }
@@ -13846,6 +14110,7 @@ function finalizeRender(layout) {
   correctOverviewOverflow(layout);
   applySunFilterTestOpacity(svgEl);
   syncSiteNavFromMap(getActiveNavTarget);
+  positionTermBackLink();
   repositionTimelineEventHint();
 }
 
@@ -15777,6 +16042,7 @@ async function init() {
     bindTermHover();
     bindTermClick();
     bindBackNavigation();
+    bindTermBackLink();
     bindMentionNavigation();
     bindMetaFilterNavigation();
     bindTermPageLabelNav();
