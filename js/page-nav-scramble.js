@@ -9,6 +9,7 @@ import {
 } from "./letter-shuffle.js";
 import { clearSiteNavShuffleUnderlines } from "./site-nav.js";
 import { getSunTermsIndexScrambleTargets } from "./sun-terms-index.js";
+import { getSunAboutScrambleTargets } from "./sun-about.js";
 import {
   getSunOverviewTermsGridScrambleTargets,
   isSunOverviewTermsGridVisible,
@@ -46,10 +47,16 @@ const VIEW_SELECTORS = {
     ".sun-term-page__side-text",
     ".sun-term-page__label-row-text",
   ],
+  about: [
+    ".sun-about__intro",
+    ".sun-about__project",
+    ".sun-about__credit-heading",
+    ".sun-about__credit-value",
+  ],
 };
 
 /**
- * @typedef {"index" | "map" | "overview" | "termFocus"} PageScrambleView
+ * @typedef {"index" | "map" | "overview" | "termFocus" | "about"} PageScrambleView
  */
 
 let pageNavTransitionActive = false;
@@ -98,6 +105,9 @@ function collectElements(selectors) {
 function collectContentElements(view) {
   if (view === "index") {
     return getSunTermsIndexScrambleTargets();
+  }
+  if (view === "about") {
+    return getSunAboutScrambleTargets();
   }
   if (view === "overview" && isSunOverviewTermsGridVisible()) {
     return getSunOverviewTermsGridScrambleTargets();

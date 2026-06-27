@@ -86,7 +86,7 @@ function buildNav() {
         <a class="site-nav__link site-nav__link--tags" data-nav="tags" href="index.html"><span class="site-nav__label">תגיות</span><span class="site-nav__sep" aria-hidden="true">, </span></a>
         <a class="site-nav__link site-nav__link--index" data-nav="index" href="index.html"><span class="site-nav__label">אינדקס</span></a>
       </div>
-      <span class="site-nav__link site-nav__link--disabled site-nav__about" data-nav="about" aria-disabled="true"><span class="site-nav__label" data-letter-shuffle-underline="off">אודות</span></span>
+      <a class="site-nav__link site-nav__about" data-nav="about" href="index.html"><span class="site-nav__label" data-letter-shuffle-underline="off">אודות</span></a>
     </div>
   `;
 
@@ -140,8 +140,6 @@ function handleNavClick(event) {
     if (handled) event.preventDefault();
     return;
   }
-
-  if (target === "about") return;
 
   event.preventDefault();
   const storageTarget =

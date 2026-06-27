@@ -106,6 +106,8 @@ function isLightHoverShuffleEl(root) {
     root.classList.contains("sun-term-hover-caption__line") ||
     root.classList.contains("site-nav__label") ||
     root.classList.contains("splash__intro-link") ||
+    root.classList.contains("sun-about__brand-link") ||
+    root.classList.contains("sun-about__credit-link") ||
     root.classList.contains("sun-term-meta__tag") ||
     root.classList.contains("sun-term-meta__value")
   );
@@ -350,13 +352,19 @@ function isCompactShuffleLabel(root) {
     root.classList.contains("sun-terms-index__term-label") ||
     root.classList.contains("site-nav__label") ||
     root.classList.contains("splash__intro-link") ||
+    root.classList.contains("sun-about__brand-link") ||
+    root.classList.contains("sun-about__credit-link") ||
     root.classList.contains("sun-term-page__label-nav-text")
   );
 }
 
 /** Light-shuffle labels that must keep a fixed footprint so neighbouring inline text doesn't reflow. */
 function isNoReflowLightShuffleEl(root) {
-  return root.classList.contains("splash__intro-link");
+  return (
+    root.classList.contains("splash__intro-link") ||
+    root.classList.contains("sun-about__brand-link") ||
+    root.classList.contains("sun-about__credit-link")
+  );
 }
 
 /** Snapshot the rendered width and pin it so random glyphs of varying advance don't shift siblings. */
@@ -765,6 +773,8 @@ function isLightScrambleEl(root) {
     root.classList.contains("sun-timeline-event-hint") ||
     root.classList.contains("site-nav__label") ||
     root.classList.contains("splash__intro-link") ||
+    root.classList.contains("sun-about__brand-link") ||
+    root.classList.contains("sun-about__credit-link") ||
     root.classList.contains("sun-term-page__label-nav-text") ||
     root.classList.contains("sun-term-page__label-nav-panel-text") ||
     root.classList.contains("sun-term-similar-label") ||

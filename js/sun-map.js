@@ -58,6 +58,12 @@ import {
   setSunTermsIndexGridRebuildGuard,
 } from "./sun-terms-index.js";
 import {
+  initSunAbout,
+  showSunAbout,
+  hideSunAbout,
+  isSunAboutVisible,
+} from "./sun-about.js";
+import {
   initSunOverviewTermsGrid,
   showSunOverviewTermsGrid,
   hideSunOverviewTermsGrid,
@@ -723,6 +729,7 @@ let pendingOverviewCensorFilter = null;
 /** @type {"filter" | "timeline" | null} */
 let pendingOverviewMode = null;
 let pendingTermsIndex = false;
+let pendingAbout = false;
 /** @type {(() => void) | null} */
 let pendingAfterHome = null;
 /** @type {"filter" | "timeline"} */
@@ -3437,24 +3444,33 @@ function tickBackCircle(now) {
   }
 }
 
-/** @param {{ toOverviewWithFilter?: { key: string, value: string }, toOverviewWithMode?: "filter" | "timeline", toTermsIndex?: boolean }} options */
+/** @param {{ toOverviewWithFilter?: { key: string, value: string }, toOverviewWithMode?: "filter" | "timeline", toTermsIndex?: boolean, toAbout?: boolean }} options */
 function applyUnfocusPendingOptions(options = {}) {
   if (options.toOverviewWithFilter) {
     pendingOverviewCensorFilter = options.toOverviewWithFilter;
     pendingOverviewMode = null;
     pendingTermsIndex = false;
+    pendingAbout = false;
   } else if (options.toOverviewWithMode) {
     pendingOverviewMode = options.toOverviewWithMode;
     pendingOverviewCensorFilter = null;
     pendingTermsIndex = false;
+    pendingAbout = false;
   } else if (options.toTermsIndex) {
     pendingTermsIndex = true;
+    pendingOverviewMode = null;
+    pendingOverviewCensorFilter = null;
+    pendingAbout = false;
+  } else if (options.toAbout) {
+    pendingAbout = true;
+    pendingTermsIndex = false;
     pendingOverviewMode = null;
     pendingOverviewCensorFilter = null;
   } else {
     pendingOverviewCensorFilter = null;
     pendingOverviewMode = null;
     pendingTermsIndex = false;
+    pendingAbout = false;
     forceOverviewReset();
   }
 }
@@ -3614,6 +3630,9 @@ function tickUnfocus(now) {
   } else if (pendingTermsIndex) {
     pendingTermsIndex = false;
     revealTermsIndex();
+  } else if (pendingAbout) {
+    pendingAbout = false;
+    revealAbout();
   } else {
     forceOverviewReset();
     syncNavAfterPageEnter();
@@ -13311,6 +13330,7 @@ function enterOverviewAfterUnfocus(mode) {
 
 function getActiveNavTarget() {
   if (isFocusActive()) return null;
+  if (isSunAboutVisible()) return "about";
   if (isSunTermsIndexVisible()) return "index";
   if (isInOverview()) return overviewSubMode === "timeline" ? "timeline" : "tags";
   return "home";
@@ -13318,7 +13338,6 @@ function getActiveNavTarget() {
 
 /** @param {string} target */
 function isNavTargetActive(target) {
-  if (target === "about") return false;
   const active = getActiveNavTarget();
   if (active === null) return false;
   if (target === "tags") return active === "tags";
@@ -13333,6 +13352,7 @@ function isAtHomeView() {
   return (
     !isFocusActive() &&
     !isTermNavigating() &&
+    !isSunAboutVisible() &&
     !isSunTermsIndexVisible() &&
     overviewProgress <= 0.002 &&
     overviewTarget <= 0.002
@@ -13357,6 +13377,16 @@ function runAfterOverviewClose(onHomeReady) {
 function navigateViaHome(onHomeReady) {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) {
     return false;
+  }
+
+  if (isSunAboutVisible()) {
+    runPageNavScrambleTransition(
+      "about",
+      () => hideSunAbout(),
+      "map",
+      onHomeReady
+    );
+    return true;
   }
 
   if (isSunTermsIndexVisible()) {
@@ -13389,6 +13419,16 @@ function routeViaHomeScramble(onHomeReady) {
     return false;
   }
 
+  if (isSunAboutVisible()) {
+    runPageNavScrambleTransition(
+      "about",
+      () => hideSunAbout(),
+      "map",
+      onHomeReady
+    );
+    return true;
+  }
+
   if (isSunTermsIndexVisible()) {
     runPageNavScrambleTransition(
       "index",
@@ -13416,6 +13456,16 @@ function routeViaHomeScramble(onHomeReady) {
 }
 
 function navigateToHome() {
+  if (isSunAboutVisible()) {
+    runPageNavScrambleTransition(
+      "about",
+      () => hideSunAbout(),
+      "map",
+      syncNavAfterPageEnter
+    );
+    return;
+  }
+
   if (isSunTermsIndexVisible()) {
     runPageNavScrambleTransition(
       "index",
@@ -13450,6 +13500,89 @@ function revealTermsIndex() {
     "index",
     syncNavAfterPageEnter
   );
+}
+
+function revealAbout() {
+  runPageNavScrambleTransition(
+    "map",
+    () => showSunAbout(),
+    "about",
+    syncNavAfterPageEnter
+  );
+}
+
+function navigateHomeToAbout() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "map",
+    () => showSunAbout(),
+    "about",
+    syncNavAfterPageEnter,
+    PAGE_TAGS_ROUTE_TIMING
+  );
+}
+
+function navigateIndexToAbout() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "index",
+    () => {
+      hideSunTermsIndex();
+      showSunAbout();
+    },
+    "about",
+    syncNavAfterPageEnter,
+    PAGE_TAGS_ROUTE_TIMING
+  );
+}
+
+function navigateOverviewToAbout() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "overview",
+    () => {
+      snapOverviewClosed();
+      showSunAbout();
+    },
+    "about",
+    syncNavAfterPageEnter,
+    PAGE_TAGS_ROUTE_TIMING
+  );
+}
+
+function navigateAboutToTags() {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "about",
+    () => {
+      hideSunAbout();
+      snapOverviewOpen("filter");
+    },
+    "overview",
+    syncNavAfterPageEnter,
+    PAGE_TAGS_ROUTE_TIMING
+  );
+}
+
+function navigateToAbout() {
+  if (isSunAboutVisible()) return;
+  if (isFocusActive()) {
+    startUnfocusAnimation({ toAbout: true });
+    return;
+  }
+  if (isSunTermsIndexVisible()) {
+    navigateIndexToAbout();
+    return;
+  }
+  if (isInOverview()) {
+    navigateOverviewToAbout();
+    return;
+  }
+  if (isAtHomeView()) {
+    navigateHomeToAbout();
+    return;
+  }
+  routeViaHomeScramble(revealAbout);
 }
 
 /** @param {"filter" | "timeline"} mode */
@@ -13555,6 +13688,19 @@ function navigateToTermsIndex() {
 
 /** @param {"filter" | "timeline"} mode */
 function navigateToOverviewMode(mode) {
+  if (isSunAboutVisible()) {
+    if (mode === "filter") {
+      navigateAboutToTags();
+      return;
+    }
+    routeViaHomeScramble(() => {
+      setOverviewSubModeInternal(mode);
+      setOverviewTarget(1);
+      syncNavAfterPageEnter();
+    });
+    return;
+  }
+
   if (isSunTermsIndexVisible()) {
     if (mode === "filter") {
       navigateIndexToTags();
@@ -13599,7 +13745,6 @@ function navigateToOverviewMode(mode) {
 /** @param {string} target */
 function handleMapNav(target) {
   if (isBleedTextLabMode()) return target === "home";
-  if (target === "about") return false;
   if (isNavTargetActive(target)) return true;
 
   abortNavBlockingState();
@@ -13616,6 +13761,9 @@ function handleMapNav(target) {
       return true;
     case "index":
       navigateToTermsIndex();
+      return true;
+    case "about":
+      navigateToAbout();
       return true;
     default:
       return false;
@@ -13651,6 +13799,8 @@ function consumeSessionNavIntent() {
         navigateToOverviewMode("timeline");
       } else if (navTarget === "index") {
         navigateToTermsIndex();
+      } else if (navTarget === "about") {
+        navigateToAbout();
       } else if (navTarget === "home") {
         navigateToHome();
       }
@@ -15594,6 +15744,11 @@ function bindWheelScroll() {
         event.preventDefault();
         return;
       }
+      if (isSunAboutVisible()) {
+        event.preventDefault();
+        return;
+      }
+
       if (isSunTermsIndexVisible()) {
         event.preventDefault();
         return;
@@ -15934,6 +16089,10 @@ async function init() {
         onTermSelect: (termId) => {
           navigateViaHome(() => openTermById(termId));
         },
+      });
+      initSunAbout({
+        rootEl: document.getElementById("sun-about-root"),
+        viewportEl: viewport,
       });
       setSunTermsIndexGridRebuildGuard(
         () => isPageNavTransitionActive() || isIndexEnterScrambleActive()
