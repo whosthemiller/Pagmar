@@ -43,6 +43,13 @@ const FILTER_DIM_HINT_HIDE_MS = 120;
 let getGroups = () => [];
 let getSvg = () => null;
 let isInOverview = () => false;
+/**
+ * Whether the tags page is the *target* view (true while opening / staying,
+ * false the moment a close starts). Tied to the overview target — not the
+ * zoom progress — so the filter bar disappears in lockstep with the terms
+ * grid instead of lingering until the zoom-out finishes.
+ */
+let isTagsPageOpen = () => false;
 let overviewSubMode = "filter";
 let wrapperEl = null;
 let filterDimHintEl = null;
@@ -475,7 +482,7 @@ function buildPanel({ id }, groups) {
 
 function updatePanelVisibility() {
   if (!wrapperEl) return;
-  const overviewVisible = isInOverview();
+  const overviewVisible = isTagsPageOpen();
   const timelineMode = overviewSubMode === "timeline";
   wrapperEl.classList.toggle("is-visible", overviewVisible);
   wrapperEl.classList.toggle("is-timeline-hidden", timelineMode);
@@ -491,12 +498,14 @@ export function initSunFilterTest({
   getGroups: getGroupsFn,
   getSvg: getSvgFn,
   isInOverview: isInOverviewFn,
+  isTagsPageOpen: isTagsPageOpenFn,
 }) {
   if (document.getElementById("sun-filter-test-wrap")) return;
 
   getGroups = getGroupsFn;
   getSvg = getSvgFn;
   isInOverview = isInOverviewFn || (() => false);
+  isTagsPageOpen = isTagsPageOpenFn || isInOverview;
 
   const wrapper = document.createElement("div");
   wrapper.id = "sun-filter-test-wrap";

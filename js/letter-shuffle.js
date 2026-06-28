@@ -197,8 +197,33 @@ function restoreHtmlLayoutStyles(root, htmlStyles) {
 
 const INLINE_MENTION_OVERLAY_CLASS = "letter-shuffle-inline-overlay";
 
-function measureInlineMentionTextRect(root) {
-  const range = document.createRange();
+/** Two visual lines never overlap, so any rects within this many px are "the same line". */
+const INLINE_MENTION_LINE_TOLERANCE = 2;
+
+/**
+ * Group a mention's graphemes into the visual lines they occupy. A mention that
+ * wraps across lines (e.g. a two-word term split at the line break) must get one
+ * overlay per line — otherwise a single `white-space: nowrap` overlay crams every
+ * word onto the first line's fragment and clips/misplaces the rest.
+ * @param {Element} root
+ * @param {string[]} graphemes
+ * Returned coordinates are in viewport space (the overlay self-corrects against
+ * them), one entry per visual line.
+ * @returns {{ top: number, left: number, width: number, height: number, start: number, end: number }[]}
+ */
+function measureInlineMentionTextLines(root, graphemes) {
+  const rootRect = root.getBoundingClientRect();
+  const fallback = [
+    {
+      top: rootRect.top,
+      left: rootRect.left,
+      width: rootRect.width,
+      height: rootRect.height,
+      start: 0,
+      end: graphemes.length,
+    },
+  ];
+
   let textNode = null;
   for (const node of root.childNodes) {
     if (node.nodeType === Node.TEXT_NODE && node.textContent?.length) {
@@ -206,39 +231,65 @@ function measureInlineMentionTextRect(root) {
       break;
     }
   }
-  if (textNode) {
-    range.selectNodeContents(textNode);
-  } else {
-    range.selectNodeContents(root);
+  if (!textNode) return fallback;
+
+  const range = document.createRange();
+  const textLength = textNode.textContent.length;
+  const lines = [];
+  let current = null;
+  let offset = 0;
+
+  for (let i = 0; i < graphemes.length; i++) {
+    const start = offset;
+    const end = offset + graphemes[i].length;
+    offset = end;
+    if (end > textLength) break;
+
+    range.setStart(textNode, start);
+    range.setEnd(textNode, end);
+    const rect = [...range.getClientRects()].find((r) => r.width > 0 && r.height > 0);
+
+    if (!rect) {
+      // Zero-width grapheme (e.g. a space collapsed at a wrap point): keep it on
+      // the current line so grapheme ranges stay contiguous across overlays.
+      if (current) current.end = i + 1;
+      continue;
+    }
+
+    // Viewport coordinates — the overlay is placed then self-corrected against
+    // these, so we never have to guess the (multi-line RTL inline) containing
+    // block origin that `left`/`top` are actually measured from.
+    if (current && Math.abs(rect.top - current.top) <= INLINE_MENTION_LINE_TOLERANCE) {
+      const right = Math.max(current.left + current.width, rect.left + rect.width);
+      current.left = Math.min(current.left, rect.left);
+      current.top = Math.min(current.top, rect.top);
+      current.width = right - current.left;
+      current.height = Math.max(current.height, rect.height);
+      current.end = i + 1;
+    } else {
+      current = {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+        start: i,
+        end: i + 1,
+      };
+      lines.push(current);
+    }
   }
 
-  const rects = [...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0);
-  const textRect = rects[0] ?? range.getBoundingClientRect();
-  const rootRect = root.getBoundingClientRect();
-
-  return {
-    top: textRect.top - rootRect.top,
-    left: textRect.left - rootRect.left,
-    width: textRect.width,
-    height: textRect.height,
-  };
+  if (!lines.length) return fallback;
+  // Absorb any leading/trailing zero-width graphemes into the edge overlays.
+  lines[0].start = 0;
+  lines[lines.length - 1].end = graphemes.length;
+  return lines;
 }
 
-function positionInlineMentionOverlay(root, overlay) {
-  const { top, left, width, height } = measureInlineMentionTextRect(root);
-  overlay.style.top = `${Math.round(top)}px`;
-  overlay.style.left = `${Math.round(left)}px`;
-  overlay.style.width = `${Math.ceil(width)}px`;
-  overlay.style.height = `${Math.ceil(height)}px`;
-}
-
-function applyInlineMentionOverlay(root, original) {
+function applyInlineMentionOverlay(root, original, graphemes) {
   const htmlStyles = lockHtmlLayout(root);
   const cs = getComputedStyle(root);
-  const overlay = document.createElement("span");
-  overlay.className = INLINE_MENTION_OVERLAY_CLASS;
-  overlay.setAttribute("aria-hidden", "true");
-  overlay.textContent = original;
+  const lines = measureInlineMentionTextLines(root, graphemes);
 
   const colorStyles =
     cs.color !== "transparent" && cs.webkitTextFillColor !== "transparent"
@@ -253,14 +304,32 @@ function applyInlineMentionOverlay(root, original) {
     root.style.webkitTextFillColor = "transparent";
   }
 
-  root.appendChild(overlay);
-  positionInlineMentionOverlay(root, overlay);
+  const overlays = lines.map((line) => {
+    const overlay = document.createElement("span");
+    overlay.className = INLINE_MENTION_OVERLAY_CLASS;
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.style.left = "0px";
+    overlay.style.top = "0px";
+    overlay.style.width = `${Math.ceil(line.width)}px`;
+    overlay.style.height = `${Math.ceil(line.height)}px`;
+    overlay.textContent = graphemes.slice(line.start, line.end).join("");
+    root.appendChild(overlay);
+    // The overlay's containing-block origin is unreliable for a multi-line RTL
+    // inline root, so snap it onto the measured line by correcting for where a
+    // left/top of 0 actually landed.
+    const placed = overlay.getBoundingClientRect();
+    overlay.style.left = `${Math.round(line.left - placed.left)}px`;
+    overlay.style.top = `${Math.round(line.top - placed.top)}px`;
+    return { el: overlay, start: line.start, end: line.end };
+  });
 
-  return { htmlStyles, overlay, colorStyles };
+  return { htmlStyles, overlays, colorStyles };
 }
 
-function releaseInlineMentionOverlay(root, htmlStyles, overlay, colorStyles, original) {
-  overlay?.remove();
+function releaseInlineMentionOverlay(root, htmlStyles, overlays, colorStyles, original) {
+  if (Array.isArray(overlays)) {
+    for (const { el } of overlays) el?.remove();
+  }
   root.textContent = original;
   restoreHtmlLayoutStyles(root, htmlStyles);
   if (colorStyles) {
@@ -281,7 +350,7 @@ function finishInlineMentionState(state) {
   releaseInlineMentionOverlay(
     root,
     state.htmlStyles,
-    state.overlay,
+    state.overlays,
     state.colorStyles,
     state.original
   );
@@ -307,11 +376,15 @@ function startInlineMentionShuffle(root, onComplete) {
   const config = getShuffleConfig(root);
   const graphemes = [...original];
   const settleFrames = buildSettleFrames(graphemes.length, config);
-  const { htmlStyles, overlay, colorStyles } = applyInlineMentionOverlay(root, original);
+  const { htmlStyles, overlays, colorStyles } = applyInlineMentionOverlay(
+    root,
+    original,
+    graphemes
+  );
 
   const state = {
     root,
-    overlay,
+    overlays,
     colorStyles,
     original,
     mode: "inline-mention",
@@ -327,9 +400,13 @@ function startInlineMentionShuffle(root, onComplete) {
   const tick = () => {
     if (!isActiveShuffleState(state)) return;
 
-    overlay.textContent = state.graphemes
-      .map((ch, index) => glyphAtFrame(ch, index, state.frame, state.settleFrames))
-      .join("");
+    for (const { el, start, end } of state.overlays) {
+      let text = "";
+      for (let i = start; i < end; i++) {
+        text += glyphAtFrame(state.graphemes[i], i, state.frame, state.settleFrames);
+      }
+      el.textContent = text;
+    }
     state.frame += 1;
 
     if (state.frame > maxSettleFrame(state.settleFrames, state.config)) {
@@ -488,8 +565,15 @@ function prepareState(root) {
   const rawWidths = measureGraphemeWidths(original, font);
   const rawTotal = rawWidths.reduce((sum, w) => sum + w, 0);
   const lockWidth = metrics.width > 0.5 ? metrics.width : rawTotal;
+  // For single-line labels the element's rendered width equals the text advance,
+  // so scaling each char to sum to lockWidth keeps the exact footprint. But a
+  // multi-line paragraph (e.g. the term definition) reports a single line's
+  // width, not the total advance — scaling to it squeezes the whole paragraph
+  // onto one line. Detect that and keep natural per-grapheme widths so the
+  // letters wrap to fill the block like the original text.
+  const isMultiLine = rawTotal > lockWidth * 1.5;
   const widths =
-    rawTotal > 0
+    rawTotal > 0 && !isMultiLine
       ? rawWidths.map((w) => (w / rawTotal) * lockWidth)
       : rawWidths;
   const htmlStyles = applyHtmlLayoutLock(root, lockWidth, metrics);
@@ -634,7 +718,7 @@ function abortState(state) {
     releaseInlineMentionOverlay(
       root,
       state.htmlStyles,
-      state.overlay,
+      state.overlays,
       state.colorStyles,
       state.original
     );
@@ -674,7 +758,7 @@ function restoreState(state) {
     releaseInlineMentionOverlay(
       root,
       state.htmlStyles,
-      state.overlay,
+      state.overlays,
       state.colorStyles,
       state.original
     );

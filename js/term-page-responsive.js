@@ -13,8 +13,44 @@ import { getMapTypographyScale, getViewportHeightScale } from "./viewport-layout
  */
 const TITLE_BAND_BASE_TYPOGRAPHY_SCALE = 1.6;
 
+/**
+ * Selected-term title metrics, used to guarantee the bleed image never overlaps
+ * the title. Mirrors `LAYOUT.termPageSelectedFontSize` in sun-map.js — the title
+ * is rendered at this size times the (width-based) map typography scale.
+ */
+const SELECTED_TITLE_FONT_SIZE = 144;
+/**
+ * Conservative upper bound for how far the title glyphs rise above their
+ * baseline, as a fraction of the font size (Secolo Hebrew display). Erring high
+ * keeps the no-overlap guarantee even for the tallest letters.
+ */
+const SELECTED_TITLE_ASCENT_RATIO = 0.78;
+/** Minimum guaranteed gap between the bleed image bottom and the title top (px, base). */
+const TITLE_IMAGE_CLEARANCE_BASE = 6;
+
 function getWideTitleBandFactor() {
   return Math.max(1, getMapTypographyScale() / TITLE_BAND_BASE_TYPOGRAPHY_SCALE);
+}
+
+/** How far the rendered title glyphs rise above their baseline (screen px). */
+function getSelectedTitleAscentPx() {
+  return Math.round(
+    SELECTED_TITLE_FONT_SIZE * getMapTypographyScale() * SELECTED_TITLE_ASCENT_RATIO
+  );
+}
+
+/**
+ * The largest bleed-image / title-band overlap that still keeps the image's
+ * bottom edge above the title's topmost glyph. The image bottom sits `overlap`
+ * px below the band top, while the title top sits `baselineInset - ascent` px
+ * below it; capping the overlap below that (minus a small gap) guarantees the
+ * title group can never overlap or rise over the bleed image at any size.
+ */
+function getMaxBleedImageBandOverlapPx(viewportHeight) {
+  const baselineInset = getTermPageTitleBaselineInsetPx(viewportHeight);
+  const ascent = getSelectedTitleAscentPx();
+  const margin = Math.round(TITLE_IMAGE_CLEARANCE_BASE * getWideTitleBandFactor());
+  return Math.max(0, baselineInset - ascent - margin);
 }
 
 export const TERM_PAGE_RESPONSIVE = {
@@ -69,10 +105,12 @@ export function getTermPageTitleBandHeightPx(viewportHeight) {
 }
 
 export function getBleedImageBandOverlapPx(viewportHeight) {
-  return Math.round(
+  const overlap = Math.round(
     scaleFromViewport(TERM_PAGE_RESPONSIVE.bleedImageBandOverlap, viewportHeight) *
       getWideTitleBandFactor()
   );
+  // Never let the image bleed so far down that it reaches the title glyphs.
+  return Math.min(overlap, getMaxBleedImageBandOverlapPx(viewportHeight));
 }
 
 export function getTermPageTitleBaselineInsetPx(viewportHeight) {

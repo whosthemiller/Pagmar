@@ -2675,7 +2675,6 @@ function getTermScrollLiftGroup() {
 }
 
 function applyTermPageScrollLiftTransform() {
-  positionTermBackLink();
   const scrollTop = viewport?.scrollTop ?? 0;
   const canLift =
     isViewportTermScrollable() ||
@@ -2854,7 +2853,13 @@ function usesTermPageAlphabeticBaseline() {
 }
 
 function getFocusRowRiseTargetPx(viewportHeight) {
-  const finalY = getFocusRowTopPx(viewportHeight);
+  const exitPinnedBaselineY =
+    focusState?.phase === "unfocusing" && focusState.exitFromPinned
+      ? focusState.exitPinnedBaselineY
+      : null;
+  const finalY = Number.isFinite(exitPinnedBaselineY)
+    ? exitPinnedBaselineY
+    : getFocusRowTopPx(viewportHeight);
   if (usesTermPageAlphabeticBaseline()) return finalY;
   if (focusState.riseT <= 0) return finalY;
   return finalY - getTermMiddleToAlphabeticAnchorOffset();
@@ -3521,6 +3526,22 @@ function startUnfocusAnimation(options = {}) {
   stabilizeFocusForNav();
   if (!focusState || focusState.phase !== "locked") return;
 
+  const exitFromPinned =
+    !termNavState && isTermPageScrollBgMode() && isTermHeaderPinned();
+  let exitPinnedBaselineY = null;
+  if (exitFromPinned) {
+    const exitViewportHeight =
+      currentLayout?.viewportHeight ?? getLiveViewportHeight();
+    const exitScrollTop = viewport?.scrollTop ?? 0;
+    // Where the title baseline actually sits on screen right now: the bottom-rest
+    // anchor lifted by the scroll shift. The exit render clears that SVG lift, so
+    // this captured value is what the rise target must reproduce at riseT = 1 to
+    // avoid a jump before descending to the arc.
+    exitPinnedBaselineY =
+      getTermPageBottomFocusRowTopPx(exitViewportHeight) +
+      getTermCensoredGroupScreenShiftY(exitScrollTop, exitViewportHeight);
+  }
+
   releaseSiblingTermCensorHold();
   disableTermEnterSiblingCensor();
   resetTitleRowImage();
@@ -3531,6 +3552,8 @@ function startUnfocusAnimation(options = {}) {
   cancelBackCircleAnimation();
   focusState.phase = "unfocusing";
   focusState.direction = "out";
+  focusState.exitFromPinned = exitFromPinned;
+  focusState.exitPinnedBaselineY = exitPinnedBaselineY;
   const now = performance.now();
   focusState.startTime = now;
   focusState.riseT = 1;
@@ -4856,8 +4879,11 @@ function applyRevealedMentionMarks(termId, sourceEl = null) {
       mention.classList.add("is-mention-revealed");
     }
   }
-  // The similar terms in the title row stay censored on the term page — never
-  // uncensor them on hover. Only inline body mentions reveal.
+  // Reveal the hovered similar term in the title row (uncensor just it) while
+  // the rest of the page body stays censored — mirrors inline body mentions.
+  if (sourceEl?.classList.contains("sun-term-wrap")) {
+    sourceEl.classList.add("is-mention-revealed");
+  }
   setHoverSourceMark(sourceEl);
 }
 
@@ -5715,65 +5741,6 @@ function bindBackNavigation() {
     startUnfocusAnimation();
   };
   backFixedEl?.addEventListener("pointerover", onBackHover, true);
-}
-
-/** @type {SVGGElement | null} */
-let hoveredBackLinkWrap = null;
-
-function clearTermBackLinkHover() {
-  if (!hoveredBackLinkWrap) return;
-  stopLetterShuffle(getLetterShuffleTarget(hoveredBackLinkWrap));
-  hoveredBackLinkWrap.classList.remove("is-hovered");
-  hoveredBackLinkWrap = null;
-}
-
-/** @param {SVGGElement} wrap */
-function setTermBackLinkHover(wrap) {
-  if (hoveredBackLinkWrap === wrap) return;
-  clearTermBackLinkHover();
-  hoveredBackLinkWrap = wrap;
-  wrap.classList.add("is-hovered");
-  startLetterShuffle(getLetterShuffleTarget(wrap));
-}
-
-function bindTermBackLink() {
-  svgEl?.addEventListener(
-    "pointerover",
-    (event) => {
-      if (focusState?.phase !== "locked" || isTermNavigating()) return;
-      const hit = event.target.closest(".sun-back-link-hit");
-      if (!hit) return;
-      const wrap = hit.closest(".sun-back-link");
-      if (!wrap) return;
-      const related = event.relatedTarget;
-      if (related instanceof Node && wrap.contains(related)) return;
-      setTermBackLinkHover(wrap);
-    },
-    true
-  );
-
-  svgEl?.addEventListener(
-    "pointerout",
-    (event) => {
-      const hit = event.target.closest(".sun-back-link-hit");
-      if (!hit) return;
-      const wrap = hit.closest(".sun-back-link");
-      if (!wrap) return;
-      const related = event.relatedTarget;
-      if (related instanceof Node && wrap.contains(related)) return;
-      clearTermBackLinkHover();
-    },
-    true
-  );
-
-  svgEl?.addEventListener("click", (event) => {
-    if (focusState?.phase !== "locked" || isTermNavigating()) return;
-    if (!event.target.closest(".sun-back-link-hit")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    clearTermBackLinkHover();
-    startUnfocusAnimation();
-  });
 }
 
 function getBackMiniRayScreenLeft(anchor, rotationDeg, localX, width, textAnchor) {
@@ -7251,20 +7218,14 @@ function pickRandomItem(items, rng) {
   return items[Math.floor(rng() * items.length)];
 }
 
-function getTermDisplayEligibleImages(termName) {
+/** First image in data/term-images.json — the fixed primary + full-bleed asset. */
+function getTermPrimaryImage(termName) {
   const images = termImagesByName.get(termName) || [];
-  const withKnownSize = images.filter(
-    (image) => image?.url && getTermImageAspectRatio(image.url) !== null
-  );
-  if (withKnownSize.length) return withKnownSize;
-  return images.filter((image) => image?.url);
+  return images.find((image) => image?.url) ?? null;
 }
 
-/** Random display asset among a term's eligible images (stable for this page load). */
 function pickTermDisplayImage(termName) {
-  const eligible = getTermDisplayEligibleImages(termName);
-  if (!eligible.length) return null;
-  return eligible[0];
+  return getTermPrimaryImage(termName);
 }
 
 function getBleedTextLabPreviewForTerm(termName) {
@@ -7300,22 +7261,18 @@ function getTermBleedEligibleImages(termName, viewportWidth, viewportHeight) {
   );
 }
 
-/** First bleed-quality asset — order in data/term-images.json is the priority list. */
+/** Fixed primary image for full bleed — always the first entry in term-images.json. */
 function pickTermBleedImage(termName, viewportWidth, viewportHeight) {
   const preview = getBleedTextLabPreviewForTerm(termName);
   if (preview?.imageUrl) {
     return findTermImageByUrl(termName, preview.imageUrl);
   }
-  const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
-  if (!eligible.length) return null;
-  return eligible[0];
+  return getTermPrimaryImage(termName);
 }
 
 /** One stable image for the fixed thumbnail and its full-bleed hover reveal. */
 function pickTitleRowSharedImage(termName, viewportWidth, viewportHeight) {
-  const bleedImage = pickTermBleedImage(termName, viewportWidth, viewportHeight);
-  const displayImage = pickTermDisplayImage(termName);
-  return bleedImage?.url ? bleedImage : displayImage;
+  return pickTermBleedImage(termName, viewportWidth, viewportHeight);
 }
 
 function getTitleRowViewportSize(layout = currentLayout) {
@@ -7326,14 +7283,15 @@ function getTitleRowViewportSize(layout = currentLayout) {
 }
 
 function getTermImagesForDisplay(termName) {
-  const images = termImagesByName.get(termName) || [];
-  return [...images]
-    .filter((image) => image?.url)
-    .sort((a, b) => {
-      const aspectA = getTermImageAspectRatio(a.url) ?? 0;
-      const aspectB = getTermImageAspectRatio(b.url) ?? 0;
-      return aspectB - aspectA;
-    });
+  const images = (termImagesByName.get(termName) || []).filter((image) => image?.url);
+  if (!images.length) return [];
+  const [primary, ...rest] = images;
+  rest.sort((a, b) => {
+    const aspectA = getTermImageAspectRatio(a.url) ?? 0;
+    const aspectB = getTermImageAspectRatio(b.url) ?? 0;
+    return aspectB - aspectA;
+  });
+  return [primary, ...rest];
 }
 
 function isTermImageBleedQuality(url, viewportWidth, viewportHeight) {
@@ -7549,7 +7507,8 @@ function getBleedBackdropCoverBox() {
 /** Map a viewport-local rect to the matching region in a cover-cropped source image. */
 function viewportRectToBleedCoverSourceRect(img, viewportRect) {
   const coverBox = getBleedBackdropCoverBox();
-  const coverRect = getCoverSourceRect(img, coverBox.width, coverBox.height);
+  const { x: posX, y: posY } = getBleedBackdropObjectPositionFraction();
+  const coverRect = getCoverSourceRect(img, coverBox.width, coverBox.height, posX, posY);
   const viewportBounds = viewport.getBoundingClientRect();
   const windowRect = {
     left: viewportBounds.left + viewportRect.left,
@@ -8743,15 +8702,69 @@ function ensureBleedPixelCanvas() {
   return bleedBackdropPixelCanvasEl;
 }
 
-/** @param {HTMLImageElement} img @param {number} boxWidth @param {number} boxHeight */
-function getCoverSourceRect(img, boxWidth, boxHeight) {
+/**
+ * Parse a CSS `object-position` value into crop fractions (0..1). Keeps the
+ * pixelation canvas crop in sync with the `<img>` `object-position` so the
+ * reveal doesn't snap to a different framing when the crisp image appears.
+ * Defaults to `center top` (50% / 0%) — the CSS default for the bleed image.
+ * @param {string | null | undefined} value
+ * @returns {{ x: number, y: number }}
+ */
+function parseObjectPositionFraction(value) {
+  const fallback = { x: 0.5, y: 0 };
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  const tokens = value.trim().toLowerCase().split(/\s+/);
+  const horizKeywords = { left: 0, center: 0.5, right: 1 };
+  const vertKeywords = { top: 0, center: 0.5, bottom: 1 };
+  const parsePercent = (token) => {
+    if (typeof token !== "string" || !token.endsWith("%")) return null;
+    const pct = parseFloat(token);
+    return Number.isFinite(pct) ? pct / 100 : null;
+  };
+
+  let x = null;
+  let y = null;
+  if (tokens.length === 1) {
+    const token = tokens[0];
+    if (token in horizKeywords) x = horizKeywords[token];
+    else if (token in vertKeywords) y = vertKeywords[token];
+    else x = parsePercent(token);
+  } else {
+    const [a, b] = tokens;
+    const aIsVertOnly = a in vertKeywords && !(a in horizKeywords);
+    if (aIsVertOnly) {
+      y = vertKeywords[a];
+      x = b in horizKeywords ? horizKeywords[b] : parsePercent(b);
+    } else {
+      x = a in horizKeywords ? horizKeywords[a] : parsePercent(a);
+      y = b in vertKeywords ? vertKeywords[b] : parsePercent(b);
+    }
+  }
+
+  return {
+    x: Number.isFinite(x) ? x : 0.5,
+    y: Number.isFinite(y) ? y : 0,
+  };
+}
+
+/** Crop fractions matching the bleed `<img>` current `object-position`. */
+function getBleedBackdropObjectPositionFraction() {
+  return parseObjectPositionFraction(bleedBackdropImgEl?.style.objectPosition);
+}
+
+/**
+ * @param {HTMLImageElement} img @param {number} boxWidth @param {number} boxHeight
+ * @param {number} [posX] horizontal crop anchor (0 = left, 1 = right)
+ * @param {number} [posY] vertical crop anchor (0 = top, 1 = bottom)
+ */
+function getCoverSourceRect(img, boxWidth, boxHeight, posX = 0.5, posY = 0) {
   const imgRatio = img.naturalWidth / img.naturalHeight;
   const boxRatio = boxWidth / boxHeight;
   if (imgRatio > boxRatio) {
     const sHeight = img.naturalHeight;
     const sWidth = img.naturalHeight * boxRatio;
     return {
-      sx: (img.naturalWidth - sWidth) / 2,
+      sx: (img.naturalWidth - sWidth) * posX,
       sy: 0,
       sWidth,
       sHeight,
@@ -8761,7 +8774,7 @@ function getCoverSourceRect(img, boxWidth, boxHeight) {
   const sHeight = img.naturalWidth / boxRatio;
   return {
     sx: 0,
-    sy: 0,
+    sy: (img.naturalHeight - sHeight) * posY,
     sWidth,
     sHeight,
   };
@@ -8774,11 +8787,11 @@ function getCoverSourceRect(img, boxWidth, boxHeight) {
  * @param {number} destHeight
  * @param {number} pixelFactor
  */
-function drawPixelatedCover(ctx, img, destWidth, destHeight, pixelFactor) {
+function drawPixelatedCover(ctx, img, destWidth, destHeight, pixelFactor, posX = 0.5, posY = 0) {
   const factor = Math.max(1, pixelFactor);
   const lowW = Math.max(1, Math.round(destWidth / factor));
   const lowH = Math.max(1, Math.round(destHeight / factor));
-  const { sx, sy, sWidth, sHeight } = getCoverSourceRect(img, lowW, lowH);
+  const { sx, sy, sWidth, sHeight } = getCoverSourceRect(img, lowW, lowH, posX, posY);
   const offscreen = getSharedPixelOffscreen();
 
   offscreen.width = lowW;
@@ -9029,6 +9042,120 @@ function runFixedThumbnailHideAnimation(imageEl, url, pixelWidth, pixelHeight, o
   fixedThumbHideAnimFrame = requestAnimationFrame(frame);
 }
 
+/** Overlay canvases pixelating the visible term-page images during an exit. */
+let termPageImageExitOverlays = [];
+/** @type {number | null} */
+let termPageImageExitFrame = null;
+/** True while the exit beat is also pixelating the full-bleed backdrop. */
+let termPageBleedExitActive = false;
+/** Peak block size the term-page photos crumble to as the page scrambles away. */
+const TERM_PAGE_IMAGE_EXIT_PIXEL_MAX_FACTOR = 30;
+
+function clearTermPageImageExitPixelation() {
+  if (termPageImageExitFrame !== null) {
+    cancelAnimationFrame(termPageImageExitFrame);
+    termPageImageExitFrame = null;
+  }
+  for (const { canvas, img } of termPageImageExitOverlays) {
+    canvas.remove();
+    img.classList.remove("is-pixelation-hidden");
+  }
+  termPageImageExitOverlays = [];
+  if (termPageBleedExitActive) {
+    termPageBleedExitActive = false;
+    clearBleedBackdropPixelation();
+  }
+}
+
+function collectVisibleTermPageImages() {
+  if (!viewport) return [];
+  return [...viewport.querySelectorAll("img.sun-term-page__image.is-loaded")].filter(
+    (img) =>
+      img instanceof HTMLImageElement &&
+      img.naturalWidth > 0 &&
+      img.clientWidth > 0 &&
+      img.clientHeight > 0
+  );
+}
+
+/**
+ * Pixelate the term-page images in place over the exit beat — the photos
+ * dissolve into blocks as the term page scrambles away. The overlays are torn
+ * down by {@link clearTermPageImageExitPixelation} once the destination view
+ * takes over.
+ * @param {number} durationMs
+ */
+function runTermPageImagesExitPixelation(durationMs) {
+  clearTermPageImageExitPixelation();
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const duration = reducedMotion ? 0 : durationMs;
+  if (duration <= 0) return;
+
+  for (const img of collectVisibleTermPageImages()) {
+    const figure = img.closest(".sun-term-page__figure") ?? img.parentElement;
+    if (!figure) continue;
+    const width = Math.round(img.clientWidth);
+    const height = Math.round(img.clientHeight);
+    if (width <= 0 || height <= 0) continue;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.position = "absolute";
+    canvas.style.left = "0";
+    canvas.style.top = "0";
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.style.pointerEvents = "none";
+    canvas.style.imageRendering = "pixelated";
+    canvas.style.zIndex = "2";
+    figure.appendChild(canvas);
+    img.classList.add("is-pixelation-hidden");
+    termPageImageExitOverlays.push({ canvas, img });
+  }
+
+  // The full-bleed backdrop is the most prominent image at the top of the term
+  // page (the figure thumbnails are usually below the fold), so crumble it too.
+  termPageBleedExitActive = Boolean(
+    bleedBackdropImgEl &&
+      bleedBackdropEl &&
+      !bleedBackdropEl.hidden &&
+      bleedBackdropImgEl.complete &&
+      bleedBackdropImgEl.naturalWidth > 0 &&
+      bleedBackdropEl.clientWidth > 0 &&
+      bleedBackdropEl.clientHeight > 0
+  );
+
+  if (!termPageImageExitOverlays.length && !termPageBleedExitActive) return;
+
+  // Stop any idle/glitch bleed pixel loop so it doesn't fight our exit frames.
+  if (termPageBleedExitActive) stopBleedPixelAnimation();
+
+  const maxFactor = TERM_PAGE_IMAGE_EXIT_PIXEL_MAX_FACTOR;
+  const drawAt = (factor, openProgress) => {
+    for (const { canvas, img } of termPageImageExitOverlays) {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) continue;
+      drawPixelatedCover(ctx, img, canvas.width, canvas.height, factor);
+    }
+    if (termPageBleedExitActive) {
+      applyBleedBackdropPixelation(openProgress, { maxFactor });
+    }
+  };
+
+  drawAt(1, 1);
+  const start = performance.now();
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = t * (2 - t);
+    const factor = Math.max(1, Math.round(1 + (maxFactor - 1) * eased));
+    // Bleed pixelation: openProgress 1 = sharp, 0 = max blocky.
+    drawAt(factor, 1 - eased);
+    termPageImageExitFrame = t < 1 ? requestAnimationFrame(frame) : null;
+  };
+  termPageImageExitFrame = requestAnimationFrame(frame);
+}
+
 /** @param {number} openProgress 0 = closed, 1 = fully open */
 function getBleedPixelFactor(openProgress, maxFactor = LAYOUT.titleRowInlinePixelMaxFactor) {
   if (openProgress >= 1) return 1;
@@ -9065,7 +9192,8 @@ function applyBleedBackdropPixelation(openProgress, options = {}) {
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  drawPixelatedCover(ctx, img, width, height, factor);
+  const { x: posX, y: posY } = getBleedBackdropObjectPositionFraction();
+  drawPixelatedCover(ctx, img, width, height, factor, posX, posY);
 }
 
 function applyIdleBleedBackdropPixelation() {
@@ -11669,100 +11797,6 @@ function getSelectedTermTextEl() {
   return getSelectedTermWrap()?.querySelector(".sun-term") ?? null;
 }
 
-function getTermBackLinkWrap() {
-  return getFocusRayGroup()?.querySelector(".sun-back-link") ?? null;
-}
-
-function removeTermBackLink() {
-  clearTermBackLinkHover();
-  getTermBackLinkWrap()?.remove();
-}
-
-function createTermBackLink(parent) {
-  const wrap = document.createElementNS(SVG_NS, "g");
-  wrap.setAttribute("class", "sun-back-link");
-  wrap.dataset.backLink = "1";
-
-  const hit = document.createElementNS(SVG_NS, "rect");
-  hit.setAttribute("class", "sun-back-link-hit");
-  hit.setAttribute("fill", "rgba(0,0,0,0.001)");
-
-  const text = document.createElementNS(SVG_NS, "text");
-  text.setAttribute("class", "sun-term sun-back-link-text");
-  text.setAttribute("x", "0");
-  text.setAttribute("y", "0");
-  text.setAttribute("text-anchor", "start");
-  text.setAttribute("dominant-baseline", "alphabetic");
-  text.textContent = "→ חזרה";
-
-  wrap.append(hit, text);
-  parent.appendChild(wrap);
-  return wrap;
-}
-
-/** Absolute (client) X of the grid's right content edge — the mini-sun column. */
-function getTermBackLinkTargetScreenX() {
-  const metrics = getGridMetrics();
-  return metrics.gridLeft + metrics.gridWidth;
-}
-
-/**
- * The back link lives beside the title in its parent group (so it rides every
- * group transform), but is right-aligned to the grid's rightmost column in
- * screen space. The locked focus ray has rotation 0, so a CTM inverse maps the
- * target screen X straight into the group's local space.
- */
-function positionTermBackLink() {
-  const titleWrap = getSelectedTermWrap();
-  const titleText = titleWrap?.querySelector(".sun-term");
-  const onTermPage =
-    focusState?.phase === "locked" &&
-    termPageSelectedFontSettled &&
-    Boolean(titleText);
-
-  if (!onTermPage || !titleWrap || !svgEl) {
-    removeTermBackLink();
-    return;
-  }
-
-  const parent = titleWrap.parentNode;
-  if (!parent) {
-    removeTermBackLink();
-    return;
-  }
-
-  let wrap = getTermBackLinkWrap();
-  if (!wrap) wrap = createTermBackLink(parent);
-  else if (wrap.parentNode !== parent) parent.appendChild(wrap);
-
-  const backText = wrap.querySelector(".sun-back-link-text");
-  const hitEl = wrap.querySelector(".sun-back-link-hit");
-  if (!backText || !hitEl) return;
-
-  backText.setAttribute("y", titleText.getAttribute("y") || "0");
-
-  const ctm = parent.getScreenCTM();
-  if (!ctm) return;
-  const point = svgEl.createSVGPoint();
-  point.x = getTermBackLinkTargetScreenX();
-  point.y = 0;
-  const targetLocalRight = point.matrixTransform(ctm.inverse()).x;
-
-  backText.setAttribute("x", "0");
-  const measured = backText.getBBox();
-  if (measured.width > 0) {
-    const shift = targetLocalRight - (measured.x + measured.width);
-    backText.setAttribute("x", String(shift));
-  }
-
-  const bbox = backText.getBBox();
-  const pad = 4;
-  hitEl.setAttribute("x", String(bbox.x - pad));
-  hitEl.setAttribute("y", String(bbox.y - pad));
-  hitEl.setAttribute("width", String(bbox.width + pad * 2));
-  hitEl.setAttribute("height", String(bbox.height + pad * 2));
-}
-
 function getRightmostCensoredTermWrap() {
   const rayGroup = getFocusRayGroup();
   if (!rayGroup) return null;
@@ -13614,10 +13648,80 @@ function navigateAboutToTimeline() {
   );
 }
 
+/** Term page → covering page: longer exit so the image pixelation reads. */
+const PAGE_TERM_EXIT_TIMING = { exitMs: 240, enterMs: PAGE_ROUTE_TIMING.enterMs };
+
+/**
+ * Direct term-page → covering-page transition. Scrambles the term page text and
+ * pixelates its images on the exit beat, tears the focus down instantly (no zoom
+ * back through the home map), then scrambles the destination in on the enter beat.
+ * @param {() => void} showDestination runs after the exit beat to reveal the target view
+ * @param {PageScrambleView} enterView
+ * @param {{ exitMs?: number, enterMs?: number }} [timing]
+ * @returns {boolean}
+ */
+function runTermDirectNav(showDestination, enterView, timing = PAGE_TERM_EXIT_TIMING) {
+  stabilizeFocusForNav();
+  if (!focusState || focusState.phase !== "locked") return false;
+
+  releaseSiblingTermCensorHold();
+  disableTermEnterSiblingCensor();
+  cancelTermScrollReset();
+
+  runTermPageImagesExitPixelation(timing.exitMs ?? PAGE_TERM_EXIT_TIMING.exitMs);
+
+  return runPageNavScrambleTransition(
+    "termFocus",
+    () => {
+      clearTermPageImageExitPixelation();
+      cancelFocusAnimation();
+      cancelBackCircleAnimation();
+      resetTitleRowImage();
+      hideTermPageChrome();
+      clearArcTermLayout();
+      focusState = null;
+      render(currentLayout);
+      showDestination();
+    },
+    enterView,
+    syncNavAfterPageEnter,
+    timing
+  );
+}
+
+function navigateTermToTermsIndex() {
+  runTermDirectNav(
+    () => {
+      forceOverviewReset();
+      showSunTermsIndex();
+    },
+    "index"
+  );
+}
+
+function navigateTermToAbout() {
+  runTermDirectNav(
+    () => {
+      forceOverviewReset();
+      showSunAbout();
+    },
+    "about"
+  );
+}
+
+function navigateTermToTags() {
+  runTermDirectNav(
+    // Snap straight into the tags grid — skip the home-map zoom-in beat so the
+    // transition reads as a direct scramble swap, not a detour through home.
+    () => beginOverviewOpen("filter", { snap: true }),
+    "overview"
+  );
+}
+
 function navigateToAbout() {
   if (isSunAboutVisible()) return;
   if (isFocusActive()) {
-    startUnfocusAnimation({ toAbout: true });
+    navigateTermToAbout();
     return;
   }
   if (isSunTermsIndexVisible()) {
@@ -13785,7 +13889,7 @@ function navigateTimelineToIndex() {
 function navigateToTermsIndex() {
   if (isSunTermsIndexVisible()) return;
   if (isFocusActive()) {
-    startUnfocusAnimation({ toTermsIndex: true });
+    navigateTermToTermsIndex();
     return;
   }
   if (isSunAboutVisible()) {
@@ -13847,6 +13951,10 @@ function navigateToOverviewMode(mode) {
     return;
   }
   if (isFocusActive()) {
+    if (mode === "filter") {
+      navigateTermToTags();
+      return;
+    }
     startUnfocusAnimation({ toOverviewWithMode: mode });
     return;
   }
@@ -13915,6 +14023,25 @@ function openTermById(termId) {
   ensureActiveRowSnapped(currentLayout);
   render(currentLayout);
   startFocusAnimation(location.termIndex);
+}
+
+/**
+ * Open a term from a covering page (index / tags grid): route through the home
+ * map first so the overlay scrambles away and the sun reappears, then zoom into
+ * the term page. Falls back to a direct open when already at home.
+ * @param {string} termId
+ */
+function openTermViaHome(termId) {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  if (isAtHomeView()) {
+    openTermById(termId);
+    return;
+  }
+  // Use the scramble route (not the eased overview zoom-out): from the tags
+  // page it snaps the overview closed and scrambles the sun ring straight back
+  // in, so the home view fills the frame immediately instead of leaving a blank
+  // beat between the tags content vanishing and the sun reappearing.
+  routeViaHomeScramble(() => openTermById(termId));
 }
 
 function consumeSessionNavIntent() {
@@ -14351,7 +14478,6 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
 
 function finalizeRender(layout) {
   clearTermHover();
-  clearTermBackLinkHover();
   if (hoveredTitleRowTermId && !isFocusActive()) {
     restoreOverviewTermHoverFromState();
   }
@@ -14405,7 +14531,6 @@ function finalizeRender(layout) {
     maintainEnterScramble([...svgEl.querySelectorAll("text.sun-term")]);
   }
   syncSiteNavFromMap(getActiveNavTarget);
-  positionTermBackLink();
   repositionTimelineEventHint();
 }
 
@@ -14572,6 +14697,8 @@ function startFocusAnimation(clickedIndex) {
     backMiniExitT: 1,
     backCircleStartTime: 0,
     riseStartY: transform.anchor.y,
+    exitFromPinned: false,
+    exitPinnedBaselineY: null,
     termStartXs,
     enterFromSlots,
     enterCarouselSteps,
@@ -16229,13 +16356,17 @@ async function init() {
         getGroups: () => groups,
         getSvg: () => svgEl,
         isInOverview,
+        // Tie the filter bar to the overview *target* (not the zoom progress)
+        // so it disappears together with the terms grid the moment a term is
+        // clicked, instead of lingering until the zoom-out finishes.
+        isTagsPageOpen: () => overviewTarget > 0,
       });
       initSunTermsIndex({
         getGroups: () => groups,
         rootEl: document.getElementById("sun-terms-index-root"),
         viewportEl: viewport,
         onTermSelect: (termId) => {
-          openTermById(termId);
+          openTermViaHome(termId);
         },
       });
       initSunAbout({
@@ -16250,7 +16381,7 @@ async function init() {
         rootEl: document.getElementById("sun-overview-terms-root"),
         viewportEl: viewport,
         onTermSelect: (termId) => {
-          openTermById(termId);
+          openTermViaHome(termId);
         },
       });
       setSunOverviewTermsGridRebuildGuard(
@@ -16349,7 +16480,6 @@ async function init() {
     bindTermHover();
     bindTermClick();
     bindBackNavigation();
-    bindTermBackLink();
     bindMentionNavigation();
     bindMetaFilterNavigation();
     bindTermPageLabelNav();

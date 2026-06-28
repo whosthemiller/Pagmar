@@ -483,25 +483,6 @@ body,
   text-underline-offset: 0.12em;
 }
 
-.sun-back-link-hit {
-  pointer-events: all;
-  cursor: pointer;
-}
-
-.sun-svg .sun-back-link-text {
-  font-family: var(--sun-mono-font);
-  font-variation-settings: var(--sun-mono-variation, normal);
-  font-size: calc(12px * var(--map-typography-scale));
-  font-weight: var(--sun-prose-weight-term);
-  direction: rtl;
-}
-
-.sun-back-link.is-hovered .sun-back-link-text {
-  text-decoration: underline;
-  text-decoration-thickness: 0.08em;
-  text-underline-offset: 0.12em;
-}
-
 .sun-term-censor {
   fill: url(#sun-censor-rgb-fill);
   stroke: none;
@@ -1280,6 +1261,26 @@ body,
   .sun-term-wrap.is-mention-revealed
   .sun-term-censor {
   opacity: 0;
+}
+
+/* During same-object hover, censor the selected page title too; the hovered
+   similar term stays revealed via .is-mention-revealed above. */
+.sun-viewport.is-term-sibling-censor-held.is-same-object-mention-hover
+  .sun-svg.sun-is-page-censored
+  .sun-ray.is-active
+  .sun-term-wrap.is-selected
+  .sun-term-censor,
+.sun-viewport.is-term-sibling-censor-held.is-same-object-mention-hover
+  .sun-svg.sun-is-page-censored
+  .sun-ray.is-locked
+  .sun-term-wrap.is-selected
+  .sun-term-censor {
+  opacity: 1;
+  transform: scaleX(1);
+  transition: none;
+  animation: sun-censor-scramble-in var(--sun-censor-write-duration, 0.24s)
+    steps(var(--sun-censor-write-steps, 12), end) forwards;
+  fill: #111111;
 }
 
 .sun-viewport.is-term-switch-censor .sun-def-mention--same-object.is-mention-revealed {
