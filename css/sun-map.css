@@ -89,11 +89,6 @@
   --sun-prose-weight-overview-term: 300;
   --sun-mono-font: "RoobertVF", monospace;
   --sun-mono-variation: "MONO" 100, "slnt" 0;
-  /* Revealed same-object mentions render in FrankRuhl (serif) inside RoobertVF
-     (sans) prose, so their baseline metrics sit slightly high. Nudge the
-     revealed glyphs down onto the line. Only applied when the censor bar is
-     removed, so the censored-state band stays aligned with the page bars. */
-  --sun-mention-reveal-shift: -0.09em;
 }
 
 * {
@@ -1153,8 +1148,8 @@ body,
   pointer-events: auto;
   cursor: pointer;
   position: relative;
-  font-family: "FrankRuhl", serif;
-  font-variation-settings: "wght" 400, "opsz" 32;
+  font-family: var(--sun-prose-font);
+  font-variation-settings: var(--sun-prose-variation, normal);
   /* The censor bar is painted as a centered background band (not a solid
      background-color that fills the whole line box, and not an absolutely
      positioned ::before). With box-decoration-break: clone every wrapped line
@@ -1172,17 +1167,9 @@ body,
   margin-inline: -1px;
 }
 
-/* The מדגיש / מטשטש side sections set their mentions in FrankRuhl, which has a
-   slightly taller ascender/descender reach than the canonical word censor, so
-   their censor band needs a touch more height to fully cover the letters. */
-.sun-term-page__side-text .sun-def-mention--same-object {
-  background-size: 100% calc(1lh * 36 / 38 + 1px);
-}
-
 .sun-viewport.is-same-object-mention-hover .sun-def-mention--same-object,
 .sun-viewport.is-term-switch-censor .sun-def-mention--same-object.is-mention-revealed {
   background-image: none;
-  vertical-align: var(--sun-mention-reveal-shift);
 }
 
 .sun-page-censor-layer {

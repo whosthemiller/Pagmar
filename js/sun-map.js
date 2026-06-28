@@ -4245,11 +4245,8 @@ const DEFINITION_CENSOR_BAR_HEIGHT = 33;
  *  height and bias it slightly downward. */
 const DEFINITION_CENSOR_BAR_EXTRA = 3;
 const DEFINITION_CENSOR_TOP_OFFSET = 3;
-/** מדגיש / מטשטש side body: its FrankRuhl mentions ride lower (deeper descenders
- *  + underline) than the generic block censor, which sits high (top offset -3)
- *  and left a sliver of underline showing below the bar. Bias the bar down so it
- *  reaches the bottom of the line — keeping the default bar height so the gap
- *  between wrapped lines stays intact. */
+/** מדגיש / מטשטש side body: block censor sits high (top offset -3); bias the bar
+ *  down so it reaches the bottom of the line without changing bar height. */
 const SIDE_TEXT_CENSOR_TOP_OFFSET = 2;
 /** Tuned on image captions (12px / 16px line-height). */
 const CAPTION_CENSOR_LINE_HEIGHT = 16;
