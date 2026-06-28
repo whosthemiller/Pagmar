@@ -21,6 +21,7 @@ import {
   initSunFilterTest,
   applySunFilterTestOpacity,
   applyCensorFilterDimension,
+  resetSunFilters,
   setOverviewSubMode,
 } from "./sun-filter-test.js";
 import { createOverviewGeometry, computeOverviewSpinOffset } from "./sun-overview-geometry.js";
@@ -3634,11 +3635,8 @@ function tickUnfocus(now) {
   if (pendingOverviewCensorFilter) {
     const { key, value } = pendingOverviewCensorFilter;
     pendingOverviewCensorFilter = null;
-    if (overviewSubMode !== "filter") {
-      setOverviewSubModeInternal("filter");
-    }
+    beginOverviewOpen("filter", { snap: true });
     applyCensorFilterDimension(key, value);
-    setOverviewTarget(1);
     syncNavAfterPageEnter();
   } else if (pendingOverviewMode) {
     const mode = pendingOverviewMode;
@@ -4150,7 +4148,7 @@ function bindMetaFilterNavigation() {
     event.preventDefault();
     event.stopPropagation();
     clearSameObjectMentionHover();
-    startUnfocusAnimation({ toOverviewWithFilter: { key, value } });
+    navigateTermToTags({ key, value });
   });
 }
 
@@ -6883,9 +6881,12 @@ function playTermLabelPanelTypewriter(panelTextEl, content, term) {
     panelTextEl.style.removeProperty("min-height");
     setAnnotatedTermText(panelTextEl, content, term);
     bindSameObjectMentionElements();
-    if (termPageScrollLayout.labelNavStacked) {
-      refreshTermPageLabelNavLayout();
-    }
+    // The typewriter reveals characters progressively, so the panel only reaches
+    // its full height once the animation finishes. Re-measure the layout for
+    // every tier (not just the stacked one) so the scroll bounds grow to fit the
+    // final text — otherwise the longest fields (e.g. the "טבח" page) overflow
+    // the scrollable area and the end of the text is clipped at the page bottom.
+    refreshTermPageLabelNavLayout();
     syncActivePageCensorOverlays();
   });
 }
@@ -6987,13 +6988,19 @@ function layoutTermPageLabelNav(imageTopInPage, imageHeight, term) {
     const panelTextEl = itemEl.querySelector(".sun-term-page__label-nav-panel-text");
     itemEl.toggleAttribute("data-has-content", Boolean(content));
     const isOpen = Boolean(content) && termLabelPanelOpen[key];
-    syncTermPageLabelPanelText(panelTextEl, content, term, key, isOpen);
-    itemEl.classList.toggle("is-panel-open", isOpen);
+    // Size and reveal the panel *before* filling its text. The typewriter reveal
+    // measures the panel's full height to hold it steady during the animation;
+    // if the panel is still hidden (height 0) or unsized when that measurement
+    // runs, the scroll bounds stay too short until the animation ends and the
+    // text is clipped while it types. Sizing first means the bottom gap is
+    // reserved the moment the panel opens.
     if (panelEl) {
       panelEl.style.width = `${panelWidth}px`;
       panelEl.hidden = !isOpen;
       panelEl.toggleAttribute("aria-hidden", !isOpen);
     }
+    syncTermPageLabelPanelText(panelTextEl, content, term, key, isOpen);
+    itemEl.classList.toggle("is-panel-open", isOpen);
   });
 
   itemEls.forEach((itemEl) => {
@@ -7048,12 +7055,22 @@ function layoutTermPageLabelNav(imageTopInPage, imageHeight, term) {
     0
   );
 
+  // Panels open to the left at the nav's top edge (top: 0). Their wrapped text
+  // can run taller than the heading row, so the nav height must grow to the
+  // tallest open panel — otherwise the longest field (e.g. the "טבח" page)
+  // spills past the scrollable area with no room to scroll its end into view.
+  const openPanelHeight = itemEls.reduce((max, itemEl) => {
+    const panelEl = itemEl.querySelector(".sun-term-page__label-nav-panel");
+    if (!panelEl || panelEl.hidden) return max;
+    return Math.max(max, panelEl.offsetHeight);
+  }, 0);
+  const navHeight = Math.max(labelRowHeight, openPanelHeight);
+
   termLabelNavEl.style.display = "block";
   termLabelNavEl.style.removeProperty("gap");
-  termLabelNavEl.style.height = `${labelRowHeight}px`;
+  termLabelNavEl.style.height = `${navHeight}px`;
 
-  // Panels open to the left — only the heading row affects vertical scroll extent.
-  return imageHeight + gap + labelRowHeight;
+  return imageHeight + gap + navHeight;
 }
 
 function refreshTermPageLabelNavLayout() {
@@ -9949,7 +9966,11 @@ function layoutTermPageDetailsImage(detailsTopInPage, term, rebuild = true) {
     viewport
   );
   const aspect = getTermImageAspectRatio(image.url) ?? 4 / 3;
-  const imageHeight = Math.round(span.width / aspect);
+  const naturalHeight = Math.round(span.width / aspect);
+  // Cap the third image to the same maximum as the inline (second) image so
+  // tall/portrait sources don't run far past the fold (object-fit: cover crops).
+  const maxHeight = getTermPageScrollImageHeightPx(getLiveViewportHeight(), 0);
+  const imageHeight = Math.min(naturalHeight, maxHeight);
 
   if (rebuild) {
     termDetailsImageEl.innerHTML = renderTermPageImageSlot(image, 2);
@@ -13327,6 +13348,9 @@ function cancelOverviewAnimation() {
 
 function forceOverviewReset() {
   const wasInOverview = overviewProgress > 0.02;
+  if (wasInOverview && overviewSubMode !== "timeline") {
+    resetSunFilters();
+  }
   overviewTarget = 0;
   overviewProgress = 0;
   overviewOverflowPasses = 0;
@@ -13351,6 +13375,10 @@ function forceOverviewReset() {
 }
 
 function enterOverviewAfterUnfocus(mode) {
+  if (mode === "filter") {
+    beginOverviewOpen("filter", { snap: true });
+    return;
+  }
   if (overviewSubMode !== mode) {
     setOverviewSubModeInternal(mode);
   }
@@ -13709,11 +13737,17 @@ function navigateTermToAbout() {
   );
 }
 
-function navigateTermToTags() {
+/** @param {{ key: string, value: string } | null} [censorFilter] */
+function navigateTermToTags(censorFilter = null) {
   runTermDirectNav(
     // Snap straight into the tags grid — skip the home-map zoom-in beat so the
     // transition reads as a direct scramble swap, not a detour through home.
-    () => beginOverviewOpen("filter", { snap: true }),
+    () => {
+      beginOverviewOpen("filter", { snap: true });
+      if (censorFilter) {
+        applyCensorFilterDimension(censorFilter.key, censorFilter.value);
+      }
+    },
     "overview"
   );
 }
@@ -13741,6 +13775,9 @@ function navigateToAbout() {
 
 /** @param {"filter" | "timeline"} mode @param {{ snap?: boolean }} [options] */
 function beginOverviewOpen(mode, { snap = false } = {}) {
+  if (mode === "filter") {
+    resetSunFilters();
+  }
   cancelScrollMotion();
   clearTimeout(snapDebounceTimer);
   // Set the target first so isInOverview() is true, then switch sub-mode — this
@@ -13760,6 +13797,9 @@ function beginOverviewOpen(mode, { snap = false } = {}) {
 
 /** @param {{ snap?: boolean }} [options] */
 function beginOverviewClose({ snap = false } = {}) {
+  if (overviewSubMode !== "timeline") {
+    resetSunFilters();
+  }
   cancelScrollMotion();
   clearTimeout(snapDebounceTimer);
 
@@ -13917,6 +13957,9 @@ function navigateOverviewSubMode(mode) {
   runPageNavScrambleTransition(
     "overview",
     () => {
+      if (overviewSubMode === "filter" || mode === "filter") {
+        resetSunFilters();
+      }
       resetOverviewFitCache();
       overviewOverflowPasses = 0;
       setOverviewSubModeInternal(mode);
@@ -13968,8 +14011,12 @@ function navigateToOverviewMode(mode) {
       return;
     }
     navigateViaHome(() => {
-      setOverviewSubModeInternal(mode);
-      setOverviewTarget(1);
+      if (mode === "filter") {
+        beginOverviewOpen("filter", { snap: true });
+      } else {
+        setOverviewSubModeInternal(mode);
+        setOverviewTarget(1);
+      }
       syncNavAfterPageEnter();
     });
     return;

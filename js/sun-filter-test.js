@@ -326,6 +326,19 @@ function syncCensorPanelSelects() {
   }
 }
 
+/** Clear all tag-page filter selections and restore the full terms grid. */
+export function resetSunFilters() {
+  closeAllFilterMenus();
+  hideFilterDimHint({ immediate: true });
+  for (const dim of FILTER_DIMS) {
+    activeFilters[dim.key] = "";
+  }
+  rebuildCensorSet();
+  syncCensorPanelSelects();
+  updateCensorFilterOptionStates();
+  applySunFilterTestOpacity(getSvg());
+}
+
 /** Set a single censor dimension (clears the others) and apply to the map. */
 export function applyCensorFilterDimension(key, value) {
   for (const dim of FILTER_DIMS) {
