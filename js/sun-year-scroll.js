@@ -152,6 +152,10 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     };
   }
 
+  function getContinuousYear() {
+    return clamp(yearScrollOffset, boundsMin, boundsMax);
+  }
+
   function applyWheelDelta(deltaY) {
     const drag = wheelDragFactor(deltaY);
     let deltaYears = deltaY * cfg.yearScrollSensitivity * drag;
@@ -358,6 +362,7 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     applyWheelDelta,
     handleWheel,
     getDisplayedYears,
+    getContinuousYear,
     setBounds,
     resetToMaxYear,
     cancelYearSnapAnimation,

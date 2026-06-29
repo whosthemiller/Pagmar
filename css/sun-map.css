@@ -77,7 +77,8 @@
   --sun-timeline-event-hint-line-height: calc(80px * var(--map-typography-scale));
   --sun-timeline-scroll-hint-font-size: calc(18px * var(--map-typography-scale));
   --sun-timeline-scroll-hint-line-height: calc(26px * var(--map-typography-scale));
-  --sun-timeline-year-font-size: calc(30px * var(--map-typography-scale));
+  --sun-timeline-tick-font-size: calc(24px * var(--map-typography-scale));
+  --sun-timeline-tick-line-height: calc(30px * var(--map-typography-scale));
   --sun-filter-font-size: calc(14px * var(--map-typography-scale));
   --sun-filter-line-height: calc(20px * var(--map-typography-scale));
   --sun-filter-clear-font-size: calc(20px * var(--map-typography-scale));
@@ -1826,9 +1827,9 @@ img.sun-title-row-image__img.is-loaded {
 .sun-timeline-scroll-hint {
   position: fixed;
   z-index: 26;
-  bottom: var(--grid-margin);
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -1871,9 +1872,34 @@ img.sun-title-row-image__img.is-loaded {
   overflow: visible;
 }
 
-.sun-timeline-year {
-  font-size: var(--sun-timeline-year-font-size);
-  font-weight: 400;
+.sun-timeline-ticks-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 12;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.sun-timeline-tick {
+  stroke: var(--ink);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.sun-timeline-tick-year,
+.sun-timeline-tick-title {
+  font-family: var(--sun-prose-font);
+  font-variation-settings: var(--sun-prose-variation, normal);
+  font-size: var(--sun-timeline-tick-font-size);
+  font-weight: 500;
+  line-height: var(--sun-timeline-tick-line-height);
+  fill: var(--ink);
+  /* Page is dir="rtl"; force LTR so text-anchor start/end map predictably to
+     the visual left/right edge for tick-label side placement. */
+  direction: ltr;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
@@ -2150,15 +2176,6 @@ img.sun-title-row-image__img.is-loaded {
   color: var(--ink-muted);
   cursor: default;
   pointer-events: none;
-}
-
-.sun-svg.sun-is-overview .sun-timeline-year {
-  opacity: 0;
-  transition: opacity 0.35s ease;
-}
-
-.sun-svg.sun-is-overview-timeline .sun-timeline-year {
-  opacity: 1;
 }
 
 .sun-svg.sun-is-overview-timeline .sun-term-wrap {

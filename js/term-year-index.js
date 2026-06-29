@@ -169,7 +169,11 @@ export function parsePeriodYears(periodText) {
   const startYear = startCandidates.length ? Math.min(...startCandidates) : Math.min(...endCandidates);
   let endYear = endCandidates.length ? Math.max(...endCandidates) : Math.max(...startCandidates);
 
-  if (hasPresent || /ואילך|ומאז|ממשיך|נמשך|נותר/i.test(text)) {
+  if (
+    hasPresent ||
+    /ואילך|ומאז|ממשיך|נמשך|נותר/i.test(text) ||
+    /-\s*$/.test(text)
+  ) {
     endYear = Math.max(endYear, CURRENT_YEAR);
   }
 

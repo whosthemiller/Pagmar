@@ -142,6 +142,32 @@ export function dismissTimelineScrollHint() {
 export function syncTimelineScrollHint() {
   if (!scrollHintEl) return;
   scrollHintEl.hidden = !isTimelineMode() || scrollHintDismissedForSession;
+  if (!scrollHintEl.hidden) {
+    positionScrollHintAtCenter();
+  }
+}
+
+function positionScrollHintAtCenter() {
+  if (!scrollHintEl) return;
+
+  const sun = getSunCircle?.();
+  if (sun) {
+    scrollHintEl.style.top = `${sun.cy}px`;
+    scrollHintEl.style.left = `${sun.cx}px`;
+    scrollHintEl.style.bottom = "";
+    scrollHintEl.style.transform = "translate(-50%, -50%)";
+    return;
+  }
+
+  scrollHintEl.style.top = "50%";
+  scrollHintEl.style.left = "50%";
+  scrollHintEl.style.bottom = "";
+  scrollHintEl.style.transform = "translate(-50%, -50%)";
+}
+
+export function repositionTimelineScrollHint() {
+  if (!scrollHintEl || scrollHintEl.hidden || !isTimelineMode()) return;
+  positionScrollHintAtCenter();
 }
 
 function hideTimelineEventHint({ immediate = false } = {}) {
@@ -172,6 +198,7 @@ function bindHintResize() {
   hintResizeBound = true;
   window.addEventListener("resize", () => {
     repositionTimelineEventHint();
+    repositionTimelineScrollHint();
   });
 }
 
@@ -263,6 +290,7 @@ export function initSunTimelineHint({
 
   bindHintResize();
   positionTimelineHint();
+  syncTimelineScrollHint();
 }
 
 export { hideTimelineEventHint, hideTimelineScrollHint };

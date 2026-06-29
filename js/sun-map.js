@@ -27,15 +27,16 @@ import {
 import { createOverviewGeometry, computeOverviewSpinOffset } from "./sun-overview-geometry.js";
 import { buildTermYearIndex, getTimelineBounds, getTermOpacity } from "./term-year-index.js";
 import { createYearScrollController, isWheelNotch } from "./sun-year-scroll.js";
-import { loadTimelineEvents } from "./timeline-events.js";
+import { getTimelineEventText, loadTimelineEvents } from "./timeline-events.js";
+import { initTimelineLab } from "./timeline-lab.js";
 import {
   dismissTimelineScrollHint,
   hideTimelineEventHint,
   hideTimelineScrollHint,
   initSunTimelineHint,
   repositionTimelineEventHint,
+  repositionTimelineScrollHint,
   resetTimelineScrollHint,
-  syncTimelineEventHint,
   syncTimelineScrollHint,
 } from "./sun-timeline-hint.js";
 import {
@@ -383,9 +384,9 @@ const LAYOUT = {
   overviewCyOffset: 44,
   /** Horizontal nudge for tags overview; negative = left. */
   overviewCxOffset: -120,
-  /** Timeline overview — centered, slightly lower, larger circle. */
+  /** Timeline overview — centered, raised slightly above center, larger circle. */
   timelineCxOffset: 0,
-  timelineCyOffset: 28,
+  timelineCyOffset: -16,
   timelineRadiusScale: 1.18,
   /** Extra clockwise rotation for overview layout (degrees). */
   overviewSpinExtraDeg: 60,
@@ -662,8 +663,6 @@ let imagePixelOffscreenEl = null;
 const pixelatedFixedImageCache = new Map();
 /** @type {Set<string>} */
 const pixelatedFixedImagePending = new Set();
-/** @type {HTMLImageElement | null} */
-let fixedRowImageLoaderEl = null;
 /** @type {number | null} */
 let bleedPixelAnimFrame = null;
 /** @type {number | null} */
@@ -812,6 +811,7 @@ let termPagePinSnapLockedTarget = null;
 let termLocationById = new Map();
 
 const isBleedTextLabMode = () => Boolean(globalThis.__SUN_BLEED_LAB__);
+const isTimelineLabMode = () => Boolean(globalThis.__SUN_TIMELINE_LAB__);
 
 /** Live preview overrides from bleed-text-lab (term name → prefs + image). */
 /** @type {null | { termName: string, imageUrl: string | null, navText: string, titleRowText: string }} */
@@ -4860,9 +4860,6 @@ function clearHoverSourceMarks() {
 
 function setHoverSourceMark(sourceEl) {
   clearHoverSourceMarks();
-  // Title-row similar terms stay fully censored — don't mark them as hovered
-  // (which would underline the covered glyphs). Only inline body mentions do.
-  if (sourceEl?.classList.contains("sun-term-wrap")) return;
   sourceEl?.classList.add("is-mention-hovered");
 }
 
@@ -4874,10 +4871,13 @@ function applyRevealedMentionMarks(termId, sourceEl = null) {
       mention.classList.add("is-mention-revealed");
     }
   }
-  // Reveal the hovered similar term in the title row (uncensor just it) while
+  // Reveal the matching similar term in the title row (uncensor just it) while
   // the rest of the page body stays censored — mirrors inline body mentions.
-  if (sourceEl?.classList.contains("sun-term-wrap")) {
-    sourceEl.classList.add("is-mention-revealed");
+  const titleWrap = getFocusRayGroup()?.querySelector(
+    `.sun-term-wrap:not(.is-selected)[data-term-id="${CSS.escape(termId)}"]`
+  );
+  if (titleWrap) {
+    titleWrap.classList.add("is-mention-revealed");
   }
   setHoverSourceMark(sourceEl);
 }
@@ -8820,15 +8820,6 @@ function drawPixelatedCover(ctx, img, destWidth, destHeight, pixelFactor, posX =
   ctx.drawImage(offscreen, 0, 0, lowW, lowH, 0, 0, destWidth, destHeight);
 }
 
-function getFixedRowImageLoader() {
-  if (!fixedRowImageLoaderEl) {
-    fixedRowImageLoaderEl = document.createElement("img");
-    fixedRowImageLoaderEl.decoding = "async";
-    fixedRowImageLoaderEl.referrerPolicy = "no-referrer";
-  }
-  return fixedRowImageLoaderEl;
-}
-
 /** @type {number | null} */
 let fixedRowRelayoutFrame = null;
 
@@ -8879,10 +8870,27 @@ function resolvePixelatedFixedImageHref(url, width, height, factor = LAYOUT.titl
 
   if (!pixelatedFixedImagePending.has(cacheKey)) {
     pixelatedFixedImagePending.add(cacheKey);
-    assignPreloadedTermImage(getFixedRowImageLoader(), url).then(() => {
+    // Dedicated per-request loader: the previous shared-element + token scheme
+    // let a later request "steal" the token from an in-flight one, leaving its
+    // promise unresolved and the cacheKey stuck in `pending` forever — so that
+    // active row never received a relayout and showed no thumbnail. Loading
+    // each source independently guarantees a relayout once it resolves.
+    const loader = new Image();
+    loader.decoding = "async";
+    loader.referrerPolicy = "no-referrer";
+    const settle = () => {
       pixelatedFixedImagePending.delete(cacheKey);
+      if (loader.naturalWidth > 0) registerPreloadedTermImage(src, loader);
       scheduleFixedRowRelayout();
-    });
+    };
+    loader.addEventListener("load", settle, { once: true });
+    loader.addEventListener(
+      "error",
+      () => pixelatedFixedImagePending.delete(cacheKey),
+      { once: true }
+    );
+    loader.src = src;
+    if (loader.complete && loader.naturalWidth > 0) settle();
   }
   return null;
 }
@@ -14115,9 +14123,8 @@ function consumeSessionNavIntent() {
 }
 
 function syncTimelineHintFromYearScroll() {
-  if (!yearScroll) return;
-  const { labelYear } = yearScroll.getDisplayedYears();
-  syncTimelineEventHint(labelYear);
+  if (!yearScroll || !isOverviewTimelineMode()) return;
+  hideTimelineEventHint({ immediate: true });
 }
 
 function syncOverviewTermsGridVisibility() {
@@ -14264,6 +14271,176 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+const TIMELINE_TICK_BASE_LEN = 8;
+const TIMELINE_TICK_ACTIVE_LEN = 96;
+const TIMELINE_TICK_WAVE_SPREAD = 1;
+const TIMELINE_TICK_LABEL_GAP = 8;
+const TIMELINE_TICK_TITLE_OFFSET = 30;
+/** Fixed vertical anchor (px above baseline) for the year/title text so it
+ *  never bobs with the animated tick length. */
+const TIMELINE_TICK_LABEL_ANCHOR = TIMELINE_TICK_ACTIVE_LEN;
+/** Time constant (s) for the eased "wave" that glides toward the scroll year. */
+const TIMELINE_TICK_EASE_TAU = 0.08;
+/** Below this gap to the target the wave is treated as settled. */
+const TIMELINE_TICK_SETTLE_EPS = 0.0015;
+
+let timelineTicksLayer = null;
+let timelineTicksVisualYear = null;
+let timelineTicksRafId = null;
+let timelineTicksLastFrame = 0;
+
+function smoothstepTimelineTick(t) {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
+
+function getTimelineTickMargin() {
+  return (
+    parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--grid-margin")
+    ) || 10
+  );
+}
+
+function ensureTimelineTicksLayer() {
+  if (timelineTicksLayer) return timelineTicksLayer;
+  if (!viewport) return null;
+  const svgns = "http://www.w3.org/2000/svg";
+  const layer = document.createElementNS(svgns, "svg");
+  layer.id = "sun-timeline-ticks-layer";
+  layer.classList.add("sun-timeline-ticks-layer");
+  layer.setAttribute("aria-hidden", "true");
+  viewport.appendChild(layer);
+  timelineTicksLayer = layer;
+  return layer;
+}
+
+function hideTimelineTicksLayer() {
+  if (timelineTicksLayer) timelineTicksLayer.innerHTML = "";
+}
+
+/**
+ * Render the bottom year ruler into the dedicated overlay using a continuous
+ * (eased) year position so the elongation reads as a smooth travelling wave.
+ * @param {number} visualYear
+ */
+function drawTimelineTicks(visualYear) {
+  const layer = ensureTimelineTicksLayer();
+  if (!layer) return;
+
+  const rect = viewport.getBoundingClientRect();
+  const viewportWidth = rect.width;
+  const viewportHeight = rect.height;
+  const margin = getTimelineTickMargin();
+  const minYear = timelineMinYear;
+  const maxYear = timelineMaxYear;
+  const range = maxYear - minYear;
+  if (range <= 0 || viewportWidth <= 0) return;
+
+  layer.setAttribute("width", `${viewportWidth}`);
+  layer.setAttribute("height", `${viewportHeight}`);
+  layer.setAttribute("viewBox", `0 0 ${viewportWidth} ${viewportHeight}`);
+
+  const labelYear = Math.max(minYear, Math.min(maxYear, Math.round(visualYear)));
+  const activeTitle = getTimelineEventText(labelYear);
+  const hasTitle = Boolean(activeTitle);
+
+  const baseY = viewportHeight;
+  const usableW = viewportWidth - margin * 2;
+  const yearToX = (year) => margin + ((year - minYear) / range) * usableW;
+
+  const tickLengthForYear = (year) => {
+    const dist = Math.abs(year - visualYear);
+    const t = smoothstepTimelineTick(1 - dist / TIMELINE_TICK_WAVE_SPREAD);
+    return (
+      TIMELINE_TICK_BASE_LEN +
+      (TIMELINE_TICK_ACTIVE_LEN - TIMELINE_TICK_BASE_LEN) * t
+    );
+  };
+
+  const parts = [];
+  for (let year = minYear; year <= maxYear; year += 1) {
+    const x = yearToX(year);
+    const len = tickLengthForYear(year);
+    parts.push(
+      `<line class="sun-timeline-tick" x1="${x.toFixed(2)}" y1="${(baseY - len).toFixed(2)}" x2="${x.toFixed(2)}" y2="${baseY.toFixed(2)}" />`
+    );
+  }
+
+  const activeX = yearToX(labelYear);
+  // Fixed vertical anchor — the text stays put regardless of the wave height.
+  const labelTopY = baseY - TIMELINE_TICK_LABEL_ANCHOR;
+  const flipToLeft = activeX > viewportWidth * 0.5;
+  const textAnchor = flipToLeft ? "end" : "start";
+  const labelX = flipToLeft
+    ? activeX - TIMELINE_TICK_LABEL_GAP
+    : activeX + TIMELINE_TICK_LABEL_GAP;
+
+  parts.push(
+    `<text class="sun-timeline-tick-year" x="${labelX.toFixed(2)}" y="${labelTopY.toFixed(2)}" text-anchor="${textAnchor}" dominant-baseline="hanging">${labelYear}</text>`
+  );
+
+  if (hasTitle) {
+    const titleText = applyTypographyRules(activeTitle);
+    parts.push(
+      `<text class="sun-timeline-tick-title" x="${labelX.toFixed(2)}" y="${(labelTopY + TIMELINE_TICK_TITLE_OFFSET).toFixed(2)}" text-anchor="${textAnchor}" dominant-baseline="hanging">${escapeHtml(titleText)}</text>`
+    );
+  }
+
+  layer.innerHTML = parts.join("");
+}
+
+function timelineTicksFrame(now) {
+  timelineTicksRafId = null;
+
+  if (!isOverviewTimelineMode() || !yearScroll) {
+    hideTimelineTicksLayer();
+    timelineTicksVisualYear = null;
+    timelineTicksLastFrame = 0;
+    return;
+  }
+
+  const target = yearScroll.getContinuousYear();
+  if (timelineTicksVisualYear == null) timelineTicksVisualYear = target;
+
+  const dt =
+    timelineTicksLastFrame > 0
+      ? Math.min((now - timelineTicksLastFrame) / 1000, 0.05)
+      : 0;
+  timelineTicksLastFrame = now;
+
+  const k = dt > 0 ? 1 - Math.exp(-dt / TIMELINE_TICK_EASE_TAU) : 1;
+  timelineTicksVisualYear += (target - timelineTicksVisualYear) * k;
+
+  const settled = Math.abs(target - timelineTicksVisualYear) < TIMELINE_TICK_SETTLE_EPS;
+  if (settled) timelineTicksVisualYear = target;
+
+  drawTimelineTicks(timelineTicksVisualYear);
+
+  if (!settled) {
+    timelineTicksRafId = requestAnimationFrame(timelineTicksFrame);
+  } else {
+    timelineTicksLastFrame = 0;
+  }
+}
+
+function startTimelineTicksLoop() {
+  if (!isOverviewTimelineMode() || !yearScroll) return;
+  if (timelineTicksRafId != null) return;
+  timelineTicksLastFrame = 0;
+  timelineTicksRafId = requestAnimationFrame(timelineTicksFrame);
+}
+
+function stopTimelineTicksLoop() {
+  if (timelineTicksRafId != null) {
+    cancelAnimationFrame(timelineTicksRafId);
+    timelineTicksRafId = null;
+  }
+  timelineTicksVisualYear = null;
+  timelineTicksLastFrame = 0;
+  hideTimelineTicksLayer();
+}
+
 function prepareRenderParts(layout) {
   const { viewportWidth, viewportHeight } = layout;
 
@@ -14353,13 +14530,6 @@ function prepareRenderParts(layout) {
     overview > 0.02 && overviewSubMode === "timeline" && yearScroll
       ? yearScroll.getDisplayedYears()
       : null;
-
-  if (overview > 0.02 && overviewSubMode === "timeline" && yearScroll) {
-    const { labelYear } = yearScroll.getDisplayedYears();
-    parts.push(
-      `<text class="sun-overview-label sun-timeline-year" x="${layout.cx}" y="${layout.cy}" text-anchor="middle" dominant-baseline="middle">${labelYear}</text>`
-    );
-  }
 
   return { parts, overview, fontSize, timelineYears };
 }
@@ -14576,6 +14746,12 @@ function finalizeRender(layout) {
   }
   syncSiteNavFromMap(getActiveNavTarget);
   repositionTimelineEventHint();
+  repositionTimelineScrollHint();
+  if (isOverviewTimelineMode()) {
+    startTimelineTicksLoop();
+  } else {
+    stopTimelineTicksLoop();
+  }
 }
 
 function render(layout) {
@@ -16373,6 +16549,35 @@ function exposeBleedTextLabApi() {
   document.dispatchEvent(new CustomEvent("sun-map-ready", { detail: api }));
 }
 
+function exposeTimelineLabApi() {
+  if (!isTimelineLabMode()) return;
+  const api = {
+    getTimelineLayout() {
+      return {
+        timelineCxOffset: LAYOUT.timelineCxOffset,
+        timelineCyOffset: LAYOUT.timelineCyOffset,
+        timelineRadiusScale: LAYOUT.timelineRadiusScale,
+        timelineStartYear: LAYOUT.timelineStartYear,
+        overviewTweenMs: LAYOUT.overviewTweenMs,
+        overviewFontSize: LAYOUT.overviewFontSize,
+      };
+    },
+    setTimelineLayout(patch) {
+      Object.assign(LAYOUT, patch);
+      overviewGeo.resetFitCache();
+      rebuild(true);
+    },
+    getYearScroll: () => yearScroll,
+    getDisplayedYear: () => yearScroll?.getDisplayedYears() ?? null,
+    rebuild: () => rebuild(true),
+    goToTimeline: () => navigateToOverviewMode("timeline"),
+    goToHome: () => navigateToHome(),
+  };
+  globalThis.__SUN_TIMELINE_LAB_API__ = api;
+  initTimelineLab(api);
+  document.dispatchEvent(new CustomEvent("sun-timeline-lab-ready", { detail: api }));
+}
+
 async function init() {
   bindSplashWheelHandoff();
   bindSplashNavEntrance();
@@ -16443,6 +16648,7 @@ async function init() {
         onChange: () => {
           dismissTimelineScrollHint();
           syncTimelineHintFromYearScroll();
+          startTimelineTicksLoop();
           if (currentLayout && isOverviewTimelineMode()) render(currentLayout);
         },
       });
@@ -16487,6 +16693,13 @@ async function init() {
     await runLoadingSegmentAsync("מכין תצוגה…", LOADING_WORK_WEIGHT.rebuild, 5000, async () => {
       await rebuildAsync(false);
     });
+
+    // Timeline lab: snap straight into the timeline so the page opens on the
+    // timeline itself — no splash, no home-map beat, no produced transition.
+    if (isTimelineLabMode()) {
+      beginOverviewOpen("timeline", { snap: true });
+    }
+
     flushPendingSplashWheelDelta();
 
     if (currentLayout) {
@@ -16534,6 +16747,7 @@ async function init() {
     bindGridToggle();
 
     exposeBleedTextLabApi();
+    exposeTimelineLabApi();
     exposeFold3CentreTuner();
 
     new ResizeObserver(() => {
