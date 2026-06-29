@@ -15,7 +15,7 @@ const TIMELINE_HINT_COLUMNS = 10;
 const TIMELINE_HINT_LINE_HEIGHT = 80;
 const TIMELINE_HINT_COLLISION_PAD = 8;
 const TIMELINE_HINT_HIDE_MS = 120;
-const TIMELINE_SCROLL_HINT_TEXT = "גלול כדי לזוז בציר זמן";
+const TIMELINE_SCROLL_HINT_TEXT = "גללו לאורך ציר הזמן וצפו במונחים המשתנים עם השנים";
 const TIMELINE_SCROLL_HINT_DISMISS_MS = 350;
 /** Set to true to restore letter-scramble on show/hide. */
 const TIMELINE_HINT_SCRAMBLE_ENABLED = false;
