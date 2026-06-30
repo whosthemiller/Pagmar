@@ -3052,3 +3052,17 @@ line.letter-shuffle-underline {
   color: #fff;
   opacity: 0.9;
 }
+
+.home-scroll-debug__wheel {
+  width: 100%;
+  margin-top: 2px;
+  font-family: monospace;
+  font-size: 10px;
+  color: #f7b955;
+  opacity: 0.9;
+  white-space: nowrap;
+}
+
+.home-scroll-debug__wheel.is-mouse {
+  color: #6ee787;
+}

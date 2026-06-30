@@ -61,6 +61,13 @@ export function getActiveHomeScrollModeId() {
   return activeModeId;
 }
 
+/** @type {((info: { deltaY: number, deltaX: number, deltaMode: number, wheelDeltaY: number | null, detected: "mouse" | "trackpad" }) => void) | null} */
+let wheelDebugSink = null;
+
+export function reportWheelDebug(info) {
+  wheelDebugSink?.(info);
+}
+
 export function setActiveHomeScrollMode(id) {
   if (!HOME_SCROLL_MODES[id]) return false;
   activeModeId = id;
@@ -85,6 +92,20 @@ export function initHomeScrollDebugPanel(options = {}) {
   const isHomeView = options.isHomeView ?? (() => true);
   const buttons = [...root.querySelectorAll("[data-scroll-mode]")];
   const statusEl = root.querySelector(".home-scroll-debug__status");
+  const wheelEl = root.querySelector(".home-scroll-debug__wheel");
+
+  if (wheelEl) {
+    let wheelCount = 0;
+    wheelDebugSink = (info) => {
+      wheelCount += 1;
+      const wd = info.wheelDeltaY == null ? "—" : info.wheelDeltaY;
+      wheelEl.textContent =
+        `#${wheelCount} ${info.detected === "mouse" ? "🖱 עכבר" : "👆 trackpad"}` +
+        `  dY=${info.deltaY.toFixed(1)} dX=${info.deltaX.toFixed(1)}` +
+        `  mode=${info.deltaMode} wD=${wd}`;
+      wheelEl.classList.toggle("is-mouse", info.detected === "mouse");
+    };
+  }
 
   const syncActiveButton = () => {
     const active = getActiveHomeScrollModeId();

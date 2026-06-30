@@ -50,6 +50,7 @@ import {
 import {
   getActiveHomeScrollMode,
   initHomeScrollDebugPanel,
+  reportWheelDebug,
 } from "./home-scroll-mode.js";
 import {
   bindLetterShuffleDelegation,
@@ -16926,7 +16927,16 @@ function bindWheelScroll() {
       }
 
       event.preventDefault();
-      if (!applyArcWheelDelta(event.deltaY, { isMouseWheel: isMouseWheelEvent(event) })) return;
+      const detectedMouse = isMouseWheelEvent(event);
+      reportWheelDebug({
+        deltaY: event.deltaY,
+        deltaX: event.deltaX,
+        deltaMode: event.deltaMode,
+        wheelDeltaY:
+          typeof event.wheelDeltaY === "number" ? event.wheelDeltaY : null,
+        detected: detectedMouse ? "mouse" : "trackpad",
+      });
+      if (!applyArcWheelDelta(event.deltaY, { isMouseWheel: detectedMouse })) return;
     },
     { passive: false }
   );
