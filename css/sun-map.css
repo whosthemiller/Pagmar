@@ -2931,3 +2931,11 @@ line.letter-shuffle-underline {
   }
 }
 
+/* Large desktop (iMac / submission computer) — narrow the credits/logo side block
+   by one column so it doesn't spread as wide. Anchored to its outer margin (line 23). */
+@media (min-width: 1600px) {
+  .sun-about__side {
+    grid-column: 16 / span 7;
+  }
+}
+
