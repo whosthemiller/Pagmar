@@ -7471,13 +7471,27 @@ function getTermBleedEligibleImages(termName, viewportWidth, viewportHeight) {
   );
 }
 
-/** Fixed primary image for full bleed — always the first entry in term-images.json. */
+/**
+ * Term-page full bleed — the fixed chosen image, never the hover cycle.
+ * Prefers the primary (first) image when it passes bleed quality, otherwise
+ * falls back to the first eligible image so the backdrop never stretches a
+ * low-quality source.
+ */
 function pickTermBleedImage(termName, viewportWidth, viewportHeight) {
   const preview = getBleedTextLabPreviewForTerm(termName);
   if (preview?.imageUrl) {
     return findTermImageByUrl(termName, preview.imageUrl);
   }
-  return getTermPrimaryImage(termName);
+  const primary = getTermPrimaryImage(termName);
+  if (
+    primary?.url &&
+    getTermImagePixelSize(primary.url) &&
+    isTermImageBleedQuality(primary.url, viewportWidth, viewportHeight)
+  ) {
+    return primary;
+  }
+  const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
+  return eligible[0] ?? primary;
 }
 
 /** Cycling pool — full-bleed-eligible images only; falls back to the primary image. */
@@ -8033,7 +8047,7 @@ function rowHasFixedRowImage(group) {
   return getFixedRowContentCandidates(group).length > 0;
 }
 
-/** Random term for the thumbnail image — re-picked whenever the active row changes. */
+/** Active group term for the fixed-row thumbnail — re-seeded when the active row changes. */
 function getFixedRowImageContentTerm(group) {
   const activeIndex = getDisplayActiveIndex();
   const pickKey = String(activeIndex);
@@ -8041,12 +8055,26 @@ function getFixedRowImageContentTerm(group) {
     fixedRowImagePickKey = pickKey;
     const activeGroup = groups[activeIndex] ?? group;
     const candidates = getFixedRowContentCandidates(activeGroup);
-    fixedRowImageContentTerm =
-      candidates.length > 0
-        ? candidates[Math.floor(Math.random() * candidates.length)]
-        : null;
+    fixedRowImageContentTerm = candidates[0] ?? null;
   }
   return fixedRowImageContentTerm;
+}
+
+/** Advance to the next group term — visits every candidate before repeating. */
+function advanceFixedRowGroupTerm(group) {
+  const candidates = getFixedRowContentCandidates(group);
+  if (candidates.length < 2) return false;
+
+  const currentId = fixedRowImageContentTerm?.id;
+  let currentIdx = candidates.findIndex((term) => term.id === currentId);
+  if (currentIdx < 0) {
+    fixedRowImageContentTerm = candidates[0];
+    return true;
+  }
+
+  const nextIdx = (currentIdx + 1) % candidates.length;
+  fixedRowImageContentTerm = candidates[nextIdx];
+  return true;
 }
 
 function getRowEndTermWrap(rayGroup, group) {
@@ -9966,6 +9994,14 @@ function findTermById(termId) {
   return null;
 }
 
+function findGroupContainingTermId(termId) {
+  if (!termId) return null;
+  for (const group of groups) {
+    if (group.terms.some((entry) => entry.id === termId)) return group;
+  }
+  return null;
+}
+
 function setTitleRowTermHover(termId) {
   if (hoveredTitleRowTermId === termId) {
     refreshTitleRowTermHoverVisuals(termId);
@@ -9998,11 +10034,14 @@ function clearTitleRowTermHover() {
   clearTitleRowHoverImage();
   titleRowInlineExpandedSession = -1;
   titleRowHoverSessionId += 1;
-  // Any title-row hover exit (fixed thumbnail or term text) cycles to a new image.
+  // Title-row hover exit cycles the fixed thumbnail through every group term, then
+  // advances the hovered term's bleed-eligible image pool for its next appearance.
   const term = findTermById(termId);
-  if (term?.name && advanceTitleRowSharedImage(term.name)) {
-    activeRowFixedImageKey = null;
-  }
+  const group = findGroupContainingTermId(termId);
+  let advanced = false;
+  if (group) advanced = advanceFixedRowGroupTerm(group) || advanced;
+  if (term?.name) advanced = advanceTitleRowSharedImage(term.name) || advanced;
+  if (advanced) activeRowFixedImageKey = null;
   if (currentLayout) {
     updateTitleRowImage(currentLayout);
     syncRayFixedImages(currentLayout);
@@ -13057,9 +13096,10 @@ function updateTermPageBleed(layout) {
   const carriedFromHover = Boolean(carryImage);
   if (carryImage) termPageBleedCarryImage = null;
   const { viewportWidth, viewportHeight } = layout;
+  // Term-page bleed is pinned to the chosen/primary image — no hover cycling.
   const image =
+    pickTermBleedImage(term.name, viewportWidth, viewportHeight) ??
     carryImage ??
-    pickTitleRowSharedImage(term.name, viewportWidth, viewportHeight) ??
     pickTermDisplayImage(term.name);
   const url = image?.url;
   if (!url) {
@@ -16798,7 +16838,7 @@ function getCurrentBleedImageUrlForTerm(termName) {
     viewportWidth: viewport?.clientWidth ?? window.innerWidth,
     viewportHeight: viewport?.clientHeight ?? window.innerHeight,
   };
-  return pickTitleRowSharedImage(termName, layout.viewportWidth, layout.viewportHeight)?.url ?? null;
+  return pickTermBleedImage(termName, layout.viewportWidth, layout.viewportHeight)?.url ?? null;
 }
 
 /**

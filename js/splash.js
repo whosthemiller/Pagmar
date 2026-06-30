@@ -1,5 +1,5 @@
 /**
- * Splash entry overlay — full-bleed image slideshow with pixel transitions,
+ * Splash entry overlay — small pixelated image slideshow with pixel transitions,
  * scroll-to-dismiss into the main sun-map site.
  */
 
@@ -15,9 +15,11 @@ import {
 
 const CONFIG = {
   dataUrl: "data/splash-images.json",
-  intervalMs: 4000,
+  intervalMs: 3000,
   transitionMs: 380,
   maxFactor: 24,
+  /** Resting pixelation strength — image stays pixelated between transitions. */
+  restPixelFactor: 16,
   glitchHold: 0.38,
   dismissDurationMs: 550,
   /** Fallback wheel delta when dismiss is triggered without a wheel event. */
@@ -53,31 +55,7 @@ const imageBandEl = splashEl?.querySelector(".splash__image-band");
 const imageEl = splashEl?.querySelector(".splash__image");
 const canvasEl = splashEl?.querySelector(".splash__pixel-canvas");
 const introEl = splashEl?.querySelector(".splash__intro");
-const scrollHintEl = splashEl?.querySelector(".splash__scroll-hint");
 const scrollHintTextEl = splashEl?.querySelector(".splash__scroll-hint-text");
-
-/** Matches --splash-margin (10px) + the extra 8px bottom offset of the text. */
-const SPLASH_TEXT_BOTTOM_OFFSET = 18;
-/** Breathing space kept between the top of the bottom text and the image edge. */
-const SPLASH_BAND_GAP = 16;
-
-/**
- * Size the bottom band to the actual height of the bottom text so the image's
- * lower edge always clears the intro paragraph and scroll hint — on any screen
- * size, however many lines the text wraps to. The band never shrinks below the
- * design value (clamp(110px, 15vh, 360px)).
- */
-function updateSplashBand() {
-  if (!splashEl) return;
-  const introHeight = introEl?.offsetHeight ?? 0;
-  const hintHeight = scrollHintEl?.offsetHeight ?? 0;
-  const textHeight = Math.max(introHeight, hintHeight);
-
-  const designBand = Math.min(360, Math.max(110, window.innerHeight * 0.15));
-  const needed = SPLASH_TEXT_BOTTOM_OFFSET + textHeight + SPLASH_BAND_GAP;
-  const band = Math.max(designBand, needed);
-  splashEl.style.setProperty("--splash-band", `${Math.round(band)}px`);
-}
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -137,13 +115,17 @@ function drawPixelatedCover(ctx, img, destWidth, destHeight, pixelFactor) {
 
 /** @param {number} openProgress @param {number} maxFactor */
 function getPixelFactor(openProgress, maxFactor = CONFIG.maxFactor) {
-  if (openProgress >= 1) return 1;
+  const minFactor = CONFIG.restPixelFactor;
+  if (openProgress >= 1) return minFactor;
   if (openProgress <= 0) {
     const extra = Math.abs(openProgress);
-    return Math.max(1, Math.round(maxFactor + (maxFactor - 1) * extra));
+    return Math.max(minFactor, Math.round(maxFactor + (maxFactor - minFactor) * extra));
   }
   const eased = Math.max(0, Math.min(1, openProgress));
-  return Math.max(1, Math.round(1 + (maxFactor - 1) * (1 - eased)));
+  return Math.max(
+    minFactor,
+    Math.round(minFactor + (maxFactor - minFactor) * (1 - eased))
+  );
 }
 
 function clearPixelation() {
@@ -162,10 +144,15 @@ function stopAnimation() {
   }
 }
 
-function getBandDimensions() {
+function getImageDimensions() {
   const container = imageBandEl;
   if (!container) return { width: 0, height: 0 };
   return { width: container.clientWidth, height: container.clientHeight };
+}
+
+/** @param {HTMLImageElement | null | undefined} [sourceImg] */
+function applyRestingPixelation(sourceImg) {
+  applyPixelation(1, { sourceImg: sourceImg ?? imageEl });
 }
 
 /** @param {number} openProgress @param {{ maxFactor?: number, sourceImg?: HTMLImageElement | null }} [options] */
@@ -173,9 +160,9 @@ function applyPixelation(openProgress, options = {}) {
   const maxFactor = options.maxFactor ?? CONFIG.maxFactor;
   const factor = getPixelFactor(openProgress, maxFactor);
   const img = options.sourceImg ?? imageEl;
-  const { width, height } = getBandDimensions();
+  const { width, height } = getImageDimensions();
 
-  if (!img || !canvasEl || factor <= 1 || !width || !height) {
+  if (!img || !canvasEl || !width || !height) {
     clearPixelation();
     return;
   }
@@ -218,9 +205,8 @@ function runPixelGlitchAnimation(options = {}) {
   const duration = reducedMotion ? 0 : durationMs;
 
   if (duration <= 0) {
-    // Still perform the swap so the image actually advances without motion.
     options.onHold?.();
-    clearPixelation();
+    applyRestingPixelation(toImg ?? fromImg);
     options.onComplete?.();
     return;
   }
@@ -235,17 +221,14 @@ function runPixelGlitchAnimation(options = {}) {
       holdFired = true;
       options.onHold?.();
     }
-    const openProgress = getGlitchOpenProgress(t);
-    // Before the hold, reveal the outgoing image; after it, the incoming one.
-    // Drawing from the decoded preloaded image (not imageEl) guarantees the
-    // new photo is painted during the reveal instead of snapping in at the end.
-    const sourceImg = holdFired ? toImg ?? fromImg : fromImg ?? toImg;
-    applyPixelation(openProgress, { maxFactor, sourceImg });
     if (t < 1) {
+      const openProgress = getGlitchOpenProgress(t);
+      const sourceImg = holdFired ? toImg ?? fromImg : fromImg ?? toImg;
+      applyPixelation(openProgress, { maxFactor, sourceImg });
       animFrame = requestAnimationFrame(frame);
     } else {
       animFrame = null;
-      clearPixelation();
+      applyRestingPixelation(toImg ?? fromImg);
       options.onComplete?.();
     }
   }
@@ -275,16 +258,15 @@ function preloadImage(url) {
   });
 }
 
-function showSharpImage(url) {
-  if (!imageEl) return;
-  imageEl.src = url;
-  clearPixelation();
+function getCurrentSlideImage() {
+  const slide = splashSlides[currentIndex];
+  if (!slide) return imageEl;
+  return preloaded.get(slide.url) ?? imageEl;
 }
 
 function runInitialReveal() {
   if (!splashSlides.length || !imageEl) return;
   const slide = splashSlides[0];
-  applyQuoteColor(slide.quoteTextColor);
   imageEl.src = slide.url;
 
   const start = () => {
@@ -340,7 +322,6 @@ async function advanceGallery() {
     fromImg,
     toImg,
     onHold: () => {
-      applyQuoteColor(nextSlide.quoteTextColor);
       if (imageEl) imageEl.src = nextSlide.url;
     },
     onComplete: () => {
@@ -394,7 +375,6 @@ function endScrollHandoff() {
 
 /**
  * Dismiss the splash overlay and reveal the site.
- * Hook for future entry animations — replace the CSS transition here.
  * @param {{ scrollDeltaY?: number }} [options]
  */
 export function dismissSplash(options = {}) {
@@ -404,7 +384,6 @@ export function dismissSplash(options = {}) {
   stopGallery();
   beginScrollHandoff(options.scrollDeltaY ?? 0);
 
-  // Scramble the scroll hint out as the splash fades away.
   startContinuousScramble(scrollHintTextEl);
 
   splashEl.classList.add("is-dismissed");
@@ -414,9 +393,6 @@ export function dismissSplash(options = {}) {
     endScrollHandoff();
     abortLetterShuffle(scrollHintTextEl);
     splashEl.hidden = true;
-    // sun-map.js is imported lazily (boot-map.js / requestIdleCallback), so its
-    // splash-dismissed listener may not be registered yet on a fast scroll-past.
-    // Record the dismissal so a late listener can still run the home entrance.
     globalThis.__SPLASH_DISMISSED__ = true;
     globalThis.dispatchEvent(new CustomEvent("splash-dismissed"));
   }, CONFIG.dismissDurationMs);
@@ -521,13 +497,6 @@ function applyIntroTypography() {
   introEl.append(link, monoSpace, document.createTextNode(restTyped));
 }
 
-function applyQuoteColor(mode) {
-  if (!splashEl) return;
-  const normalized = mode === "light" ? "light" : "dark";
-  splashEl.classList.toggle("is-quote-light", normalized === "light");
-  splashEl.classList.toggle("is-quote-dark", normalized === "dark");
-}
-
 /** Fisher–Yates shuffle — random playback order on each page load. */
 function shuffleSlides(slides) {
   const result = slides.slice();
@@ -563,13 +532,7 @@ async function initSplash() {
   syncGridCssVars();
   initLetterShuffle();
   applyIntroTypography();
-  updateSplashBand();
   addScrollListeners();
-
-  // Fonts change the wrapped line count, so re-measure once they're ready.
-  if (document.fonts?.ready) {
-    document.fonts.ready.then(() => updateSplashBand()).catch(() => {});
-  }
 
   try {
     const config = await loadSplashConfig();
@@ -591,9 +554,8 @@ async function initSplash() {
     "resize",
     () => {
       syncGridCssVars();
-      updateSplashBand();
       if (!active) return;
-      clearPixelation();
+      applyRestingPixelation(getCurrentSlideImage());
     },
     { passive: true }
   );
