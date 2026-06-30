@@ -48,6 +48,10 @@ import {
   hideScrollHint,
 } from "./sun-home-scroll-hint.js";
 import {
+  getActiveHomeScrollMode,
+  initHomeScrollDebugPanel,
+} from "./home-scroll-mode.js";
+import {
   bindLetterShuffleDelegation,
   getLetterShuffleOriginal,
   initLetterShuffle,
@@ -759,6 +763,12 @@ let snapAnimTargetIndex = null;
  */
 let fineGestureActive = false;
 let fineGestureAnchorIndex = 0;
+/** Glide-mode wheel tuning — merged into scroll physics while active. */
+let wheelScrollLayoutOverrides = null;
+/** Mouse glide/roll modes always settle with easeOutCubic (no roulette bounce). */
+let forceEaseOutSnap = false;
+/** @type {(() => void) | null} */
+let homeScrollDebugSyncVisibility = null;
 let overviewProgress = 0;
 
 function resolveLayoutOverview(layout = currentLayout) {
@@ -1464,39 +1474,46 @@ function onArcScrollSettled() {
   }
 }
 
+function getWheelScrollConfig() {
+  return wheelScrollLayoutOverrides
+    ? { ...LAYOUT, ...wheelScrollLayoutOverrides }
+    : LAYOUT;
+}
+
 function applyWheelScroll(deltaY, now = performance.now()) {
+  const cfg = getWheelScrollConfig();
   const abs = Math.abs(deltaY);
   const sign = Math.sign(deltaY) || 1;
 
   let accelMult = 1;
-  if (abs > LAYOUT.scrollFineThresholdPx) {
-    const excess = abs - LAYOUT.scrollFineThresholdPx;
+  if (abs > cfg.scrollFineThresholdPx) {
+    const excess = abs - cfg.scrollFineThresholdPx;
     accelMult =
       1 +
       Math.min(
-        LAYOUT.scrollMaxAccel - 1,
-        (excess * LAYOUT.scrollAccelFactor) ** 1.1 * abs
+        cfg.scrollMaxAccel - 1,
+        (excess * cfg.scrollAccelFactor) ** 1.1 * abs
       );
   }
 
   const dt = lastWheelAt > 0 ? now - lastWheelAt : 100;
-  if (dt > 0 && dt < LAYOUT.scrollBurstWindowMs) {
+  if (dt > 0 && dt < cfg.scrollBurstWindowMs) {
     wheelBurstEnergy = Math.min(1, wheelBurstEnergy + 0.22);
   } else {
     wheelBurstEnergy *= 0.42;
   }
 
-  const burstMult = 1 + wheelBurstEnergy * (LAYOUT.scrollBurstBoost - 1);
-  const delta = sign * abs * LAYOUT.scrollSensitivity * accelMult * burstMult;
+  const burstMult = 1 + wheelBurstEnergy * (cfg.scrollBurstBoost - 1);
+  const delta = sign * abs * cfg.scrollSensitivity * accelMult * burstMult;
 
   const instantVel = (delta / Math.max(8, dt)) * 16.67;
   scrollVelocity =
-    scrollVelocity * (1 - LAYOUT.scrollMomentumBlend) +
-    instantVel * LAYOUT.scrollMomentumBlend;
+    scrollVelocity * (1 - cfg.scrollMomentumBlend) +
+    instantVel * cfg.scrollMomentumBlend;
   scrollVelocity = clamp(
     scrollVelocity,
-    -LAYOUT.scrollMomentumMaxVelocity,
-    LAYOUT.scrollMomentumMaxVelocity
+    -cfg.scrollMomentumMaxVelocity,
+    cfg.scrollMomentumMaxVelocity
   );
 
   lastWheelAt = now;
@@ -1535,10 +1552,11 @@ function getTermNavSnapDurationMs(sourceGroupIndex, targetGroupIndex, arc) {
 }
 
 function applyScrollDrag(velocity, dtMs) {
+  const cfg = getWheelScrollConfig();
   const dtSec = dtMs / 1000;
   const speed = Math.abs(velocity);
   if (speed < 1e-8) return 0;
-  const decayRate = LAYOUT.scrollDragLinear + LAYOUT.scrollDragQuadratic * speed;
+  const decayRate = cfg.scrollDragLinear + cfg.scrollDragQuadratic * speed;
   return velocity * Math.exp(-decayRate * dtSec);
 }
 
@@ -1582,7 +1600,18 @@ function ensureMomentumLoop() {
         settleSnapIndex = null;
         scrollVelocity = 0;
         momentumFrame = null;
-        animateSnapTo(idx, arc, { startVelocity: handoffVelocity });
+        if (forceEaseOutSnap) {
+          forceEaseOutSnap = false;
+          wheelScrollLayoutOverrides = null;
+          fineGestureActive = false;
+          animateSnapTo(idx, arc, {
+            startVelocity: 0,
+            ease: easeOutCubic,
+            durationMs: LAYOUT.scrollFineSettleMs,
+          });
+        } else {
+          animateSnapTo(idx, arc, { startVelocity: handoffVelocity });
+        }
         return;
       }
 
@@ -1619,6 +1648,28 @@ function snapToNearest(arc) {
   const idx = settleSnapIndex ?? resolveSnapIndex(arc, velocity);
   settleSnapIndex = null;
   scrollVelocity = 0;
+
+  if (forceEaseOutSnap) {
+    forceEaseOutSnap = false;
+    wheelScrollLayoutOverrides = null;
+    let targetIdx = idx;
+    if (fineGestureActive) {
+      const net = scrollOffset - snapFract(arc) - fineGestureAnchorIndex;
+      let step = Math.round(net);
+      if (step === 0 && Math.abs(net) >= LAYOUT.scrollFineCommitDeadband) {
+        step = Math.sign(net);
+      }
+      targetIdx = fineGestureAnchorIndex + step;
+    }
+    fineGestureActive = false;
+    animateSnapTo(targetIdx, arc, {
+      startVelocity: 0,
+      ease: easeOutCubic,
+      durationMs: LAYOUT.scrollFineSettleMs,
+    });
+    return;
+  }
+
   // Gentle/slow settles (no real momentum left) land with a quick easeOutCubic
   // instead of the bouncy roulette ease, so a small scroll glides into the row.
   if (Math.abs(velocity) < LAYOUT.scrollMomentumMinVelocity) {
@@ -15139,6 +15190,7 @@ function finalizeRender(layout) {
   } else {
     stopTimelineTicksLoop();
   }
+  homeScrollDebugSyncVisibility?.();
 }
 
 function render(layout) {
@@ -16557,6 +16609,82 @@ function isMouseWheelEvent(event) {
   );
 }
 
+function applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc) {
+  const now = performance.now();
+  const dir = Math.sign(wheelDeltaY) || 1;
+  if (
+    now - lastArcNotchAt < LAYOUT.mouseNotchCooldownMs &&
+    dir === lastArcNotchDir
+  ) {
+    lastWheelAt = now;
+    return true;
+  }
+  lastArcNotchAt = now;
+  lastArcNotchDir = dir;
+  scrollVelocity = 0;
+  fineGestureActive = false;
+  lastWheelAt = now;
+  const base = inFlightTarget ?? resolveSnapIndex(arc, 0);
+  animateSnapTo(base - dir, arc, {
+    startVelocity: 0,
+    ease: easeOutCubic,
+    durationMs: LAYOUT.scrollFineSettleMs,
+  });
+  return true;
+}
+
+function applyMouseWheelGlide(wheelDeltaY, arc) {
+  lastWheelWasNotch = false;
+  const mode = getActiveHomeScrollMode();
+  wheelScrollLayoutOverrides = mode.layoutOverrides ?? null;
+  forceEaseOutSnap = true;
+
+  const delta = applyWheelScroll(wheelDeltaY);
+  scrollOffset -= delta;
+  updateActiveFromScroll(arc);
+  render(arc);
+
+  fineGestureActive = false;
+  ensureMomentumLoop();
+  scheduleSnapEnd(arc);
+  return true;
+}
+
+function applyMouseWheelRoll(wheelDeltaY, arc) {
+  lastWheelWasNotch = false;
+  scrollVelocity = 0;
+  wheelScrollLayoutOverrides = null;
+  forceEaseOutSnap = true;
+
+  const mode = getActiveHomeScrollMode();
+  const sensitivity = mode.rollSensitivity ?? 0.012;
+
+  if (!fineGestureActive) {
+    fineGestureActive = true;
+    fineGestureAnchorIndex = resolveSnapIndex(arc, 0);
+  }
+
+  scrollOffset -= wheelDeltaY * sensitivity;
+  lastWheelAt = performance.now();
+  updateActiveFromScroll(arc);
+  render(arc);
+  scheduleSnapEnd(arc);
+  return true;
+}
+
+function applyMouseWheelByMode(wheelDeltaY, inFlightTarget, arc) {
+  const mode = getActiveHomeScrollMode();
+  switch (mode.mouseHandling) {
+    case "glide":
+      return applyMouseWheelGlide(wheelDeltaY, arc);
+    case "roll":
+      return applyMouseWheelRoll(wheelDeltaY, arc);
+    case "discrete":
+    default:
+      return applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc);
+  }
+}
+
 function applyArcWheelDelta(deltaY, { fromSplashHandoff = false, isMouseWheel = false } = {}) {
   if (!currentLayout || isFocusActive() || isTermNavigating()) return false;
 
@@ -16587,21 +16715,17 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false, isMouseWheel = 
       ? LAYOUT.scrollFineThresholdPx
       : deltaY;
 
-  // A detected mouse wheel is always a discrete one-row impulse, even when its
-  // accelerated delta is large enough to otherwise fall into the momentum path
-  // (that overshoot was the iMac "jumps to the top" behavior). Trackpads are
-  // never flagged here and keep the existing notch/momentum handling.
-  lastWheelWasNotch = isMouseWheel || isWheelNotch(wheelDeltaY);
+  if (isMouseWheel && !fromSplashHandoff) {
+    lastWheelWasNotch = true;
+    return applyMouseWheelByMode(wheelDeltaY, inFlightTarget, currentLayout);
+  }
+
+  // Trackpad / splash handoff — notch detection by delta magnitude only.
+  lastWheelWasNotch = isWheelNotch(wheelDeltaY);
 
   if (lastWheelWasNotch && !fromSplashHandoff) {
-    // Discrete mouse-wheel notch → advance exactly one row per impulse. A single
-    // slow notch reliably moves one row (the momentum coast used to brake before
-    // crossing the row boundary, so it felt stuck); spinning fast chains from the
-    // in-flight target, so the wheel rotates further the quicker you scroll.
     const now = performance.now();
     const dir = Math.sign(wheelDeltaY) || 1;
-    // Fold a single notch's burst (and accelerated big deltas) into one step so
-    // the active row advances exactly one position instead of leaping upward.
     if (
       now - lastArcNotchAt < LAYOUT.mouseNotchCooldownMs &&
       dir === lastArcNotchDir
@@ -17322,6 +17446,9 @@ async function init() {
     exposeBleedTextLabApi();
     exposeTimelineLabApi();
     exposeFold3CentreTuner();
+
+    const debugPanel = initHomeScrollDebugPanel({ isHomeView: isAtHomeView });
+    homeScrollDebugSyncVisibility = debugPanel?.syncVisibility ?? null;
 
     new ResizeObserver(() => {
       syncGridCssVars(viewport);
