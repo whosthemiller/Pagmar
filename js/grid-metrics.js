@@ -179,4 +179,36 @@ export function syncGridCssVars(containerEl = getGridContainer()) {
     "--viewport-height-scale",
     String(getViewportHeightScale(viewportHeight))
   );
+
+  updateTypographyDebugBadge(metrics.viewportWidth);
+}
+
+/**
+ * TEMP debug badge — confirms the live typography scale per viewport width so we
+ * can verify the deployed build (not a cached one) is running. Remove once the
+ * large-desktop sizing is dialed in.
+ */
+function updateTypographyDebugBadge(viewportWidth) {
+  if (typeof document === "undefined") return;
+  let badge = document.getElementById("type-scale-debug-badge");
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.id = "type-scale-debug-badge";
+    badge.style.cssText = [
+      "position:fixed",
+      "bottom:8px",
+      "right:8px",
+      "z-index:99999",
+      "padding:4px 8px",
+      "font:12px/1.3 ui-monospace,Menlo,monospace",
+      "color:#fff",
+      "background:rgba(200,0,0,0.85)",
+      "border-radius:4px",
+      "pointer-events:none",
+      "white-space:pre",
+    ].join(";");
+    document.body.appendChild(badge);
+  }
+  const scale = getMapTypographyScale(viewportWidth);
+  badge.textContent = `w:${Math.round(viewportWidth)} scale:${scale.toFixed(3)} nav:${(18 * scale).toFixed(1)}px`;
 }
