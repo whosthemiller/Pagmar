@@ -14,8 +14,8 @@ const WIDE_SCREEN_START_WIDTH = 2560;
  */
 const LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH = 1512;
 const LARGE_DESKTOP_TYPOGRAPHY_TRIM_FULL_WIDTH = 2048;
-/** Fraction of the above-reference growth retained at full ramp (0.5 = half). */
-const LARGE_DESKTOP_GROWTH_KEEP = 0.5;
+/** Fraction of the above-reference growth retained at full ramp (0.4 = 40%). */
+const LARGE_DESKTOP_GROWTH_KEEP = 0.4;
 /** Legacy multiplicative trim, still used by the splash poster (vw-based). */
 const LARGE_DESKTOP_TYPOGRAPHY_TRIM = 0.92;
 /**
