@@ -84,6 +84,7 @@ export function initHomeScrollDebugPanel(options = {}) {
 
   const isHomeView = options.isHomeView ?? (() => true);
   const buttons = [...root.querySelectorAll("[data-scroll-mode]")];
+  const statusEl = root.querySelector(".home-scroll-debug__status");
 
   const syncActiveButton = () => {
     const active = getActiveHomeScrollModeId();
@@ -91,6 +92,9 @@ export function initHomeScrollDebugPanel(options = {}) {
       const selected = button.dataset.scrollMode === active;
       button.classList.toggle("is-active", selected);
       button.setAttribute("aria-pressed", selected ? "true" : "false");
+    }
+    if (statusEl) {
+      statusEl.textContent = `נבחר: ${getActiveHomeScrollMode().label}`;
     }
   };
 

@@ -3009,23 +3009,46 @@ line.letter-shuffle-underline {
   opacity: 0.75;
 }
 
+.home-scroll-debug__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .home-scroll-debug button {
   margin: 0;
   padding: 5px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 5px;
   background: transparent;
-  color: inherit;
+  color: #fff;
   font: inherit;
+  opacity: 0.55;
   cursor: pointer;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+
+.home-scroll-debug button:hover {
+  opacity: 0.85;
 }
 
 .home-scroll-debug button.is-active {
   border-color: #fff;
-  background: rgba(255, 255, 255, 0.18);
+  background: #fff;
+  color: #000;
+  font-weight: 700;
+  opacity: 1;
 }
 
 .home-scroll-debug button:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 2px;
+}
+
+.home-scroll-debug__status {
+  width: 100%;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #fff;
+  opacity: 0.9;
 }

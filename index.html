@@ -243,9 +243,12 @@
 
     <div id="home-scroll-debug" class="home-scroll-debug" aria-label="בחירת מצב גלילה">
       <span class="home-scroll-debug__title">גלילת עכבר</span>
-      <button type="button" data-scroll-mode="discrete">A דיסקרטי</button>
-      <button type="button" data-scroll-mode="glide">B גלישה</button>
-      <button type="button" data-scroll-mode="roll">C גלגול</button>
+      <div class="home-scroll-debug__buttons">
+        <button type="button" data-scroll-mode="discrete">A דיסקרטי</button>
+        <button type="button" data-scroll-mode="glide">B גלישה</button>
+        <button type="button" data-scroll-mode="roll">C גלגול</button>
+      </div>
+      <span class="home-scroll-debug__status" aria-live="polite"></span>
     </div>
 
     <script type="module" src="js/idle-refresh.js"></script>
