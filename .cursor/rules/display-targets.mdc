@@ -1,0 +1,13 @@
+---
+description: Important display targets for responsive layout work
+alwaysApply: true
+---
+
+# Display Targets
+
+When the user refers to computer-specific layout or viewport changes in this project, use these saved targets:
+
+- "המחשב שלי" / my computer: viewport `1512x949`, `devicePixelRatio` 2, screen `1512x982`.
+- "מחשב ההגשה" / submission computer: viewport `2048x1152`, `devicePixelRatio` 2, screen `2048x1152`.
+
+The submission computer is the most important target. Prioritize it when there is a responsive layout tradeoff.
