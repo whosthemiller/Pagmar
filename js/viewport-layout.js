@@ -5,8 +5,18 @@ export const VIEWPORT_DESIGN = {
 };
 
 const WIDE_SCREEN_START_WIDTH = 2560;
-const LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH = 1728;
-const LARGE_DESKTOP_TYPOGRAPHY_TRIM_FULL_WIDTH = 2240;
+/**
+ * Large-desktop typography easing. Past the MacBook reference width the unified
+ * grid scale grows a little too eagerly (the nav bar and the sun-wheel terms
+ * read oversized on an iMac). Rather than scale text up by the full grid ratio,
+ * keep only a fraction of that growth on big screens — a "moderate" setting that
+ * stays noticeably larger than the MacBook reference without ballooning.
+ */
+const LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH = 1512;
+const LARGE_DESKTOP_TYPOGRAPHY_TRIM_FULL_WIDTH = 2048;
+/** Fraction of the above-reference growth retained at full ramp (0.5 = half). */
+const LARGE_DESKTOP_GROWTH_KEEP = 0.5;
+/** Legacy multiplicative trim, still used by the splash poster (vw-based). */
 const LARGE_DESKTOP_TYPOGRAPHY_TRIM = 0.92;
 /**
  * Above 2560px the typography cap is lifted toward the viewport-width ratio
@@ -27,9 +37,8 @@ export function clampScalar(value, min, max) {
 }
 
 /**
- * On large desktop displays the proportional grid scale reads a little too
- * generous. Ease in a subtle type trim after common laptop widths so the
- * MacBook reference remains unchanged while iMac-sized screens feel calmer.
+ * Mild multiplicative trim kept for the splash poster, whose type scales off
+ * `vw` rather than the column grid. Eases in past the reference width.
  */
 export function getLargeDesktopTypographyTrim(
   viewportWidth = typeof window !== "undefined" ? window.innerWidth : VIEWPORT_DESIGN.width
@@ -41,6 +50,29 @@ export function getLargeDesktopTypographyTrim(
     1
   );
   return 1 - progress * (1 - LARGE_DESKTOP_TYPOGRAPHY_TRIM);
+}
+
+/**
+ * Fraction of the above-reference grid growth to retain at the current width.
+ * Returns 1 at/below the MacBook reference (no change) and ramps down toward
+ * `LARGE_DESKTOP_GROWTH_KEEP` on iMac-sized screens, so nav + wheel text grow
+ * only partway from the reference size instead of by the full grid ratio.
+ */
+export function getLargeDesktopGrowthKeep(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : VIEWPORT_DESIGN.width
+) {
+  const progress = clampScalar(
+    (viewportWidth - LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH) /
+      (LARGE_DESKTOP_TYPOGRAPHY_TRIM_FULL_WIDTH - LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH),
+    0,
+    1
+  );
+  return 1 - progress * (1 - LARGE_DESKTOP_GROWTH_KEEP);
+}
+
+/** Ease a raw unified scale toward 1 on large screens (keeps part of growth). */
+export function easeLargeDesktopScale(unifiedScale, viewportWidth) {
+  return 1 + (unifiedScale - 1) * getLargeDesktopGrowthKeep(viewportWidth);
 }
 
 /**
@@ -114,9 +146,8 @@ export function getMapTypographyScale(
   // screen itself and never overflows on true 4K canvases.
   const ultraWideCap = widthRatio * ULTRA_WIDE_TYPOGRAPHY_SAFETY;
   const maxScale = 1.6 + ultraWideProgress * Math.max(0, ultraWideCap - 1.6);
-  return (
-    clampScalar(rawScale, 1, maxScale) * getLargeDesktopTypographyTrim(viewportWidth)
-  );
+  const unified = clampScalar(rawScale, 1, maxScale);
+  return easeLargeDesktopScale(unified, viewportWidth);
 }
 
 /** Smaller dimension of the reference viewport — the overview ring's design basis. */
@@ -146,12 +177,13 @@ export function getOverviewTypographyScale(
 ) {
   const minDimRatio = Math.min(viewportWidth, viewportHeight) / DESIGN_MIN_DIM;
   const mapScale = getMapTypographyScale(viewportWidth);
-  const desktopTrim = getLargeDesktopTypographyTrim(viewportWidth);
-  return clampScalar(
-    minDimRatio * OVERVIEW_RING_FONT_TRIM * desktopTrim,
-    1,
-    mapScale
+  // The ring labels share the eased map cap, so they calm down on large screens
+  // together with the rest of the wheel instead of outgrowing it.
+  const eased = easeLargeDesktopScale(
+    minDimRatio * OVERVIEW_RING_FONT_TRIM,
+    viewportWidth
   );
+  return clampScalar(eased, 1, mapScale);
 }
 
 /** Scale a design-time pixel constant for the current viewport height. */
