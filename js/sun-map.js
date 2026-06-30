@@ -352,10 +352,10 @@ const LAYOUT = {
   termGap: 22,
   fontSize: 30,
   charWidth: 20,
-  scrollSensitivity: 0.014,
+  scrollSensitivity: 0.016,
   scrollFineThresholdPx: 45,
-  scrollAccelFactor: 0.000022,
-  scrollMaxAccel: 12,
+  scrollAccelFactor: 0.00003,
+  scrollMaxAccel: 18,
   scrollBurstWindowMs: 85,
   scrollBurstBoost: 2,
   /** Viscous drag (1/s) — higher = heavier roulette, slows sooner. */
@@ -363,7 +363,7 @@ const LAYOUT = {
   /** Speed-proportional drag — extra braking while still spinning fast. */
   scrollDragQuadratic: 4.5,
   scrollMomentumMinVelocity: 0.00065,
-  scrollMomentumMaxVelocity: 1.4,
+  scrollMomentumMaxVelocity: 1.9,
   scrollMomentumBlend: 0.72,
   /** Dead band around midpoint — prevents flip-flop between two snap rows. */
   scrollSnapTieBand: 0.06,
@@ -377,7 +377,9 @@ const LAYOUT = {
   idleRotateRestartDelayMs: 1200,
   snapDurationMs: 1050,
   snapDebounceMs: 140,
-  snapOvershoot: 5.8,
+  snapOvershoot: 2.4,
+  /** Quick, bounce-free settle for gentle/slow scrolls (ms). */
+  scrollFineSettleMs: 360,
   overviewHitRadiusNormal: 0.86,
   overviewHitRadiusOverview: 0.58,
   /**
@@ -533,7 +535,7 @@ const LAYOUT = {
   termMetaValueColumnFromLeft: 3,
   termMetaHeadingColumns: 2,
   termMetaValueColumns: 3,
-  termMetaRowGap: 22,
+  termMetaRowGap: 14,
   titleRowImageColumns: 2,
   /** Active-row fixed thumbnail width in grid columns (slightly larger than inline hover). */
   titleRowFixedImageColumns: 3,
@@ -1580,6 +1582,16 @@ function snapToNearest(arc) {
   const idx = settleSnapIndex ?? resolveSnapIndex(arc, velocity);
   settleSnapIndex = null;
   scrollVelocity = 0;
+  // Gentle/slow settles (no real momentum left) land with a quick easeOutCubic
+  // instead of the bouncy roulette ease, so a small scroll glides into the row.
+  if (Math.abs(velocity) < LAYOUT.scrollMomentumMinVelocity) {
+    animateSnapTo(idx, arc, {
+      startVelocity: 0,
+      ease: easeOutCubic,
+      durationMs: LAYOUT.scrollFineSettleMs,
+    });
+    return;
+  }
   animateSnapTo(idx, arc, { startVelocity: velocity });
 }
 
@@ -2263,12 +2275,7 @@ function isTermPageAtSnapStop(scrollTop, stop, viewportHeight) {
 }
 
 function shouldTermPagePinSnap() {
-  if (!viewport || !isViewportTermScrollable() || !isFocusActive()) return false;
-  if (isTermNavigating() || termScrollResetFrame) return false;
-  if (!isTermPageScrollBgMode() || focusState?.phase !== "locked") return false;
-  if (viewport.classList.contains("is-term-font-scrambling")) return false;
-  if (!termPageSelectedFontSettled) return false;
-  return true;
+  return false;
 }
 
 function cancelTermPagePinSnapMotion() {
@@ -7268,42 +7275,14 @@ function layoutTermPageLabelNav(imageTopInPage, imageHeight, term) {
 
 function refreshTermPageLabelNavLayout() {
   if (!termPageEl?.classList.contains("is-scroll-content")) return;
+  if (!currentLayout) return;
   const term = groups[focusState?.activeIndex]?.terms[focusState?.clickedIndex];
-  if (!term || !termDefinitionEl) return;
+  if (!term) return;
 
-  const viewportHeight = getLiveViewportHeight();
-  const definitionHeight = termDefinitionEl.offsetHeight;
-  const imagesBlockTop = getTermPageFold2ImageBlockTopInPagePx(viewportHeight);
-  const imagesHeight = termImagesEl?.offsetHeight || 0;
-  const imagesBottomInPage = imagesBlockTop + imagesHeight;
-
-  let fold2BottomInPage = imagesBottomInPage;
-  const pageTop = parseFloat(termPageEl.style.top) || 0;
-  if (termMetaEl && !termMetaEl.hidden) {
-    fold2BottomInPage = Math.max(
-      fold2BottomInPage,
-      termMetaEl.offsetTop + termMetaEl.offsetHeight - pageTop
-    );
-  }
-  const fold2Pad = Math.max(
-    0,
-    getTermPageFold2ChapterFloorPx(viewportHeight) - fold2BottomInPage
-  );
-  const fold2EndInPage = imagesBottomInPage + fold2Pad;
   const scrollTopBefore = viewport?.scrollTop ?? 0;
-  const detailsBottom = layoutTermPageScrollDetails(fold2EndInPage, term, true);
-  const contentBottom = applyTermPageFold3ChapterPad(
-    fold2EndInPage,
-    detailsBottom,
-    viewportHeight
-  );
-  termPageEl.style.minHeight = `${Math.max(definitionHeight, contentBottom)}px`;
-  if (currentLayout) {
-    applyViewportTermScrollBounds(currentLayout.viewportHeight);
-    if (viewport && Math.abs(viewport.scrollTop - scrollTopBefore) > 1) {
-      viewport.scrollTop = scrollTopBefore;
-    }
-    syncTermHeaderPinState(currentLayout);
+  layoutTermPageScrollContent(currentLayout, term, false, { skipAsyncReveal: true });
+  if (viewport && Math.abs(viewport.scrollTop - scrollTopBefore) > 1) {
+    viewport.scrollTop = scrollTopBefore;
   }
 }
 
@@ -10139,6 +10118,18 @@ function getTermPageScrollMetaColumnConfig() {
       valueColumns: Math.min(cfg.metaValueColumns, GRID.columns - cfg.metaHeadingColumns),
       valueColumnFromRight,
       metaBelowImage: true,
+      metaTopAligned: false,
+    };
+  }
+
+  if (cfg.metaHeadingColumnFromRight != null) {
+    return {
+      headingColumns: cfg.metaHeadingColumns,
+      headingColumnFromRight: cfg.metaHeadingColumnFromRight,
+      valueColumns: cfg.metaValueColumns,
+      valueColumnFromRight: cfg.metaValueColumnFromRight,
+      metaBelowImage: false,
+      metaTopAligned: true,
     };
   }
 
@@ -10154,16 +10145,37 @@ function getTermPageScrollMetaColumnConfig() {
     valueColumns: Math.min(cfg.metaValueColumns, valueEndFromLeft),
     valueColumnFromRight: GRID.columns - valueEndFromLeft,
     metaBelowImage: false,
+    metaTopAligned: false,
   };
 }
 
-function getTermPageScrollDetailsColumnConfig() {
+function getTermPageEmphasizeColumnConfig() {
   const cfg = termPageScrollLayout;
   return {
-    headingColumns: cfg.scrollDetailsHeadingColumns,
-    headingColumnFromRight: cfg.imageColumnFromRight,
-    valueColumns: cfg.scrollDetailsValueColumns,
-    valueColumnFromRight: cfg.scrollDetailsValueColumnFromRight,
+    headingColumns: cfg.emphasizeHeadingColumns,
+    headingColumnFromRight: cfg.emphasizeHeadingColumnFromRight,
+    valueColumns: cfg.emphasizeValueColumns,
+    valueColumnFromRight: cfg.emphasizeValueColumnFromRight,
+  };
+}
+
+function getTermPageObscureColumnConfig() {
+  const cfg = termPageScrollLayout;
+  return {
+    headingColumns: cfg.obscureHeadingColumns,
+    headingColumnFromRight: cfg.obscureHeadingColumnFromRight,
+    valueColumns: cfg.obscureValueColumns,
+    valueColumnFromRight: cfg.obscureValueColumnFromRight,
+  };
+}
+
+function getTermPageLabelRowColumnConfig() {
+  const cfg = termPageScrollLayout;
+  return {
+    headingColumns: cfg.labelRowHeadingColumns,
+    headingColumnFromRight: cfg.labelRowHeadingColumnFromRight,
+    valueColumns: cfg.labelRowValueColumns,
+    valueColumnFromRight: cfg.labelRowValueColumnFromRight,
   };
 }
 
@@ -10271,21 +10283,13 @@ function layoutTermPageDetailsImage(detailsTopInPage, term, rebuild = true) {
   return termDetailsImageEl.offsetHeight;
 }
 
-function layoutTermPageScrollDetails(fold2EndInPage, term, contentOnly = false) {
-  if (!termDetailsEl) return fold2EndInPage;
+function layoutTermPageScrollEmphasizeObscure(startTopInPage, term, contentOnly = false) {
+  if (!termDetailsEl) return 0;
 
-  const columnConfig = getTermPageScrollDetailsColumnConfig();
-  const blockGap = getTermPageScrollBlockGapPx(getLiveViewportHeight());
-  const detailsTop = fold2EndInPage + blockGap;
+  const emphasizeConfig = getTermPageEmphasizeColumnConfig();
+  const obscureConfig = getTermPageObscureColumnConfig();
 
-  const detailsImageHeight = layoutTermPageDetailsImage(
-    detailsTop,
-    term,
-    !contentOnly
-  );
-  const labelNavExtent = layoutTermPageLabelNav(detailsTop, detailsImageHeight, term);
-
-  termDetailsEl.style.top = `${detailsTop}px`;
+  termDetailsEl.style.top = `${startTopInPage}px`;
   termDetailsEl.style.left = "0";
   termDetailsEl.style.width = "100%";
 
@@ -10293,43 +10297,69 @@ function layoutTermPageScrollDetails(fold2EndInPage, term, contentOnly = false) 
     termEmphasizesEl,
     term.emphasizes,
     term,
-    columnConfig,
+    emphasizeConfig,
     { layoutOnly: contentOnly }
   );
   const hasObscures = updateTermPageScrollDetailRow(
     termObscuresEl,
     term.obscures,
     term,
-    columnConfig,
+    obscureConfig,
     { layoutOnly: contentOnly }
   );
 
-  if (!hasEmphasizes && !hasObscures && !detailsImageHeight) {
+  if (!hasEmphasizes && !hasObscures) {
     termDetailsEl.hidden = true;
     termDetailsEl.style.height = "";
-    return fold2EndInPage;
+    return 0;
   }
 
-  termDetailsEl.hidden = !hasEmphasizes && !hasObscures;
+  termDetailsEl.hidden = false;
+  termEmphasizesEl.style.top = "0";
+  termObscuresEl.style.top = "0";
 
-  let rowTop = 0;
-  if (hasEmphasizes) {
-    termEmphasizesEl.style.top = `${rowTop}px`;
-    rowTop += termEmphasizesEl.offsetHeight + LAYOUT.termPageScrollDetailsRowGap;
-  }
-  if (hasObscures) {
-    termObscuresEl.style.top = `${rowTop}px`;
-    rowTop += termObscuresEl.offsetHeight;
-  } else if (hasEmphasizes) {
-    rowTop -= LAYOUT.termPageScrollDetailsRowGap;
-  }
-
-  termDetailsEl.style.height = hasEmphasizes || hasObscures ? `${rowTop}px` : "";
-  const detailsBlockBottom = detailsTop + Math.max(rowTop, labelNavExtent);
-  return Math.max(fold2EndInPage, detailsBlockBottom);
+  const rowHeight = Math.max(
+    hasEmphasizes ? termEmphasizesEl.offsetHeight : 0,
+    hasObscures ? termObscuresEl.offsetHeight : 0
+  );
+  termDetailsEl.style.height = `${rowHeight}px`;
+  return rowHeight;
 }
 
-function layoutTermPageScrollMeta(imageTopPx, imageHeightPx, term, contentOnly = false) {
+function layoutTermPageScrollLabelRows(startTopInPage, term, contentOnly = false) {
+  resetTermPageLabelNav();
+
+  const columnConfig = getTermPageLabelRowColumnConfig();
+  const rowGap = LAYOUT.termPageScrollDetailsRowGap;
+  const rows = [
+    { el: termUsersEl, text: term.usedBy },
+    { el: termContextsEl, text: term.contexts },
+    { el: termPeriodEl, text: term.period },
+  ];
+
+  let rowTop = 0;
+  let visibleCount = 0;
+
+  rows.forEach(({ el, text }) => {
+    if (!el) return;
+    const hasContent = updateTermPageScrollDetailRow(el, text, term, columnConfig, {
+      layoutOnly: contentOnly,
+    });
+    if (!hasContent) return;
+    el.style.position = "absolute";
+    el.style.left = "0";
+    el.style.width = "100%";
+    el.style.marginTop = "0";
+    el.style.top = `${startTopInPage + rowTop}px`;
+    rowTop += el.offsetHeight + rowGap;
+    visibleCount += 1;
+  });
+
+  if (visibleCount === 0) return 0;
+  return rowTop - rowGap;
+}
+
+function layoutTermPageScrollMeta(pageTopPx, imageTopPx, imageHeightPx, term, contentOnly = false) {
   if (!termMetaEl) return;
 
   const columnConfig = getTermPageScrollMetaColumnConfig();
@@ -10338,6 +10368,7 @@ function layoutTermPageScrollMeta(imageTopPx, imageHeightPx, term, contentOnly =
   termMetaEl.style.right = "0";
   termMetaEl.hidden = false;
   termMetaEl.classList.toggle("is-meta-below-image", Boolean(columnConfig.metaBelowImage));
+  termMetaEl.classList.toggle("is-meta-top-aligned", Boolean(columnConfig.metaTopAligned));
 
   updateTermMetaRow(
     termMetaTypeEl,
@@ -10382,6 +10413,8 @@ function layoutTermPageScrollMeta(imageTopPx, imageHeightPx, term, contentOnly =
     termMetaEl.style.top = `${Math.round(
       imageTopPx + imageHeightPx + getTermPageMetaBelowImageGapPx(viewportHeight)
     )}px`;
+  } else if (columnConfig.metaTopAligned) {
+    termMetaEl.style.top = `${Math.round(pageTopPx)}px`;
   } else {
     termMetaEl.style.top = `${Math.round(imageTopPx + imageHeightPx - metaHeight)}px`;
   }
@@ -10390,7 +10423,7 @@ function layoutTermPageScrollMeta(imageTopPx, imageHeightPx, term, contentOnly =
 
 function updateTermPageScrollImages(
   term,
-  definitionHeight,
+  imagesTop,
   viewportHeight,
   imageHeight,
   rebuild = true
@@ -10398,13 +10431,11 @@ function updateTermPageScrollImages(
   if (!termImagesEl) return { imagesHeight: 0, imageBottom: 0 };
 
   const scrollCfg = termPageScrollLayout;
-  const definitionImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
   const imagesSpan = getGridSpanBounds(
     scrollCfg.imageColumns,
     scrollCfg.imageColumnFromRight,
     viewport
   );
-  const imagesTop = definitionHeight + definitionImageGap;
 
   if (rebuild) {
     let images = getTermImagesForDisplay(term.name);
@@ -10478,79 +10509,56 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   const imageHeight = getTermPageScrollImageHeightPx(viewportHeight, definitionHeight);
   viewport?.style.setProperty("--term-page-scroll-image-height", `${imageHeight}px`);
 
+  const imageTopInPage = pageTop;
+  layoutTermPageScrollMeta(pageTop, imageTopInPage, imageHeight, term, !termChanged);
+
+  const metaHeightInPage =
+    termMetaEl && !termMetaEl.hidden
+      ? termMetaEl.offsetTop + termMetaEl.offsetHeight - pageTop
+      : 0;
+  const headerBlockHeight = Math.max(definitionHeight, metaHeightInPage);
+
+  const imagesTop = headerBlockHeight + definitionImageGap;
   const { imagesHeight } = updateTermPageScrollImages(
     term,
-    definitionHeight,
+    imagesTop,
     viewportHeight,
     imageHeight,
     termChanged
   );
 
-  // Position the block at its natural (definition-stacked) spot first so the
-  // meta can be measured, then anchor the whole image+meta block to the foot of
-  // the fold on tall screens (pushing it down without resizing the image).
-  const imagesBlockTopNatural = definitionHeight + definitionImageGap;
-  layoutTermPageScrollMeta(
-    pageTop + imagesBlockTopNatural,
-    imageHeight,
+  const blockGap = getTermPageScrollBlockGapPx(viewportHeight);
+  let contentBottom = imagesTop + imagesHeight;
+
+  contentBottom += blockGap;
+  const detailsRowHeight = layoutTermPageScrollEmphasizeObscure(
+    contentBottom,
     term,
     !termChanged
   );
+  if (detailsRowHeight > 0) {
+    contentBottom += detailsRowHeight + blockGap;
+  } else {
+    contentBottom -= blockGap;
+  }
 
-  let naturalContentBottom = imagesBlockTopNatural + imagesHeight;
-  if (termMetaEl && !termMetaEl.hidden) {
-    naturalContentBottom = Math.max(
-      naturalContentBottom,
+  const detailsImageHeight = layoutTermPageDetailsImage(contentBottom, term, termChanged);
+  if (detailsImageHeight > 0) {
+    contentBottom += detailsImageHeight + blockGap;
+  }
+
+  const labelRowsHeight = layoutTermPageScrollLabelRows(contentBottom, term, !termChanged);
+  contentBottom += labelRowsHeight;
+
+  if (termMetaEl && !termMetaEl.hidden && termPageScrollLayout.metaBelowImage) {
+    layoutTermPageScrollMeta(pageTop, pageTop + imagesTop, imageHeight, term, true);
+    contentBottom = Math.max(
+      contentBottom,
       termMetaEl.offsetTop + termMetaEl.offsetHeight - pageTop
     );
   }
 
-  const fold2Drop = getTermPageFold2BottomAnchorDropPx(
-    viewportHeight,
-    naturalContentBottom,
-    pageTop
-  );
-  const imagesBlockTop = imagesBlockTopNatural + fold2Drop;
-  const imagesBottomInPage = imagesBlockTop + imagesHeight;
-  const imageTop = pageTop + imagesBlockTop;
-  if (fold2Drop > 0) {
-    termImagesEl.style.top = `${Math.round(imagesBlockTop)}px`;
-    layoutTermPageScrollMeta(imageTop, imageHeight, term, true);
-  }
-
-  let fold2BottomInPage = imagesBottomInPage;
-  if (termMetaEl && !termMetaEl.hidden) {
-    fold2BottomInPage = Math.max(
-      fold2BottomInPage,
-      termMetaEl.offsetTop + termMetaEl.offsetHeight - pageTop
-    );
-  }
-  const minFold2Chapter = getTermPageFold2ChapterMinPx(viewportHeight);
-  const fold2Pad = Math.max(0, minFold2Chapter - fold2BottomInPage);
-  let fold2EndInPage = imagesBottomInPage + fold2Pad;
-
-  let detailsBottom = layoutTermPageScrollDetails(fold2EndInPage, term, !termChanged);
-
-  // The page is still hidden here, so hasTermPageFold3Content() (which checks
-  // termPageEl.hidden) can't be trusted. Detect fold 3 from the layout result —
-  // the details layout returns a bottom past fold 2 only when it produced
-  // content — and, if present, grow the fold-2 chapter to the clear floor so
-  // fold 3 is pushed fully below the viewport at the fold-2 snap, then
-  // reposition the details so their actual style.top matches.
-  if (detailsBottom > fold2EndInPage) {
-    const clearFloor = getTermPageFold2ClearFloorPx(viewportHeight);
-    if (clearFloor > fold2EndInPage) {
-      fold2EndInPage = clearFloor;
-      detailsBottom = layoutTermPageScrollDetails(fold2EndInPage, term, true);
-    }
-  }
-
-  const contentBottom = applyTermPageFold3ChapterPad(
-    fold2EndInPage,
-    detailsBottom,
-    viewportHeight
-  );
-  termPageEl.style.minHeight = `${Math.max(definitionHeight, contentBottom)}px`;
+  termPageEl.style.minHeight = `${Math.max(headerBlockHeight, contentBottom)}px`;
 
   termPageEl.hidden = false;
   termPageEl.classList.add("is-visible");
@@ -16378,7 +16386,7 @@ function easeRoulette(t) {
   const c1 = LAYOUT.snapOvershoot;
   const c3 = c1 + 1;
   const back = 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2;
-  const wobble = Math.sin(t * Math.PI * 2.4) * Math.max(0, 1 - t * 0.95) ** 1.4 * 0.16;
+  const wobble = Math.sin(t * Math.PI * 2.4) * Math.max(0, 1 - t * 0.95) ** 1.4 * 0.06;
   return back + wobble;
 }
 
@@ -16473,8 +16481,11 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
     Math.abs(wheelDeltaY) < LAYOUT.scrollFineThresholdPx &&
     Math.abs(scrollVelocity) < LAYOUT.scrollMomentumMinVelocity * 2;
   if (isFineScroll) {
+    // Gentle slow scroll: let the offset accumulate so the wheel rolls smoothly
+    // between rows, then settle to the nearest row once the user pauses. Snapping
+    // on every tiny delta used to rubber-band back to the current row (felt stuck).
     scrollVelocity = 0;
-    snapToNearest(currentLayout);
+    scheduleSnapEnd(currentLayout);
   } else {
     ensureMomentumLoop();
     scheduleSnapEnd(currentLayout);
@@ -16692,6 +16703,13 @@ async function rebuildAsync(preserveScroll = true) {
 function bindGridToggle() {
   if (!gridEl) return;
   gridEl.classList.add("is-hidden");
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "g" && event.key !== "G") return;
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+    gridEl.classList.toggle("is-hidden");
+  });
 }
 
 async function warmInitialViewImages(layout) {
@@ -17070,6 +17088,14 @@ async function init() {
     await runLoadingSegmentAsync("מכין תצוגה…", LOADING_WORK_WEIGHT.rebuild, 5000, async () => {
       await rebuildAsync(false);
     });
+
+    // Make the home arc scrollable the moment a layout exists, rather than only
+    // after the (artificially paced) loading sequence finishes binding below.
+    // The splash can be dismissed at any time and only hands off wheel events
+    // for ~550ms, so a first-time visitor who scrolls past the splash before
+    // loading completes would otherwise be left unable to scroll-to-explore.
+    // bindWheelScroll() is idempotent, so the later call is a no-op.
+    bindWheelScroll();
 
     // Timeline lab: snap straight into the timeline so the page opens on the
     // timeline itself — no splash, no home-map beat, no produced transition.

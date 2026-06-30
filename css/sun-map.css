@@ -54,10 +54,10 @@
   --sun-about-credits-font-size: calc(14px * var(--map-typography-scale));
   --sun-about-credits-line-height: calc(20px * var(--map-typography-scale));
   --sun-about-fonts-line-height: calc(22px * var(--map-typography-scale));
-  --term-page-definition-font-size: calc(32px * var(--map-typography-scale));
-  --term-page-definition-line-height: calc(42px * var(--map-typography-scale));
-  --term-page-meta-font-size: calc(16px * var(--map-typography-scale));
-  --term-page-meta-line-height: calc(22px * var(--map-typography-scale));
+  --term-page-definition-font-size: calc(18px * var(--map-typography-scale));
+  --term-page-definition-line-height: calc(22px * var(--map-typography-scale));
+  --term-page-meta-font-size: calc(14px * var(--map-typography-scale));
+  --term-page-meta-line-height: calc(18px * var(--map-typography-scale));
   --term-page-meta-narrow-font-size: calc(15px * var(--map-typography-scale));
   --term-page-meta-narrow-line-height: calc(21px * var(--map-typography-scale));
   --term-page-label-font-size: calc(18px * var(--map-typography-scale));
@@ -798,7 +798,7 @@ body,
 }
 
 .sun-term-meta__heading {
-  font-weight: 700;
+  font-weight: 500;
   pointer-events: none;
 }
 
@@ -889,7 +889,7 @@ body,
   margin: 6px 0 0;
   font-size: var(--term-page-caption-font-size);
   line-height: var(--term-page-caption-line-height);
-  text-align: right;
+  text-align: left;
 }
 
 .sun-term-page.is-scroll-content .sun-term-page__details {
@@ -913,6 +913,10 @@ body,
   position: absolute;
   top: 0;
   margin: 0;
+}
+
+.sun-term-page.is-scroll-content .sun-term-page__side-heading {
+  font-weight: 500;
 }
 
 .sun-term-page.is-scroll-content .sun-term-page__side-text {
@@ -1778,7 +1782,7 @@ img.sun-title-row-image__img.is-loaded {
 .sun-term-page__side-heading {
   margin: 0 0 8px;
   font-size: var(--term-page-side-font-size);
-  font-weight: 700;
+  font-weight: 500;
   line-height: var(--term-page-side-line-height);
   color: var(--ink);
   text-wrap: pretty;
@@ -1792,6 +1796,34 @@ img.sun-title-row-image__img.is-loaded {
   color: var(--ink);
   text-wrap: pretty;
   hyphens: none;
+}
+
+.sun-term-page.is-scroll-content .sun-term-page__label-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: 100%;
+  margin-top: 0;
+  pointer-events: none;
+}
+
+.sun-term-page.is-scroll-content .sun-term-page__label-row-text {
+  pointer-events: auto;
+}
+
+.sun-term-page.is-scroll-content .sun-term-page__label-row-heading,
+.sun-term-page.is-scroll-content .sun-term-page__label-row-text {
+  position: absolute;
+  top: 0;
+  margin: 0;
+}
+
+.sun-term-page.is-scroll-content .sun-term-page__label-row-heading {
+  font-weight: 500;
+}
+
+.sun-term-page.is-scroll-content .sun-term-page__label-row-text {
+  font-weight: 500;
 }
 
 .sun-term-page__label-row {

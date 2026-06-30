@@ -131,12 +131,8 @@ export function resetTimelineScrollHint() {
 }
 
 export function dismissTimelineScrollHint() {
-  if (scrollHintDismissedForSession || scrollHintDismissTimer != null) return;
-  scrollHintDismissTimer = window.setTimeout(() => {
-    scrollHintDismissTimer = null;
-    scrollHintDismissedForSession = true;
-    if (scrollHintEl) scrollHintEl.hidden = true;
-  }, TIMELINE_SCROLL_HINT_DISMISS_MS);
+  // Keep the scroll hint pinned in the center while in timeline mode —
+  // it should not be dismissed on scroll anymore.
 }
 
 export function syncTimelineScrollHint() {

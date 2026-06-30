@@ -527,7 +527,7 @@ async function loadSplashConfig() {
 }
 
 async function initSplash() {
-  if (!splashEl || !imageEl) return;
+  if (!splashEl) return;
 
   syncGridCssVars();
   initLetterShuffle();
