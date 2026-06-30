@@ -542,7 +542,6 @@ export function initSunFilterTest({
   wrapperEl = wrapper;
   filterDimHintEl = hint;
   bindFilterDropdownListeners();
-  bindFilterDimHintHover();
   bindFilterDimHintResize();
   positionFilterDimHint();
   rebuildCensorSet();

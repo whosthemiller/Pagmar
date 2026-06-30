@@ -60,8 +60,13 @@ export const TERM_PAGE_RESPONSIVE = {
   titleBaseline: { min: 152, ratio: 0.22, max: 240 },
   /** How far the bleed image extends below the title baseline into the band (px). */
   bleedImageBandOverlap: { min: 32, ratio: 0.048, max: 64 },
-  /** Gap between definition and inline image (fold 2). */
-  scrollDefinitionImageGap: { min: 44, ratio: 0.1, max: 108 },
+  /**
+   * Uniform gap between any text paragraph and an adjacent image on the term
+   * page. Used for every text↔image transition (definition→inline image, inline
+   * image→detail rows, detail rows→details image, details image→label rows) so
+   * the spacing reads identically throughout the page.
+   */
+  scrollTextImageGap: { min: 38, ratio: 0.088, max: 92 },
   /**
    * Floor the fold-2 inline image may shrink to (fraction of viewport height).
    * Stacked tiers go lower because the meta sits below the image and needs room.
@@ -121,7 +126,11 @@ export function getTermPageTitleBaselineInsetPx(viewportHeight) {
 }
 
 export function getTermPageScrollDefinitionImageGapPx(viewportHeight) {
-  return scaleFromViewport(TERM_PAGE_RESPONSIVE.scrollDefinitionImageGap, viewportHeight);
+  return scaleFromViewport(TERM_PAGE_RESPONSIVE.scrollTextImageGap, viewportHeight);
+}
+
+export function getTermPageScrollDetailsImageGapPx(viewportHeight) {
+  return scaleFromViewport(TERM_PAGE_RESPONSIVE.scrollTextImageGap, viewportHeight);
 }
 
 export function getTermPageScrollBlockGapPx(viewportHeight) {

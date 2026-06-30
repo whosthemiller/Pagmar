@@ -7,7 +7,7 @@ export const DEFAULT_YEAR_SCROLL_CONFIG = {
   yearScrollMinStep: 0.04,
   yearSnapDebounceMs: 180,
   yearSnapDurationMs: 820,
-  yearSnapOvershoot: 3.2,
+  yearSnapOvershoot: 1.1,
   /** Fast (mouse notch / flick) scroll — one integer year per impulse. */
   yearNotchDeltaMin: 48,
   yearNotchDeltaMax: 200,
@@ -36,7 +36,7 @@ function easeYearSnap(t, distance, overshoot) {
   const c1 = overshoot;
   const c3 = c1 + 1;
   const back = 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2;
-  const wobble = Math.sin(t * Math.PI * 2.2) * Math.max(0, 1 - t * 0.95) ** 1.4 * 0.1;
+  const wobble = Math.sin(t * Math.PI * 2.2) * Math.max(0, 1 - t * 0.95) ** 1.4 * 0.03;
   return back + wobble;
 }
 

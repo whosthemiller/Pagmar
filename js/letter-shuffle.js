@@ -312,6 +312,11 @@ function applyInlineMentionOverlay(root, original, graphemes) {
     overlay.style.top = "0px";
     overlay.style.width = `${Math.ceil(line.width)}px`;
     overlay.style.height = `${Math.ceil(line.height)}px`;
+    // Match the measured line box so the overlay's baseline (and the underline
+    // hung 0.12em below it) lands exactly where the resting text's underline is.
+    // Without this the overlay inherits the paragraph's larger line-height, which
+    // pushes the underline past the clipped overlay box and it vanishes on hover.
+    overlay.style.lineHeight = `${line.height}px`;
     overlay.textContent = graphemes.slice(line.start, line.end).join("");
     root.appendChild(overlay);
     // The overlay's containing-block origin is unreliable for a multi-line RTL

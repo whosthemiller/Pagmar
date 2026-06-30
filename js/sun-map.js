@@ -130,7 +130,7 @@ import {
   getTermPageMetaBelowImageGapPx,
   getTermPageScrollBlockGapPx,
   getTermPageScrollDefinitionImageGapPx,
-  getTermPageScrollContentOffsetYpx,
+  getTermPageScrollDetailsImageGapPx,
   getTermPageScrollImageHeightFactor,
   getTermPageScrollImageMinHeightPx,
   getTermPageScrollLayoutConfig,
@@ -380,6 +380,20 @@ const LAYOUT = {
   snapOvershoot: 1.6,
   /** Quick, bounce-free settle for gentle/slow scrolls (ms). */
   scrollFineSettleMs: 360,
+  /**
+   * Momentum snaps whose remaining travel is shorter than this (in rows) land
+   * with a bounce-free easeOutCubic instead of the overshooting roulette ease.
+   * A moderate mouse-wheel scroll usually hands off within ~1 row of its target,
+   * so the roulette bounce read as "too big" there; big fast spins (longer
+   * travel) keep the roulette character.
+   */
+  snapBounceFreeDistance: 0.85,
+  /**
+   * Minimum net travel (in rows) within a gentle scroll burst that still commits
+   * to advancing one full row on settle. Keeps slow mouse-wheel notches (which
+   * fall below the notch delta range) from snapping back to the starting row.
+   */
+  scrollFineCommitDeadband: 0.05,
   overviewHitRadiusNormal: 0.86,
   overviewHitRadiusOverview: 0.58,
   /**
@@ -723,6 +737,16 @@ let lastWheelWasNotch = false;
 let settleSnapIndex = null;
 /** Snap row locked for the easeRoulette settle animation. */
 let snapAnimTargetIndex = null;
+/**
+ * Fine-scroll gesture tracking. A "gesture" is a burst of gentle (sub-notch)
+ * wheel deltas. We remember the snap row the wheel was resting on when the burst
+ * began, so a slow mouse-wheel notch (whose delta is too small to be classed as
+ * a notch, e.g. the Magic Mouse / accelerated mouse wheel on an iMac) still
+ * commits to at least one row in the scroll direction instead of rubber-banding
+ * back to the row it started on (the "stuck" feeling).
+ */
+let fineGestureActive = false;
+let fineGestureAnchorIndex = 0;
 let overviewProgress = 0;
 
 function resolveLayoutOverview(layout = currentLayout) {
@@ -1339,6 +1363,7 @@ function cancelScrollMotion() {
   scrollVelocity = 0;
   wheelBurstEnergy = 0;
   settleSnapIndex = null;
+  fineGestureActive = false;
 }
 
 function isArcScrollMotionActive() {
@@ -1585,13 +1610,26 @@ function snapToNearest(arc) {
   // Gentle/slow settles (no real momentum left) land with a quick easeOutCubic
   // instead of the bouncy roulette ease, so a small scroll glides into the row.
   if (Math.abs(velocity) < LAYOUT.scrollMomentumMinVelocity) {
-    animateSnapTo(idx, arc, {
+    let targetIdx = idx;
+    if (fineGestureActive) {
+      // Commit at least one row in the direction the gentle burst travelled, so a
+      // slow mouse-wheel notch advances instead of rubber-banding to its origin.
+      const net = scrollOffset - snapFract(arc) - fineGestureAnchorIndex;
+      let step = Math.round(net);
+      if (step === 0 && Math.abs(net) >= LAYOUT.scrollFineCommitDeadband) {
+        step = Math.sign(net);
+      }
+      targetIdx = fineGestureAnchorIndex + step;
+    }
+    fineGestureActive = false;
+    animateSnapTo(targetIdx, arc, {
       startVelocity: 0,
       ease: easeOutCubic,
       durationMs: LAYOUT.scrollFineSettleMs,
     });
     return;
   }
+  fineGestureActive = false;
   animateSnapTo(idx, arc, { startVelocity: velocity });
 }
 
@@ -1747,11 +1785,12 @@ function getTermPageScrollImageHeightPx(
 }
 
 function getTermPageScrollContentTopPx(viewportHeight) {
+  // The gap between the title and the definition matches the text↔image gap used
+  // elsewhere on the term page, so every block-to-block transition reads alike.
   return (
     getFocusRowTopPx(viewportHeight) +
     getTermPageSelectedFontSizePx() * 0.12 +
-    LAYOUT.termPageGapBelowTitle +
-    getTermPageScrollContentOffsetYpx(viewportHeight) +
+    getTermPageScrollDefinitionImageGapPx(viewportHeight) +
     termPageCensoredWrapExtraPx
   );
 }
@@ -3168,9 +3207,14 @@ function applyViewportTermScrollBounds(viewportHeight) {
   let fold3ScrollCap = 0;
   if (isTermPageScrollContentMode() && hasTermPageFold3Content() && termPageEl) {
     const pageTop = termPageEl.offsetTop || 0;
-    const fold3Rest = viewportHeight + getTermPageFold3SnapTargetPx(viewportHeight);
+    // A little breathing room below fold 3's resting position so the page can be
+    // scrolled slightly past the snap — matching the paragraph↔image gap used
+    // throughout the page rather than ending flush with the last block.
+    const fold3BottomRunway = getTermPageScrollDetailsImageGapPx(viewportHeight);
+    const fold3Rest =
+      viewportHeight + getTermPageFold3SnapTargetPx(viewportHeight) + fold3BottomRunway;
     if (fold3Rest > viewportHeight + 1) {
-      const capped = Math.max(fold3Rest, scrollContentBottom);
+      const capped = Math.max(fold3Rest, scrollContentBottom + fold3BottomRunway);
       fold3ScrollCap = capped;
       totalHeight = capped;
       termPageEl.style.paddingBottom = "0px";
@@ -4451,17 +4495,32 @@ function getCensorBarHeight(el) {
   return base;
 }
 
+/** Minimum visible gap between stacked block censor bars. The fixed descender
+ *  allowances baked into the bar height (the +1 and DEFINITION_CENSOR_BAR_EXTRA,
+ *  tuned for the old 38px-line-height definition) don't scale down, so on tight
+ *  small text — e.g. the 18px/22px definition — the bar ends up taller than the
+ *  line pitch and the bars stack into a solid block with no inter-line gap.
+ *  Capping the bar height to `pitch - minGap` guarantees a gap at every size. */
+const CENSOR_MIN_INTERLINE_GAP_RATIO = 0.09;
+const CENSOR_MIN_INTERLINE_GAP = 2;
+
 function getCensorBarLayout(el) {
   const lineHeight = getBlockLineHeight(el);
-  const barHeight = getCensorBarHeight(el);
+  const rawBarHeight = getCensorBarHeight(el);
   if (isCaptionCensorElement(el)) {
     return {
       lineHeight,
-      barHeight,
+      barHeight: rawBarHeight,
       interLineGap: 0,
     };
   }
-  const interLineGap = Math.max(Math.round(lineHeight) - barHeight, 0);
+  const pitch = Math.round(lineHeight);
+  const minGap = Math.max(
+    CENSOR_MIN_INTERLINE_GAP,
+    Math.round(lineHeight * CENSOR_MIN_INTERLINE_GAP_RATIO)
+  );
+  const barHeight = Math.max(1, Math.min(rawBarHeight, pitch - minGap));
+  const interLineGap = Math.max(pitch - barHeight, 0);
   return { lineHeight, barHeight, interLineGap };
 }
 
@@ -5402,7 +5461,10 @@ function collectTermPageVisibleImageScreenRects(
 ) {
   const rects = [];
   const main = getTermPageMainImageVisibleScreenRect(viewportHeight, scrollTop);
-  if (main) rects.push(main);
+  if (main) {
+    main.image = termPageBleedImage?.url ? { url: termPageBleedImage.url } : null;
+    rects.push(main);
+  }
   for (const imageEl of viewport?.querySelectorAll(".sun-term-page__image") ?? []) {
     if (
       imageEl instanceof HTMLImageElement &&
@@ -5411,7 +5473,14 @@ function collectTermPageVisibleImageScreenRects(
       continue;
     }
     const span = getElementVisibleImageScreenSpan(imageEl, viewportHeight);
-    if (span) rects.push(span);
+    if (span) {
+      const url =
+        imageEl instanceof HTMLImageElement
+          ? imageEl.getAttribute("src") || imageEl.dataset.src || ""
+          : "";
+      span.image = url ? { url } : null;
+      rects.push(span);
+    }
   }
   return rects;
 }
@@ -5630,13 +5699,13 @@ function syncMediaCensorFrame(layout = currentLayout) {
     return;
   }
 
-  const hoverImage = getMediaCensorHoverImage();
+  const fallbackImage = getMediaCensorHoverImage();
   layer.hidden = false;
   for (let i = 0; i < screenRects.length; i++) {
     const el = ensureMediaCensorFrameEl(i);
     if (!el) continue;
     applyVisibleImageScreenRect(el, screenRects[i]);
-    syncMediaCensorFrameContent(el, hoverImage);
+    syncMediaCensorFrameContent(el, screenRects[i].image ?? fallbackImage);
   }
 
   for (let i = screenRects.length; i < mediaCensorFrameEls.length; i++) {
@@ -7451,12 +7520,12 @@ function getTermBleedEligibleImages(termName, viewportWidth, viewportHeight) {
 }
 
 /**
- * Term-page full bleed — the fixed chosen image, never the hover cycle.
- * Prefers the primary (first) image when it passes bleed quality, otherwise
- * falls back to the first eligible image so the backdrop never stretches a
- * low-quality source.
+ * The single full-bleed image chosen for a term in the bleed lab.
+ * That pick is stored as the primary (first) image in data/term-images.json,
+ * so prefer it; only fall back to another eligible image when the primary
+ * itself cannot fill the viewport without stretching a low-quality source.
  */
-function pickTermBleedImage(termName, viewportWidth, viewportHeight) {
+function getTermChosenBleedImage(termName, viewportWidth, viewportHeight) {
   const preview = getBleedTextLabPreviewForTerm(termName);
   if (preview?.imageUrl) {
     return findTermImageByUrl(termName, preview.imageUrl);
@@ -7473,13 +7542,20 @@ function pickTermBleedImage(termName, viewportWidth, viewportHeight) {
   return eligible[0] ?? primary;
 }
 
-/** Cycling pool — full-bleed-eligible images only; falls back to the primary image. */
+/** Term-page full bleed — the single lab-chosen image, never a hover cycle. */
+function pickTermBleedImage(termName, viewportWidth, viewportHeight) {
+  return getTermChosenBleedImage(termName, viewportWidth, viewportHeight);
+}
+
+/**
+ * One full-bleed image per term — the lab-chosen pick only. Returned as a
+ * single-item pool so the title-row thumbnail/hover never cycles through the
+ * term's other images.
+ */
 function getTitleRowSharedImagePool(termName) {
   const { viewportWidth, viewportHeight } = getTitleRowViewportSize();
-  const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
-  if (eligible.length) return eligible;
-  const primary = getTermPrimaryImage(termName);
-  return primary ? [primary] : [];
+  const chosen = getTermChosenBleedImage(termName, viewportWidth, viewportHeight);
+  return chosen?.url ? [chosen] : [];
 }
 
 /** Image for the fixed thumbnail and its full-bleed hover reveal — cycles on hover exit. */
@@ -10013,8 +10089,9 @@ function clearTitleRowTermHover() {
   clearTitleRowHoverImage();
   titleRowInlineExpandedSession = -1;
   titleRowHoverSessionId += 1;
-  // Title-row hover exit cycles the fixed thumbnail through every group term, then
-  // advances the hovered term's bleed-eligible image pool for its next appearance.
+  // Title-row hover exit cycles the fixed thumbnail through every group term.
+  // Each term keeps a single lab-chosen full-bleed image, so its own image
+  // never advances (advanceTitleRowSharedImage is a no-op for a 1-item pool).
   const term = findTermById(termId);
   const group = findGroupContainingTermId(termId);
   let advanced = false;
@@ -10530,21 +10607,21 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   const blockGap = getTermPageScrollBlockGapPx(viewportHeight);
   let contentBottom = imagesTop + imagesHeight;
 
-  contentBottom += blockGap;
+  contentBottom += getTermPageScrollDetailsImageGapPx(viewportHeight);
   const detailsRowHeight = layoutTermPageScrollEmphasizeObscure(
     contentBottom,
     term,
     !termChanged
   );
   if (detailsRowHeight > 0) {
-    contentBottom += detailsRowHeight + blockGap;
+    contentBottom += detailsRowHeight + getTermPageScrollDetailsImageGapPx(viewportHeight);
   } else {
     contentBottom -= blockGap;
   }
 
   const detailsImageHeight = layoutTermPageDetailsImage(contentBottom, term, termChanged);
   if (detailsImageHeight > 0) {
-    contentBottom += detailsImageHeight + blockGap;
+    contentBottom += detailsImageHeight + getTermPageScrollDetailsImageGapPx(viewportHeight);
   }
 
   const labelRowsHeight = layoutTermPageScrollLabelRows(contentBottom, term, !termChanged);
@@ -16395,13 +16472,20 @@ function animateSnapTo(targetIndex, arc, options = {}) {
   clearArcTermLayout();
   const start = scrollOffset;
   const end = scrollOffsetForSnapIndex(targetIndex, arc);
+  const distance = Math.abs(end - start);
+  const onComplete = options.onComplete ?? null;
+  // A short momentum snap (no explicit ease) lands gently instead of with the
+  // roulette overshoot — that bounce read as "too big" on moderate mouse scrolls.
+  const bounceFreeShortSnap =
+    options.ease == null && distance < LAYOUT.snapBounceFreeDistance;
+  const ease = options.ease ?? (bounceFreeShortSnap ? easeOutCubic : easeRoulette);
   const durationMs =
     options.durationMs ??
-    getSnapDurationMs(arc, options.startVelocity ?? 0);
-  const onComplete = options.onComplete ?? null;
-  const ease = options.ease ?? easeRoulette;
+    (bounceFreeShortSnap
+      ? LAYOUT.scrollFineSettleMs
+      : getSnapDurationMs(arc, options.startVelocity ?? 0));
 
-  if (Math.abs(end - start) < 0.0005) {
+  if (distance < 0.0005) {
     scrollOffset = end;
     snapAnimTargetIndex = null;
     updateActiveFromScroll(arc);
@@ -16480,6 +16564,7 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
     // crossing the row boundary, so it felt stuck); spinning fast chains from the
     // in-flight target, so the wheel rotates further the quicker you scroll.
     scrollVelocity = 0;
+    fineGestureActive = false;
     lastWheelAt = performance.now();
     const dir = Math.sign(wheelDeltaY) || 1;
     const base = inFlightTarget ?? resolveSnapIndex(currentLayout, 0);
@@ -16492,23 +16577,33 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
   }
 
   const delta = applyWheelScroll(wheelDeltaY);
+
+  const isFineScroll =
+    !fromSplashHandoff &&
+    Math.abs(wheelDeltaY) < LAYOUT.scrollFineThresholdPx &&
+    Math.abs(scrollVelocity) < LAYOUT.scrollMomentumMinVelocity * 2;
+
+  // Anchor the row the wheel rests on at the start of a gentle burst (before this
+  // delta nudges the offset), so the settle can commit a full row in the travel
+  // direction even when each notch is too small to cross the snap midpoint.
+  if (isFineScroll && !fineGestureActive) {
+    fineGestureActive = true;
+    fineGestureAnchorIndex = resolveSnapIndex(currentLayout, 0);
+  }
+
   if (!lastWheelWasNotch) {
     scrollOffset -= delta;
   }
   updateActiveFromScroll(currentLayout);
   render(currentLayout);
 
-  const isFineScroll =
-    !fromSplashHandoff &&
-    Math.abs(wheelDeltaY) < LAYOUT.scrollFineThresholdPx &&
-    Math.abs(scrollVelocity) < LAYOUT.scrollMomentumMinVelocity * 2;
   if (isFineScroll) {
     // Gentle slow scroll: let the offset accumulate so the wheel rolls smoothly
-    // between rows, then settle to the nearest row once the user pauses. Snapping
-    // on every tiny delta used to rubber-band back to the current row (felt stuck).
+    // between rows, then settle in the travel direction once the user pauses.
     scrollVelocity = 0;
     scheduleSnapEnd(currentLayout);
   } else {
+    fineGestureActive = false;
     ensureMomentumLoop();
     scheduleSnapEnd(currentLayout);
   }
@@ -16610,6 +16705,11 @@ function tickIdleRotate(now) {
   scrollOffset -= LAYOUT.idleRotateSpeed * (dt / 1000);
   updateActiveFromScroll(currentLayout);
   render(currentLayout);
+
+  // The drift moves content under a stationary pointer, which fires synthetic
+  // `mouseover` events. Disarm hover so those are ignored; a real `pointermove`
+  // re-arms it (and also stops the drift), so deliberate hovering still works.
+  termHoverArmed = false;
 }
 
 function bindIdleRotate() {
