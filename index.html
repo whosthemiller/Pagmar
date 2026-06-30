@@ -250,6 +250,31 @@
       <svg id="sun-back-fixed" class="sun-back-fixed" aria-hidden="true"></svg>
     </div>
 
+    <div
+      id="viewport-size-badge"
+      style="position: fixed; bottom: 8px; left: 8px; z-index: 99999; background: rgba(0,0,0,0.8); color: #fff; font: 12px/1.4 monospace; padding: 6px 8px; border-radius: 4px; pointer-events: none; direction: ltr;"
+    ></div>
+    <script>
+      (function () {
+        var badge = document.getElementById("viewport-size-badge");
+        function update() {
+          badge.textContent =
+            "viewport: " + window.innerWidth + " × " + window.innerHeight +
+            "  |  dpr: " + window.devicePixelRatio +
+            "  |  screen: " + screen.width + " × " + screen.height;
+          console.log(
+            "[viewport]",
+            "innerWidth=" + window.innerWidth,
+            "innerHeight=" + window.innerHeight,
+            "dpr=" + window.devicePixelRatio,
+            "screen=" + screen.width + "x" + screen.height
+          );
+        }
+        update();
+        window.addEventListener("resize", update);
+      })();
+    </script>
+
     <script type="module" src="js/idle-refresh.js"></script>
     <script type="module" src="js/splash.js"></script>
     <script type="module" src="js/boot-map.js"></script>
