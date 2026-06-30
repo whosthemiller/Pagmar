@@ -381,6 +381,14 @@ const LAYOUT = {
   /** Quick, bounce-free settle for gentle/slow scrolls (ms). */
   scrollFineSettleMs: 360,
   /**
+   * Window (ms) during which extra same-direction mouse-wheel impulses are
+   * folded into the current one-row step. An accelerated mouse notch on the
+   * iMac can fire a short burst of large deltas; without this the active row
+   * chains several positions and "jumps to the top". Trackpad scrolling never
+   * reaches this branch, so it is unaffected.
+   */
+  mouseNotchCooldownMs: 60,
+  /**
    * Momentum snaps whose remaining travel is shorter than this (in rows) land
    * with a bounce-free easeOutCubic instead of the overshooting roulette ease.
    * A moderate mouse-wheel scroll usually hands off within ~1 row of its target,
@@ -733,6 +741,10 @@ let momentumFrame = null;
 let lastWheelAt = 0;
 let wheelBurstEnergy = 0;
 let lastWheelWasNotch = false;
+/** Mouse-wheel notch coalescing — collapses one physical notch's event burst
+ * (and accelerated big deltas) into a single one-row step. */
+let lastArcNotchAt = 0;
+let lastArcNotchDir = 0;
 /** Locked snap row for coast/settle — avoids oscillation between two adjacent rows. */
 let settleSnapIndex = null;
 /** Snap row locked for the easeRoulette settle animation. */
@@ -16526,7 +16538,26 @@ function animateSnapTo(targetIndex, arc, options = {}) {
   snapAnimFrame = requestAnimationFrame(frame);
 }
 
-function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
+/**
+ * Distinguish a notched mouse wheel from a trackpad. Trackpads emit a dense
+ * stream of fractional and/or horizontally-jittered pixel deltas; a mouse wheel
+ * emits clean vertical integer impulses whose legacy `wheelDeltaY` is a multiple
+ * of 120 (one notch = 120, accelerated spins = 240/360/…). We classify only when
+ * confident so trackpad scrolling keeps its current momentum feel.
+ */
+function isMouseWheelEvent(event) {
+  if (!event) return false;
+  if (event.deltaMode && event.deltaMode !== 0) return true; // line/page mode → mouse
+  if (event.deltaX !== 0) return false; // horizontal jitter → trackpad
+  const dy = event.deltaY;
+  if (!Number.isInteger(dy) || dy === 0) return false; // fractional → trackpad
+  const wheelDelta = event.wheelDeltaY;
+  return (
+    typeof wheelDelta === "number" && wheelDelta !== 0 && wheelDelta % 120 === 0
+  );
+}
+
+function applyArcWheelDelta(deltaY, { fromSplashHandoff = false, isMouseWheel = false } = {}) {
   if (!currentLayout || isFocusActive() || isTermNavigating()) return false;
 
   if (isOverviewTimelineMode() && yearScroll) {
@@ -16556,17 +16587,33 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
       ? LAYOUT.scrollFineThresholdPx
       : deltaY;
 
-  lastWheelWasNotch = isWheelNotch(wheelDeltaY);
+  // A detected mouse wheel is always a discrete one-row impulse, even when its
+  // accelerated delta is large enough to otherwise fall into the momentum path
+  // (that overshoot was the iMac "jumps to the top" behavior). Trackpads are
+  // never flagged here and keep the existing notch/momentum handling.
+  lastWheelWasNotch = isMouseWheel || isWheelNotch(wheelDeltaY);
 
   if (lastWheelWasNotch && !fromSplashHandoff) {
     // Discrete mouse-wheel notch → advance exactly one row per impulse. A single
     // slow notch reliably moves one row (the momentum coast used to brake before
     // crossing the row boundary, so it felt stuck); spinning fast chains from the
     // in-flight target, so the wheel rotates further the quicker you scroll.
+    const now = performance.now();
+    const dir = Math.sign(wheelDeltaY) || 1;
+    // Fold a single notch's burst (and accelerated big deltas) into one step so
+    // the active row advances exactly one position instead of leaping upward.
+    if (
+      now - lastArcNotchAt < LAYOUT.mouseNotchCooldownMs &&
+      dir === lastArcNotchDir
+    ) {
+      lastWheelAt = now;
+      return true;
+    }
+    lastArcNotchAt = now;
+    lastArcNotchDir = dir;
     scrollVelocity = 0;
     fineGestureActive = false;
-    lastWheelAt = performance.now();
-    const dir = Math.sign(wheelDeltaY) || 1;
+    lastWheelAt = now;
     const base = inFlightTarget ?? resolveSnapIndex(currentLayout, 0);
     animateSnapTo(base - dir, currentLayout, {
       startVelocity: 0,
@@ -16755,7 +16802,7 @@ function bindWheelScroll() {
       }
 
       event.preventDefault();
-      if (!applyArcWheelDelta(event.deltaY)) return;
+      if (!applyArcWheelDelta(event.deltaY, { isMouseWheel: isMouseWheelEvent(event) })) return;
     },
     { passive: false }
   );
