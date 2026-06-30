@@ -377,7 +377,7 @@ const LAYOUT = {
   idleRotateRestartDelayMs: 1200,
   snapDurationMs: 1050,
   snapDebounceMs: 140,
-  snapOvershoot: 2.4,
+  snapOvershoot: 1.6,
   /** Quick, bounce-free settle for gentle/slow scrolls (ms). */
   scrollFineSettleMs: 360,
   overviewHitRadiusNormal: 0.86,
@@ -16386,7 +16386,7 @@ function easeRoulette(t) {
   const c1 = LAYOUT.snapOvershoot;
   const c3 = c1 + 1;
   const back = 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2;
-  const wobble = Math.sin(t * Math.PI * 2.4) * Math.max(0, 1 - t * 0.95) ** 1.4 * 0.06;
+  const wobble = Math.sin(t * Math.PI * 2.4) * Math.max(0, 1 - t * 0.95) ** 1.4 * 0.03;
   return back + wobble;
 }
 
@@ -16456,6 +16456,10 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
 
   if (!fromSplashHandoff) notifyHomeScroll();
 
+  // Destination of any snap currently animating — lets a fast wheel spin chain
+  // one row per notch instead of restarting from the in-between position.
+  const inFlightTarget = snapAnimTargetIndex;
+
   cancelSnapAnimation();
   cancelMomentum();
   settleSnapIndex = null;
@@ -16468,8 +16472,26 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false } = {}) {
       ? LAYOUT.scrollFineThresholdPx
       : deltaY;
 
-  const delta = applyWheelScroll(wheelDeltaY);
   lastWheelWasNotch = isWheelNotch(wheelDeltaY);
+
+  if (lastWheelWasNotch && !fromSplashHandoff) {
+    // Discrete mouse-wheel notch → advance exactly one row per impulse. A single
+    // slow notch reliably moves one row (the momentum coast used to brake before
+    // crossing the row boundary, so it felt stuck); spinning fast chains from the
+    // in-flight target, so the wheel rotates further the quicker you scroll.
+    scrollVelocity = 0;
+    lastWheelAt = performance.now();
+    const dir = Math.sign(wheelDeltaY) || 1;
+    const base = inFlightTarget ?? resolveSnapIndex(currentLayout, 0);
+    animateSnapTo(base - dir, currentLayout, {
+      startVelocity: 0,
+      ease: easeOutCubic,
+      durationMs: LAYOUT.scrollFineSettleMs,
+    });
+    return true;
+  }
+
+  const delta = applyWheelScroll(wheelDeltaY);
   if (!lastWheelWasNotch) {
     scrollOffset -= delta;
   }

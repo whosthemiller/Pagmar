@@ -15,14 +15,6 @@
   font-display: block;
 }
 
-@font-face {
-  font-family: "FrankRuhl";
-  src: url("../assets/fonts/FrankRuhl-VF-TRIAL.ttf") format("truetype");
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 @property --term-title-band-height {
   syntax: "<length>";
   inherits: true;
@@ -1140,8 +1132,7 @@ body,
 .sun-term-meta__value .sun-def-mention--external {
   cursor: pointer;
   pointer-events: auto;
-  font-family: "FrankRuhl", serif;
-  font-variation-settings: "wght" 400, "opsz" 32;
+  text-decoration: underline;
 }
 
 .sun-term-page__definition .sun-def-mention--same-object,
@@ -2968,6 +2959,19 @@ line.letter-shuffle-underline {
 @media (min-width: 1600px) {
   .sun-about__side {
     grid-column: 16 / span 7;
+  }
+
+  /* A touch more breathing room above the about / index / tags views. */
+  .sun-about {
+    --sun-about-margin-top: calc(150px * var(--map-typography-scale));
+  }
+
+  .sun-terms-index {
+    --terms-index-margin-top: calc(150px * var(--map-typography-scale));
+  }
+
+  .sun-overview-terms-grid {
+    --terms-index-margin-top: calc(var(--site-nav-height) + 100px * var(--map-typography-scale));
   }
 }
 

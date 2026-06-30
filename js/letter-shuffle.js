@@ -1116,7 +1116,7 @@ function finishAnnotatedTypewriter(state) {
  * Unlike {@link playLightTypewriterScrambleTo} (which writes flat text and only
  * swaps in styled markup once it finishes), this builds the annotated `html`
  * into `root` first — so mention spans exist from the very first frame. The
- * effect: external (cross-group) words render in FrankRuhl from their first
+ * effect: external (cross-group) words render underlined from their first
  * character, and a censored (same-object) word grows under its black rectangle
  * as it is typed, with no font/censor pop or reflow when the write completes.
  *

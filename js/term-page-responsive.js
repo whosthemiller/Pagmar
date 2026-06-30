@@ -78,7 +78,7 @@ export const TERM_PAGE_RESPONSIVE = {
   fold2ChapterMinRatio: 0.6,
   /** Minimum fold-3 chapter height as a fraction of viewport height. */
   fold3ChapterMinRatio: 0.6,
-  imageHeightFactor: { wide: 0.47, narrow: 0.44, compact: 0.4 },
+  imageHeightFactor: { wide: 0.6, narrow: 0.55, compact: 0.5 },
 };
 
 function clampScalar(value, min, max) {

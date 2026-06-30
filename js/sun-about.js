@@ -21,7 +21,7 @@ const CREDITS = [
   { heading: "תודה מיוחדת", value: "ניר שקד" },
   {
     heading: "פונטים",
-    value: "Roobert — Displaay Type Foundry\nפרנק־ריהל וריאבל — פונטף\nסקולו — הגילדה",
+    value: "Roobert — Displaay Type Foundry\nסקולו — הגילדה",
     valueClass: "sun-about__credit-value--fonts",
   },
   { heading: "עריכת תוכן", value: "אבי בולוטינסקי" },
