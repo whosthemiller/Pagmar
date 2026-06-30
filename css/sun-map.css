@@ -77,6 +77,7 @@
   --sun-timeline-event-hint-line-height: calc(80px * var(--map-typography-scale));
   --sun-timeline-scroll-hint-font-size: calc(18px * var(--map-typography-scale));
   --sun-timeline-scroll-hint-line-height: calc(26px * var(--map-typography-scale));
+  --sun-home-scroll-hint-font-size: calc(14px * var(--map-typography-scale));
   --sun-timeline-tick-font-size: calc(24px * var(--map-typography-scale));
   --sun-timeline-tick-line-height: calc(30px * var(--map-typography-scale));
   --sun-filter-font-size: calc(14px * var(--map-typography-scale));
@@ -462,7 +463,8 @@ body,
   pointer-events: none;
 }
 
-.sun-ray.is-active .sun-term-hit {
+.sun-ray.is-active .sun-term-hit,
+.sun-ray.is-dimmed .sun-term-hit {
   pointer-events: all;
   cursor: pointer;
 }
@@ -1441,8 +1443,20 @@ body,
   position: absolute;
   box-sizing: border-box;
   z-index: 0;
+  overflow: hidden;
   pointer-events: none;
   border: none;
+  background-color: rgba(0, 0, 0, 0.06);
+}
+
+.sun-page-censor-media-frame:not(.is-placeholder) {
+  pointer-events: auto;
+  cursor: default;
+  box-shadow: inset 0 0 0 1px var(--ink);
+  background-color: transparent;
+}
+
+.sun-page-censor-media-frame.is-placeholder {
   box-shadow: inset 0 0 0 1px var(--ink);
   background-color: transparent;
   background-image:
@@ -1460,6 +1474,28 @@ body,
       var(--ink) calc(50% + 0.5px),
       transparent calc(50% + 0.5px)
     );
+}
+
+.sun-page-censor-media-frame__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.sun-page-censor-media-frame__img.is-pixelation-hidden {
+  opacity: 0;
+}
+
+.sun-page-censor-media-frame__pixel-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
 }
 
 .sun-term-page__images {
@@ -1834,15 +1870,102 @@ img.sun-title-row-image__img.is-loaded {
   padding: 0;
   box-sizing: border-box;
   pointer-events: none;
-  color: var(--ink);
   direction: rtl;
   text-align: center;
-  white-space: nowrap;
+  white-space: pre-line;
+  color: var(--ink);
   font-family: var(--sun-mono-font);
   font-variation-settings: var(--sun-mono-variation, normal);
   font-size: var(--sun-timeline-scroll-hint-font-size);
   font-weight: 400;
   line-height: var(--sun-timeline-scroll-hint-line-height);
+}
+
+.sun-timeline-scroll-hint[hidden] {
+  display: none;
+}
+
+.sun-timeline-scroll-hint__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  margin-inline-end: 0.35em;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  font-size: 0.8em;
+  line-height: 1;
+}
+
+/* Home entrance nudge — bottom-left "↓ גללו כדי לחקור", shown on first visit. */
+.sun-home-scroll-hint {
+  position: fixed;
+  z-index: 26;
+  left: var(--grid-margin);
+  bottom: var(--grid-margin);
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 0.6em;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  pointer-events: none;
+  direction: ltr;
+  color: var(--ink);
+  font-family: var(--sun-mono-font);
+  font-variation-settings: var(--sun-mono-variation, normal);
+  font-size: var(--sun-home-scroll-hint-font-size);
+  font-weight: 400;
+  line-height: 1.4;
+  opacity: 0;
+  transition: opacity 0.32s ease;
+}
+
+.sun-home-scroll-hint.is-visible {
+  opacity: 1;
+}
+
+.sun-home-scroll-hint[hidden] {
+  display: none;
+}
+
+.sun-home-scroll-hint__arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  font-size: 0.95em;
+  line-height: 1;
+}
+
+.sun-home-scroll-hint__text {
+  direction: rtl;
+  white-space: nowrap;
+}
+
+/* While a censored term is hovered (page-censor mode), the scroll hint text is
+   covered by a black censor band — matching the body-text censoring. */
+body:has(.sun-viewport.is-same-object-mention-hover) .sun-home-scroll-hint__text,
+body:has(.sun-viewport.is-term-switch-censor) .sun-home-scroll-hint__text {
+  color: var(--ink);
+  -webkit-text-fill-color: var(--ink);
+  background-image: linear-gradient(var(--ink), var(--ink));
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100% calc(1lh * 34 / 38 + 1px);
+  padding-inline: 1px;
+  margin-inline: -1px;
 }
 
 .sun-term-hover-caption__lines {

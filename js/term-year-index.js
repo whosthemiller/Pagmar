@@ -1,8 +1,17 @@
 /**
- * Parse Hebrew period text into year ranges for the timeline view.
+ * Term year ranges for the timeline — loaded from term-years-new.csv;
+ * parsePeriodYears remains for timeline event dates.
  */
 
+import { parseCsv } from "./wiki-keywords.js";
+
+const DATA_DIR = new URL("../data/", import.meta.url);
+
 const CURRENT_YEAR = new Date().getFullYear();
+
+function dataUrl(filename) {
+  return new URL(filename, DATA_DIR).href;
+}
 
 const PRESENT_MARKERS =
   /(?:ועד\s+)?(?:ה)?יום|היום|כיום|נוכחי|עד\s+עכשיו|עד\s+היום|ממשיך|נמשך|נותר|ממשיכים/i;
@@ -178,6 +187,47 @@ export function parsePeriodYears(periodText) {
   }
 
   return clampYearRange(startYear, endYear);
+}
+
+function parseYearCell(value) {
+  const text = (value || "").trim();
+  if (!text) return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+/**
+ * @param {{ מזהה_מונח?: string, שנת_התחלה?: string, שנת_סיום?: string, פרסור_שנים?: string }[]} rows
+ * @returns {Map<string, { startYear: number, endYear: number }>}
+ */
+export function buildTermYearIndexFromCsv(rows) {
+  const index = new Map();
+  for (const row of rows) {
+    const termId = (row["מזהה_מונח"] || "").trim();
+    if (!termId) continue;
+    if ((row["פרסור_שנים"] || "").trim() === "לא") continue;
+
+    const startYear = parseYearCell(row["שנת_התחלה"]);
+    const endYear = parseYearCell(row["שנת_סיום"]);
+    if (startYear === null || endYear === null) continue;
+
+    index.set(termId, clampYearRange(startYear, endYear));
+  }
+  return index;
+}
+
+/**
+ * @param {string} [url]
+ * @returns {Promise<Map<string, { startYear: number, endYear: number }>>}
+ */
+export async function loadTermYears(url = dataUrl("term-years-new.csv")) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return new Map();
+    return buildTermYearIndexFromCsv(parseCsv(await res.text()));
+  } catch {
+    return new Map();
+  }
 }
 
 /**

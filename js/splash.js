@@ -6,7 +6,9 @@
 import { applyBlockTypography } from "./typography.js";
 import { syncGridCssVars } from "./grid-metrics.js";
 import {
+  abortLetterShuffle,
   initLetterShuffle,
+  startContinuousScramble,
   startLetterShuffle,
   stopLetterShuffle,
 } from "./letter-shuffle.js";
@@ -52,6 +54,7 @@ const imageEl = splashEl?.querySelector(".splash__image");
 const canvasEl = splashEl?.querySelector(".splash__pixel-canvas");
 const introEl = splashEl?.querySelector(".splash__intro");
 const scrollHintEl = splashEl?.querySelector(".splash__scroll-hint");
+const scrollHintTextEl = splashEl?.querySelector(".splash__scroll-hint-text");
 
 /** Matches --splash-margin (10px) + the extra 8px bottom offset of the text. */
 const SPLASH_TEXT_BOTTOM_OFFSET = 18;
@@ -401,12 +404,20 @@ export function dismissSplash(options = {}) {
   stopGallery();
   beginScrollHandoff(options.scrollDeltaY ?? 0);
 
+  // Scramble the scroll hint out as the splash fades away.
+  startContinuousScramble(scrollHintTextEl);
+
   splashEl.classList.add("is-dismissed");
   splashEl.setAttribute("aria-hidden", "true");
 
   window.setTimeout(() => {
     endScrollHandoff();
+    abortLetterShuffle(scrollHintTextEl);
     splashEl.hidden = true;
+    // sun-map.js is imported lazily (boot-map.js / requestIdleCallback), so its
+    // splash-dismissed listener may not be registered yet on a fast scroll-past.
+    // Record the dismissal so a late listener can still run the home entrance.
+    globalThis.__SPLASH_DISMISSED__ = true;
     globalThis.dispatchEvent(new CustomEvent("splash-dismissed"));
   }, CONFIG.dismissDurationMs);
 }

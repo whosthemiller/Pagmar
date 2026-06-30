@@ -8,10 +8,26 @@ body.is-splash-active .sun-app {
   --splash-band: clamp(110px, 15vh, 360px);
   /* Poster scaling: 144px quote / 24px body at the 1512px reference width,
      scaling proportionally with viewport width so big screens look the same. */
-  --splash-quote-size: clamp(64px, 9.52vw, 392px);
-  --splash-quote-lh: clamp(80px, 7.94vw, 326px);
-  --splash-body-size: clamp(20px, 1.587vw, 66px);
-  --splash-body-lh: clamp(26px, 1.984vw, 82px);
+  --splash-quote-size: clamp(
+    64px,
+    calc(9.52vw * var(--large-desktop-typography-trim, 1)),
+    392px
+  );
+  --splash-quote-lh: clamp(
+    80px,
+    calc(7.94vw * var(--large-desktop-typography-trim, 1)),
+    326px
+  );
+  --splash-body-size: clamp(
+    18px,
+    calc(1.39vw * var(--large-desktop-typography-trim, 1)),
+    58px
+  );
+  --splash-body-lh: clamp(
+    24px,
+    calc(1.74vw * var(--large-desktop-typography-trim, 1)),
+    72px
+  );
   /* Splash is a full-bleed poster: it keeps the base edge margin instead of the
      centered large-screen grid margin used by the main app. */
   --splash-margin: 10px;
@@ -23,6 +39,7 @@ body.is-splash-active .sun-app {
   --splash-span-19: calc(19 * var(--splash-col) + 18 * var(--splash-gutter));
   --splash-span-15: calc(15 * var(--splash-col) + 14 * var(--splash-gutter));
   --splash-span-14: calc(14 * var(--splash-col) + 13 * var(--splash-gutter));
+  --splash-span-13: calc(13 * var(--splash-col) + 12 * var(--splash-gutter));
   --splash-dismiss-duration: 0.55s;
 }
 
@@ -145,8 +162,8 @@ body.is-splash-active .sun-app {
 .splash__intro {
   position: absolute;
   right: var(--splash-margin);
-  bottom: calc(var(--splash-margin) + 8px);
-  width: var(--splash-span-15);
+  bottom: var(--splash-margin);
+  width: var(--splash-span-13);
   margin: 0;
   padding: 0;
   font-family: var(--sun-prose-font);
@@ -180,25 +197,52 @@ body.is-splash-active .sun-app {
   white-space: pre;
 }
 
-/* Scroll hint — bottom-left, Roobert mono 14 */
+/* Scroll hint — bottom-left, Roobert mono 14, arrow circle to the right */
 .splash__scroll-hint {
   position: absolute;
   left: var(--splash-margin);
-  bottom: calc(var(--splash-margin) + 8px);
+  bottom: var(--splash-margin);
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 0.6em;
   font-family: var(--sun-mono-font);
   font-variation-settings: "MONO" 100, "slnt" 0;
   font-weight: 400;
   /* Scales with the splash poster (14px at the 1512px reference, growing
      proportionally with viewport width like the quote/body text). */
-  font-size: clamp(14px, 0.926vw, 38px);
+  font-size: clamp(
+    14px,
+    calc(0.926vw * var(--large-desktop-typography-trim, 1)),
+    38px
+  );
   line-height: 1.4;
   text-align: left;
   direction: ltr;
   color: var(--ink);
   z-index: 3;
   pointer-events: none;
+}
+
+.splash__scroll-hint-text {
+  direction: rtl;
+}
+
+.splash__scroll-hint-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  font-size: 0.95em;
+  line-height: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {

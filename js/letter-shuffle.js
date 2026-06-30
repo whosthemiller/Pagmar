@@ -803,7 +803,9 @@ function getShuffleConfig(root) {
   }
   if (
     root?.classList?.contains("sun-filter-dim-hint") ||
-    root?.classList?.contains("sun-timeline-event-hint")
+    root?.classList?.contains("sun-timeline-event-hint") ||
+    root?.classList?.contains("sun-home-scroll-hint__text") ||
+    root?.classList?.contains("splash__scroll-hint-text")
   ) {
     return FAST_LIGHT_CONFIG;
   }
@@ -855,6 +857,8 @@ function isLightScrambleEl(root) {
     root.classList.contains("sun-terms-index__legend") ||
     root.classList.contains("sun-filter-dim-hint") ||
     root.classList.contains("sun-timeline-event-hint") ||
+    root.classList.contains("sun-home-scroll-hint__text") ||
+    root.classList.contains("splash__scroll-hint-text") ||
     root.classList.contains("site-nav__label") ||
     root.classList.contains("splash__intro-link") ||
     root.classList.contains("sun-about__brand-link") ||

@@ -15,7 +15,7 @@ const TIMELINE_HINT_COLUMNS = 10;
 const TIMELINE_HINT_LINE_HEIGHT = 80;
 const TIMELINE_HINT_COLLISION_PAD = 8;
 const TIMELINE_HINT_HIDE_MS = 120;
-const TIMELINE_SCROLL_HINT_TEXT = "גללו לאורך ציר הזמן וצפו במונחים המשתנים עם השנים";
+const TIMELINE_SCROLL_HINT_TEXT = "גללו לאורך ציר\nהזמן וצפו במונחים\nהמשתנים עם השנים";
 const TIMELINE_SCROLL_HINT_DISMISS_MS = 350;
 /** Set to true to restore letter-scramble on show/hide. */
 const TIMELINE_HINT_SCRAMBLE_ENABLED = false;
@@ -281,9 +281,19 @@ export function initSunTimelineHint({
     const scrollHint = document.createElement("p");
     scrollHint.id = "sun-timeline-scroll-hint";
     scrollHint.className = "sun-timeline-scroll-hint";
-    scrollHint.textContent = TIMELINE_SCROLL_HINT_TEXT;
     scrollHint.hidden = true;
     scrollHint.setAttribute("aria-hidden", "true");
+
+    const scrollHintArrow = document.createElement("span");
+    scrollHintArrow.className = "sun-timeline-scroll-hint__arrow";
+    scrollHintArrow.setAttribute("aria-hidden", "true");
+    scrollHintArrow.textContent = "↓";
+
+    const scrollHintText = document.createElement("span");
+    scrollHintText.className = "sun-timeline-scroll-hint__text";
+    scrollHintText.textContent = TIMELINE_SCROLL_HINT_TEXT;
+
+    scrollHint.append(scrollHintArrow, scrollHintText);
     document.body.appendChild(scrollHint);
     scrollHintEl = scrollHint;
   }

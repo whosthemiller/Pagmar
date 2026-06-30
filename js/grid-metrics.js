@@ -1,6 +1,7 @@
 /** Grid metrics aligned to `.site-nav__grid` — the layout reference. */
 
 import {
+  getLargeDesktopTypographyTrim,
   getMapTypographyScale,
   getResponsiveGridLayout,
   getViewportHeightScale,
@@ -170,6 +171,10 @@ export function syncGridCssVars(containerEl = getGridContainer()) {
   root.style.setProperty("--grid-column-width", `${metrics.colWidth}px`);
   root.style.setProperty("--grid-content-offset", `${metrics.gridLeft - containerLeft}px`);
   root.style.setProperty("--map-typography-scale", String(getMapTypographyScale(metrics.viewportWidth)));
+  root.style.setProperty(
+    "--large-desktop-typography-trim",
+    String(getLargeDesktopTypographyTrim(metrics.viewportWidth))
+  );
   root.style.setProperty(
     "--viewport-height-scale",
     String(getViewportHeightScale(viewportHeight))

@@ -5,6 +5,9 @@ export const VIEWPORT_DESIGN = {
 };
 
 const WIDE_SCREEN_START_WIDTH = 2560;
+const LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH = 1728;
+const LARGE_DESKTOP_TYPOGRAPHY_TRIM_FULL_WIDTH = 2240;
+const LARGE_DESKTOP_TYPOGRAPHY_TRIM = 0.92;
 /**
  * Above 2560px the typography cap is lifted toward the viewport-width ratio
  * rather than the (larger) column-width ratio. Fixed margins/gutters become
@@ -21,6 +24,23 @@ const ULTRA_WIDE_HEIGHT_MAX_SCALE = 1.6;
 
 export function clampScalar(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * On large desktop displays the proportional grid scale reads a little too
+ * generous. Ease in a subtle type trim after common laptop widths so the
+ * MacBook reference remains unchanged while iMac-sized screens feel calmer.
+ */
+export function getLargeDesktopTypographyTrim(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : VIEWPORT_DESIGN.width
+) {
+  const progress = clampScalar(
+    (viewportWidth - LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH) /
+      (LARGE_DESKTOP_TYPOGRAPHY_TRIM_FULL_WIDTH - LARGE_DESKTOP_TYPOGRAPHY_TRIM_START_WIDTH),
+    0,
+    1
+  );
+  return 1 - progress * (1 - LARGE_DESKTOP_TYPOGRAPHY_TRIM);
 }
 
 /**
@@ -94,7 +114,9 @@ export function getMapTypographyScale(
   // screen itself and never overflows on true 4K canvases.
   const ultraWideCap = widthRatio * ULTRA_WIDE_TYPOGRAPHY_SAFETY;
   const maxScale = 1.6 + ultraWideProgress * Math.max(0, ultraWideCap - 1.6);
-  return clampScalar(rawScale, 1, maxScale);
+  return (
+    clampScalar(rawScale, 1, maxScale) * getLargeDesktopTypographyTrim(viewportWidth)
+  );
 }
 
 /** Smaller dimension of the reference viewport — the overview ring's design basis. */
@@ -124,7 +146,12 @@ export function getOverviewTypographyScale(
 ) {
   const minDimRatio = Math.min(viewportWidth, viewportHeight) / DESIGN_MIN_DIM;
   const mapScale = getMapTypographyScale(viewportWidth);
-  return clampScalar(minDimRatio * OVERVIEW_RING_FONT_TRIM, 1, mapScale);
+  const desktopTrim = getLargeDesktopTypographyTrim(viewportWidth);
+  return clampScalar(
+    minDimRatio * OVERVIEW_RING_FONT_TRIM * desktopTrim,
+    1,
+    mapScale
+  );
 }
 
 /** Scale a design-time pixel constant for the current viewport height. */
