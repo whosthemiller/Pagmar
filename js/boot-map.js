@@ -3,7 +3,9 @@
  * On GitHub Pages this avoids dozens of parallel requests blocking the main thread.
  */
 function startSunMap() {
-  void import("./sun-map.js");
+  import("./sun-map.js").catch((err) => {
+    console.error("[boot-map] failed to load sun-map.js:", err);
+  });
 }
 
 if ("requestIdleCallback" in window) {

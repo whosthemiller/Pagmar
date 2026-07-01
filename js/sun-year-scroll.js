@@ -358,14 +358,39 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     lastFastDirection = 0;
   }
 
+  function applyDragDeltaYears(deltaYears) {
+    if (!Number.isFinite(deltaYears) || Math.abs(deltaYears) < 1e-9) return;
+    cancelYearSnapAnimation();
+    cancelYearMomentum();
+    clearTimeout(yearSnapDebounceTimer);
+    yearScrollOffset += deltaYears;
+    applyYearBounds();
+    notifyChange();
+  }
+
+  function endPointerDrag() {
+    scheduleYearSnap();
+  }
+
+  function isSettled() {
+    if (yearSnapFrame != null) return false;
+    if (Math.abs(yearVelocity) > cfg.yearSnapVelocityThreshold) return false;
+    if (yearMomentumFrame != null && Math.abs(yearVelocity) > 0.02) return false;
+    const offset = clamp(yearScrollOffset, boundsMin, boundsMax);
+    return Math.abs(offset - Math.round(offset)) < 0.05;
+  }
+
   return {
     applyWheelDelta,
     handleWheel,
     getDisplayedYears,
     getContinuousYear,
+    isSettled,
     setBounds,
     resetToMaxYear,
     cancelYearSnapAnimation,
     cancelYearMomentum,
+    applyDragDeltaYears,
+    endPointerDrag,
   };
 }

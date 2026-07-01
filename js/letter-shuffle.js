@@ -16,6 +16,14 @@ const FAST_LIGHT_CONFIG = {
   maxSpread: 18,
 };
 
+/** Timeline tick year/title — snap settle so events stay readable while scrolling. */
+export const TIMELINE_EVENT_SCRAMBLE_CONFIG = {
+  cycles: 1,
+  frameMs: 5,
+  staggerMs: 1,
+  maxSpread: 10,
+};
+
 /** Index home page — slower than nav/hints, faster than map shuffle. */
 export const INDEX_LIGHT_CONFIG = {
   cycles: 3,
@@ -834,9 +842,16 @@ function getShuffleConfig(root) {
     return INDEX_LIGHT_CONFIG;
   }
   if (
+    root?.classList?.contains("sun-timeline-tick-labels__year") ||
+    root?.classList?.contains("sun-timeline-tick-labels__title")
+  ) {
+    return TIMELINE_EVENT_SCRAMBLE_CONFIG;
+  }
+  if (
     root?.classList?.contains("sun-filter-dim-hint") ||
     root?.classList?.contains("sun-timeline-event-hint") ||
     root?.classList?.contains("sun-home-scroll-hint__text") ||
+    root?.classList?.contains("sun-timeline-scroll-hint__text") ||
     root?.classList?.contains("splash__scroll-hint-text")
   ) {
     return FAST_LIGHT_CONFIG;
@@ -970,7 +985,10 @@ function isLightScrambleEl(root) {
     root.classList.contains("sun-terms-index__legend") ||
     root.classList.contains("sun-filter-dim-hint") ||
     root.classList.contains("sun-timeline-event-hint") ||
+    root.classList.contains("sun-timeline-tick-labels__year") ||
+    root.classList.contains("sun-timeline-tick-labels__title") ||
     root.classList.contains("sun-home-scroll-hint__text") ||
+    root.classList.contains("sun-timeline-scroll-hint__text") ||
     root.classList.contains("splash__scroll-hint-text") ||
     root.classList.contains("site-nav__label") ||
     root.classList.contains("splash__intro-link") ||

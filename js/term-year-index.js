@@ -264,6 +264,74 @@ export function getTimelineBounds(index) {
   return { minYear, maxYear: Math.min(maxYear, CURRENT_YEAR) };
 }
 
+const TIMELINE_TERM_ANTICIPATION_YEARS = 1.5;
+const TIMELINE_TERM_MIN_OPACITY = 0.02;
+
+function smoothstepTimelineTerm(t) {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
+
+function proximityOpacityForYear(year, startYear, endYear) {
+  if (year >= startYear && year <= endYear) return 1;
+
+  if (year < startYear) {
+    const dist = startYear - year;
+    if (dist > TIMELINE_TERM_ANTICIPATION_YEARS) return 0;
+    return smoothstepTimelineTerm(1 - dist / TIMELINE_TERM_ANTICIPATION_YEARS);
+  }
+
+  const dist = year - endYear;
+  if (dist > TIMELINE_TERM_ANTICIPATION_YEARS) return 0;
+  return smoothstepTimelineTerm(1 - dist / TIMELINE_TERM_ANTICIPATION_YEARS);
+}
+
+/**
+ * Timeline ring term visibility — proximity fade plus size/color ramp while scrolling;
+ * binary on/off when settled on an integer year.
+ * @param {Map<string, { startYear: number, endYear: number }>} index
+ * @param {string} termId
+ * @param {number} continuousYear
+ * @param {{ settled?: boolean }} [options]
+ */
+export function getTimelineTermVisual(index, termId, continuousYear, { settled = false } = {}) {
+  const hidden = {
+    visible: false,
+    opacity: 0,
+    fontScale: 1,
+    useMutedFill: false,
+  };
+  const range = index.get(termId);
+  if (!range) return hidden;
+
+  if (settled) {
+    const year = Math.round(continuousYear);
+    const inRange = year >= range.startYear && year <= range.endYear;
+    if (!inRange) return hidden;
+    return {
+      visible: true,
+      opacity: 1,
+      fontScale: 1,
+      useMutedFill: false,
+    };
+  }
+
+  const opacity = proximityOpacityForYear(
+    continuousYear,
+    range.startYear,
+    range.endYear
+  );
+  if (opacity < TIMELINE_TERM_MIN_OPACITY) return hidden;
+
+  const edge = opacity < 0.999;
+  return {
+    visible: true,
+    opacity,
+    fontScale: edge ? 0.82 + 0.18 * opacity : 1,
+    useMutedFill: edge && opacity < 0.85,
+  };
+}
+
 function opacityForYear(startYear, endYear, year) {
   if (year < startYear || year > endYear) return 0;
   return 1;

@@ -26,7 +26,7 @@ import {
   setOverviewSubMode,
 } from "./sun-filter-test.js";
 import { createOverviewGeometry, computeOverviewSpinOffset } from "./sun-overview-geometry.js";
-import { getTimelineBounds, getTermOpacity, loadTermYears, logYearIndexStats } from "./term-year-index.js";
+import { getTimelineBounds, getTimelineTermVisual, loadTermYears, logYearIndexStats } from "./term-year-index.js";
 import { createYearScrollController, isWheelNotch } from "./sun-year-scroll.js";
 import { getTimelineEventText, loadTimelineEvents } from "./timeline-events.js";
 import {
@@ -37,6 +37,7 @@ import {
   repositionTimelineEventHint,
   repositionTimelineScrollHint,
   resetTimelineScrollHint,
+  revealTimelineScrollHint,
   syncTimelineScrollHint,
 } from "./sun-timeline-hint.js";
 import {
@@ -53,6 +54,7 @@ import {
   getLetterShuffleOriginal,
   initLetterShuffle,
   playAnnotatedTypewriterScrambleTo,
+  abortLetterShuffle,
   playLightLetterShuffleTo,
   playLightTypewriterScrambleTo,
   settleFromContinuousScramble,
@@ -384,6 +386,8 @@ const LAYOUT = {
   snapOvershoot: 1.6,
   /** Quick, bounce-free settle for gentle/slow scrolls (ms). */
   scrollFineSettleMs: 360,
+  /** Faster settle when chaining accelerated mouse notches (ms). */
+  mouseFastSettleMs: 150,
   /**
    * Window (ms) during which extra same-direction mouse-wheel impulses are
    * folded into the current one-row step. An accelerated mouse notch on the
@@ -535,9 +539,10 @@ const LAYOUT = {
   /** Meta value content — up to 14 cols, anchored right of the heading block. */
   termPageScrollMetaValueColumns: 14,
   termPageDefinitionColumnFromRight: 5,
-  termPageSideColumns: 5,
-  termPageEmphasizesColumnFromRight: 15,
-  termPageObscuresColumnFromRight: 9,
+  /** מדגיש / מטשטש — stacked block width in grid columns. */
+  termPageSideColumns: 7,
+  termPageEmphasizesColumnFromRight: 5,
+  termPageObscuresColumnFromRight: 14,
   termPageGapBelowTitle: 16,
   termPageLabelHeadingColumnFromRight: 9,
   termPageLabelHeadingColumns: 1,
@@ -622,6 +627,7 @@ const SUN_GROUP_POSITION_SWAPS = [
   ["OBJ-4", "OBJ-21"], // מאחזים בלתי חוקיים ↔ פרעות תרפ״ט
   ["OBJ-3", "OBJ-44"], // פלסטין/יהודה ושומרון ↔ סגר/מצור
   ["OBJ-30", "OBJ-40"], // שמאלנים… ↔ הקו הירוק…
+  ["OBJ-6", "OBJ-15"], // פיגוע/התנגדות/ג׳יהאד ↔ מחסום/מעבר
 ];
 
 /** Compressed timings for term-page → home unfocus. */
@@ -760,6 +766,8 @@ let lastArcNotchDir = 0;
 let settleSnapIndex = null;
 /** Snap row locked for the easeRoulette settle animation. */
 let snapAnimTargetIndex = null;
+/** When false, highlight follows scrollOffset during snap (trackpad-like). */
+let snapAnimLockHighlight = true;
 /**
  * Fine-scroll gesture tracking. A "gesture" is a burst of gentle (sub-notch)
  * wheel deltas. We remember the snap row the wheel was resting on when the burst
@@ -812,6 +820,8 @@ let idleRotateLastFrameAt = 0;
 let lastUserActivityAt = 0;
 let hoveredRay = null;
 let hoveredWrap = null;
+/** Persisted across timeline ring rebuilds — DOM nodes are recreated every frame. */
+let hoveredTimelineTermId = null;
 /**
  * Term hover stays disarmed until the pointer genuinely moves. When the map
  * first appears under a stationary cursor, the browser fires `mouseover` over
@@ -1337,9 +1347,25 @@ function isGroupVisible(groupIndex, layout) {
   return isGroupOnArc(groupIndex);
 }
 
+function signedWrapDiff(from, to, count) {
+  const diff = ((to - from) % count + count) % count;
+  return diff > count / 2 ? diff - count : diff;
+}
+
+/** Base snap for discrete mouse notches — ignore stale in-flight target when scroll drifted. */
+function discreteBaseSnap(inFlightTarget, arc) {
+  if (inFlightTarget == null) return resolveSnapIndex(arc, 0);
+  const nearest = nearestSnapIndexForSnapIndex(inFlightTarget, arc);
+  const drift = Math.abs(scrollOffset - scrollOffsetForSnapIndex(nearest, arc));
+  if (drift < 1.25) return inFlightTarget;
+  return resolveSnapIndex(arc, 0);
+}
+
 function updateActiveFromScroll(arc) {
-  const lockedSnap = snapAnimTargetIndex ?? settleSnapIndex;
-  if (lockedSnap !== null) {
+  const lockedSnap = snapAnimLockHighlight
+    ? snapAnimTargetIndex ?? settleSnapIndex
+    : null;
+  if (lockedSnap != null) {
     activeIndex = activeIndexForSnapIndex(lockedSnap, arc);
     scheduleTermImagePreloadBoost();
     return;
@@ -1347,7 +1373,16 @@ function updateActiveFromScroll(arc) {
   const count = LAYOUT.rayCount || 1;
   const hU = horizontalArcU(arc);
   const prevIndex = activeIndex;
-  activeIndex = ((Math.round(scrollOffset + hU) % count) + count) % count;
+  const ideal = ((Math.round(scrollOffset + hU) % count) + count) % count;
+  if (forceEaseOutSnap && snapAnimLockHighlight && prevIndex !== ideal) {
+    const delta = signedWrapDiff(prevIndex, ideal, count);
+    activeIndex =
+      Math.abs(delta) > 1
+        ? (prevIndex + Math.sign(delta) + count) % count
+        : ideal;
+  } else {
+    activeIndex = ideal;
+  }
   if (prevIndex !== activeIndex) {
     scheduleTermImagePreloadBoost();
   }
@@ -1378,6 +1413,7 @@ function cancelSnapAnimation() {
   }
   isSnapping = false;
   snapAnimTargetIndex = null;
+  snapAnimLockHighlight = true;
 }
 
 function cancelMomentum() {
@@ -1401,10 +1437,20 @@ function isArcScrollMotionActive() {
 }
 
 function clearOverviewTermHover() {
-  if (hoveredRay) hoveredRay.classList.remove("is-term-hover");
-  if (hoveredWrap) hoveredWrap.classList.remove("is-hovered");
+  if (hoveredRay?.isConnected) hoveredRay.classList.remove("is-term-hover");
+  if (hoveredWrap?.isConnected) hoveredWrap.classList.remove("is-hovered");
   clearTermHover();
   clearTitleRowTermHover();
+}
+
+function clearTimelineTermHoverClasses() {
+  if (!svgEl) return;
+  for (const wrap of svgEl.querySelectorAll(".sun-term-wrap.is-hovered")) {
+    wrap.classList.remove("is-hovered");
+  }
+  for (const ray of svgEl.querySelectorAll(".sun-ray.is-term-hover")) {
+    ray.classList.remove("is-term-hover");
+  }
 }
 
 function getFixedImageTermId(el) {
@@ -1435,8 +1481,41 @@ function findOverviewHoverTargetAtPointer(clientX, clientY) {
   return null;
 }
 
+function findTimelineHoverTargetAtPointer(clientX, clientY) {
+  const elements = elementsAtPointer(clientX, clientY);
+
+  for (const el of elements) {
+    if (!(el instanceof Element) || !svgEl?.contains(el)) continue;
+
+    const hit = el.closest(".sun-term-hit");
+    if (!hit) continue;
+    const wrap = hit.closest(".sun-term-wrap");
+    const ray = hit.closest(".sun-ray");
+    if (wrap && ray) {
+      return { wrap, ray, termId: wrap.dataset.termId || null };
+    }
+  }
+  return null;
+}
+
 function applyOverviewHoverAtPointer(clientX, clientY, { maintainOnMiss = false } = {}) {
-  if (isFocusActive() || overviewProgress > 0.02) return;
+  if (isFocusActive()) return;
+
+  if (isOverviewTimelineMode()) {
+    if (viewport?.classList.contains("is-timeline-scrubbing")) {
+      if (hoveredTimelineTermId || hoveredWrap) clearOverviewTermHover();
+      return;
+    }
+    const target = findTimelineHoverTargetAtPointer(clientX, clientY);
+    if (target?.wrap && target?.ray) {
+      setTermHover(target.ray, target.wrap);
+      return;
+    }
+    if (!maintainOnMiss) clearOverviewTermHover();
+    return;
+  }
+
+  if (overviewProgress > 0.02) return;
 
   snapActiveRowToCenterIfNeeded();
   if (isArcScrollMotionActive()) return;
@@ -1576,7 +1655,7 @@ function ensureMomentumLoop() {
     const timeSinceWheel = now - lastWheelAt;
 
     if (timeSinceWheel >= LAYOUT.scrollCoastStartMs || lastWheelWasNotch) {
-      if (timeSinceWheel >= LAYOUT.scrollCoastDelayMs && settleSnapIndex === null) {
+      if (timeSinceWheel >= LAYOUT.scrollCoastDelayMs) {
         settleSnapIndex = resolveSnapIndex(arc, scrollVelocity);
       }
 
@@ -1593,8 +1672,8 @@ function ensureMomentumLoop() {
         settleSnapIndex !== null &&
         Math.abs(scrollVelocity) < LAYOUT.scrollMomentumHandoffVelocity
       ) {
-        const idx = settleSnapIndex;
         const handoffVelocity = scrollVelocity;
+        const idx = resolveSnapIndex(arc, handoffVelocity);
         settleSnapIndex = null;
         scrollVelocity = 0;
         momentumFrame = null;
@@ -1604,8 +1683,9 @@ function ensureMomentumLoop() {
           fineGestureActive = false;
           animateSnapTo(idx, arc, {
             startVelocity: 0,
-            ease: easeOutCubic,
-            durationMs: LAYOUT.scrollFineSettleMs,
+            ease: easeRoulette,
+            durationMs: getSnapDurationMs(arc, 0),
+            lockHighlight: false,
           });
         } else {
           animateSnapTo(idx, arc, { startVelocity: handoffVelocity });
@@ -1643,7 +1723,7 @@ function snapToNearest(arc) {
   if (isFocusActive() || isTermNavigating()) return;
   if (overviewProgress > 0.02 || overviewTarget > 0) return;
   const velocity = scrollVelocity;
-  const idx = settleSnapIndex ?? resolveSnapIndex(arc, velocity);
+  const idx = resolveSnapIndex(arc, velocity);
   settleSnapIndex = null;
   scrollVelocity = 0;
 
@@ -1662,8 +1742,9 @@ function snapToNearest(arc) {
     fineGestureActive = false;
     animateSnapTo(targetIdx, arc, {
       startVelocity: 0,
-      ease: easeOutCubic,
-      durationMs: LAYOUT.scrollFineSettleMs,
+      ease: easeRoulette,
+      durationMs: getSnapDurationMs(arc, 0),
+      lockHighlight: false,
     });
     return;
   }
@@ -6502,8 +6583,6 @@ function resetTermPageLabelRow(rowEl) {
     textEl.innerHTML = "";
     textEl.style.left = "";
     textEl.style.width = "";
-    textEl.style.removeProperty("--term-page-value-end-inset");
-    textEl.classList.remove("has-first-lines-end-inset");
   }
   if (headingEl) {
     headingEl.style.left = "";
@@ -10622,22 +10701,27 @@ function getTermPageScrollMetaColumnConfig() {
 
 function getTermPageEmphasizeColumnConfig() {
   const cfg = termPageScrollLayout;
+  const columns = cfg.emphasizeColumns ?? cfg.emphasizeValueColumns;
+  const columnFromRight = cfg.emphasizeColumnFromRight ?? cfg.emphasizeValueColumnFromRight;
   return {
-    headingColumns: cfg.emphasizeHeadingColumns,
-    headingColumnFromRight: cfg.emphasizeHeadingColumnFromRight,
-    valueColumns: cfg.emphasizeValueColumns,
-    valueColumnFromRight: cfg.emphasizeValueColumnFromRight,
-    valueEndInsetColumns: cfg.emphasizeValueEndInsetColumns ?? 0,
+    stacked: true,
+    headingColumns: columns,
+    headingColumnFromRight: columnFromRight,
+    valueColumns: columns,
+    valueColumnFromRight: columnFromRight,
   };
 }
 
 function getTermPageObscureColumnConfig() {
   const cfg = termPageScrollLayout;
+  const columns = cfg.obscureColumns ?? cfg.obscureValueColumns;
+  const columnFromRight = cfg.obscureColumnFromRight ?? cfg.obscureValueColumnFromRight;
   return {
-    headingColumns: cfg.obscureHeadingColumns,
-    headingColumnFromRight: cfg.obscureHeadingColumnFromRight,
-    valueColumns: cfg.obscureValueColumns,
-    valueColumnFromRight: cfg.obscureValueColumnFromRight,
+    stacked: true,
+    headingColumns: columns,
+    headingColumnFromRight: columnFromRight,
+    valueColumns: columns,
+    valueColumnFromRight: columnFromRight,
   };
 }
 
@@ -10662,10 +10746,12 @@ function resetTermPageScrollDetailRow(sideEl) {
     textEl.innerHTML = "";
     textEl.style.left = "";
     textEl.style.width = "";
+    textEl.style.top = "";
   }
   if (headingEl) {
     headingEl.style.left = "";
     headingEl.style.width = "";
+    headingEl.style.top = "";
   }
 }
 
@@ -10687,20 +10773,19 @@ function updateTermPageScrollDetailRow(
     return false;
   }
 
+  const isStacked = columnConfig.stacked === true;
   const headingSpan = getGridSpanBounds(
     columnConfig.headingColumns,
     columnConfig.headingColumnFromRight,
     viewport
   );
-  const valueSpan = getGridSpanBounds(
-    columnConfig.valueColumns,
-    columnConfig.valueColumnFromRight,
-    viewport
-  );
-
-  const valueEndInsetColumns = columnConfig.valueEndInsetColumns ?? 0;
-  const { colWidth, gutter } = getGridMetrics();
-  const valueEndInsetPx = valueEndInsetColumns * (colWidth + gutter);
+  const valueSpan = isStacked
+    ? headingSpan
+    : getGridSpanBounds(
+        columnConfig.valueColumns,
+        columnConfig.valueColumnFromRight,
+        viewport
+      );
 
   if (!layoutOnly) {
     setAnnotatedTermText(textEl, trimmed, term);
@@ -10710,14 +10795,18 @@ function updateTermPageScrollDetailRow(
   headingEl.style.width = `${headingSpan.width}px`;
   textEl.style.left = `${valueSpan.left}px`;
   textEl.style.width = `${valueSpan.width}px`;
-  textEl.classList.toggle("has-first-lines-end-inset", valueEndInsetPx > 0);
-  if (valueEndInsetPx > 0) {
-    textEl.style.setProperty("--term-page-value-end-inset", `${valueEndInsetPx}px`);
+
+  const headingGap = 8;
+  if (isStacked) {
+    headingEl.style.top = "0";
+    textEl.style.top = `${headingEl.offsetHeight + headingGap}px`;
+    sideEl.style.height = `${headingEl.offsetHeight + headingGap + textEl.offsetHeight}px`;
   } else {
-    textEl.style.removeProperty("--term-page-value-end-inset");
+    headingEl.style.top = "0";
+    textEl.style.top = "0";
+    sideEl.style.height = `${Math.max(headingEl.offsetHeight, textEl.offsetHeight)}px`;
   }
   sideEl.hidden = false;
-  sideEl.style.height = `${Math.max(headingEl.offsetHeight, textEl.offsetHeight)}px`;
   return true;
 }
 
@@ -14209,6 +14298,8 @@ function enterOverviewAfterUnfocus(mode) {
   }
   if (overviewSubMode !== mode) {
     setOverviewSubModeInternal(mode);
+  } else {
+    onTimelineViewEnter();
   }
   setOverviewTarget(1);
 }
@@ -14311,9 +14402,15 @@ function navigateViaHome(onHomeReady, timing = PAGE_ROUTE_TIMING) {
  * Route a page-to-page navigation through the home map view, playing the
  * scramble transition on the close leg so the home view animates in between.
  * @param {() => void} onHomeReady
+ * @param {{ exitMs: number, enterMs: number }} [timing]
+ * @param {{ snapOverviewClose?: boolean }} [options]
  * @returns {boolean}
  */
-function routeViaHomeScramble(onHomeReady, timing = PAGE_ROUTE_TIMING) {
+function routeViaHomeScramble(
+  onHomeReady,
+  timing = PAGE_ROUTE_TIMING,
+  { snapOverviewClose = false } = {}
+) {
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) {
     return false;
   }
@@ -14343,7 +14440,7 @@ function routeViaHomeScramble(onHomeReady, timing = PAGE_ROUTE_TIMING) {
   if (isInOverview()) {
     runPageNavScrambleTransition(
       "overview",
-      () => beginOverviewClose(),
+      () => beginOverviewClose({ snap: snapOverviewClose }),
       "map",
       onHomeReady,
       timing
@@ -14650,7 +14747,10 @@ function beginOverviewOpen(mode, { snap = false } = {}) {
     cancelOverviewAnimation();
     refreshMapLayoutFromViewport();
     if (currentLayout) render(currentLayout);
-    if (mode === "timeline") syncTimelineScrollHint();
+    if (mode === "timeline") {
+      syncTimelineScrollHint();
+      tryStartTimelineEnterAnimation();
+    }
   }
 }
 
@@ -14947,7 +15047,11 @@ function openTermViaHome(termId) {
   // page it snaps the overview closed and scrambles the sun ring straight back
   // in, so the home view fills the frame immediately instead of leaving a blank
   // beat between the tags content vanishing and the sun reappearing.
-  routeViaHomeScramble(() => openTermById(termId));
+  // Timeline has no covering grid — snap closed like tags/index so the exit
+  // scramble reads as the animation instead of a zoom-out tween.
+  routeViaHomeScramble(() => openTermById(termId), PAGE_ROUTE_TIMING, {
+    snapOverviewClose: isOverviewTimelineMode(),
+  });
 }
 
 function consumeSessionNavIntent() {
@@ -14993,6 +15097,22 @@ function syncOverviewTermsGridVisibility() {
   }
 }
 
+function resetTimelineViewState() {
+  if (!yearScroll) return;
+  yearScroll.resetToMaxYear();
+  timelineDragState = null;
+  pauseTimelineTicksLoop();
+  hideTimelineEventHint({ immediate: true });
+  if (currentLayout) render(currentLayout);
+}
+
+function onTimelineViewEnter() {
+  resetTimelineViewState();
+  resetTimelineScrollHint();
+  syncTimelineHintFromYearScroll();
+  armTimelineEnterAnimation();
+}
+
 function setOverviewSubModeInternal(mode) {
   overviewSubMode = mode === "timeline" ? "timeline" : "filter";
   setOverviewSubMode(overviewSubMode);
@@ -15001,9 +15121,10 @@ function setOverviewSubModeInternal(mode) {
     cancelScrollMotion();
   }
   if (overviewSubMode === "timeline") {
-    resetTimelineScrollHint();
-    syncTimelineHintFromYearScroll();
+    onTimelineViewEnter();
   } else {
+    clearOverviewTermHover();
+    resetTimelineEnterState();
     hideTimelineEventHint({ immediate: true });
     hideTimelineScrollHint();
   }
@@ -15026,13 +15147,21 @@ function flushPendingAfterHome() {
 
 function setOverviewTarget(value) {
   if (isFocusActive() || isTermNavigating()) return;
-  if (value > 0) clearArcTermLayout();
+  if (value > 0) {
+    clearArcTermLayout();
+    hideScrollHint();
+  }
   overviewTarget = value;
   if (value === 0) {
     hideTimelineEventHint({ immediate: true });
     hideTimelineScrollHint();
+    if (overviewSubMode === "timeline") {
+      clearOverviewTermHover();
+      resetTimelineEnterState();
+    }
   } else if (overviewSubMode === "timeline") {
     syncTimelineScrollHint();
+    tryStartTimelineEnterAnimation();
   }
   if (value > 0) {
     cancelScrollMotion();
@@ -15043,6 +15172,9 @@ function setOverviewTarget(value) {
     cancelOverviewAnimation();
     syncOverviewTermsGridVisibility();
     flushPendingAfterHome();
+    if (overviewTarget > 0 && overviewSubMode === "timeline") {
+      tryStartTimelineEnterAnimation();
+    }
     return;
   }
   // (Re)anchor the eased tween from wherever the zoom currently sits so a
@@ -15080,6 +15212,9 @@ function tickOverview() {
     }
     flushPendingAfterHome();
     syncOverviewTermsGridVisibility();
+    if (overviewTarget > 0 && overviewSubMode === "timeline") {
+      tryStartTimelineEnterAnimation();
+    }
   } else {
     overviewProgress =
       overviewAnimFromProgress +
@@ -15112,8 +15247,10 @@ function bindOverviewHover() {
 
   viewport.addEventListener("mouseleave", () => {
     lastPointer.known = false;
-    if (isFocusActive() || overviewProgress > 0.02) return;
-    clearOverviewTermHover();
+    if (isFocusActive()) return;
+    if (isOverviewTimelineMode() || overviewProgress <= 0.02) {
+      clearOverviewTermHover();
+    }
   });
 }
 
@@ -15125,7 +15262,7 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-const TIMELINE_TICK_BASE_LEN = 8;
+const TIMELINE_TICK_BASE_LEN = 14;
 const TIMELINE_TICK_ACTIVE_LEN = 96;
 const TIMELINE_TICK_WAVE_SPREAD = 1;
 const TIMELINE_TICK_LABEL_GAP = 8;
@@ -15137,11 +15274,118 @@ const TIMELINE_TICK_LABEL_ANCHOR = TIMELINE_TICK_ACTIVE_LEN;
 const TIMELINE_TICK_EASE_TAU = 0.08;
 /** Below this gap to the target the wave is treated as settled. */
 const TIMELINE_TICK_SETTLE_EPS = 0.0015;
+/** Tick-ruler entrance — ticks grow year-by-year in parallel with the sun zoom, then labels scramble in. */
+const TIMELINE_ENTER_YEAR_STEP_MS = 7;
+const TIMELINE_ENTER_TICK_GROW_MS = 90;
 
 let timelineTicksLayer = null;
+let timelineTickLabelsEl = null;
+let timelineTickYearEl = null;
+let timelineTickTitleEl = null;
 let timelineTicksVisualYear = null;
 let timelineTicksRafId = null;
 let timelineTicksLastFrame = 0;
+let timelineEnterAnimating = false;
+let timelineEnterArmed = false;
+let timelineEnterStartTime = 0;
+let timelineEnterScramblePending = false;
+let lastTimelineTickLabelYear = null;
+let timelineDragState = null;
+let timelineDragBound = false;
+let timelineDragStrip = null;
+
+function getTimelineDragPixelsPerYear() {
+  if (!viewport) return 1;
+  const viewportWidth = viewport.getBoundingClientRect().width;
+  const margin = getTimelineTickMargin();
+  const usableW = viewportWidth - margin * 2;
+  const range = timelineMaxYear - timelineMinYear;
+  if (usableW <= 0 || range <= 0) return 1;
+  return usableW / range;
+}
+
+function ensureTimelineDragStrip() {
+  if (timelineDragStrip) return timelineDragStrip;
+  if (!viewport) return null;
+  const strip = document.createElement("div");
+  strip.id = "sun-timeline-drag-strip";
+  strip.className = "sun-timeline-drag-strip";
+  strip.hidden = true;
+  strip.setAttribute("aria-hidden", "true");
+  viewport.appendChild(strip);
+  timelineDragStrip = strip;
+  return strip;
+}
+
+function syncTimelineDragStripVisibility() {
+  if (!viewport) return;
+  const active = isOverviewTimelineMode();
+  viewport.classList.toggle("is-timeline-scrub-active", active);
+  const strip = ensureTimelineDragStrip();
+  if (strip) strip.hidden = !active;
+  if (!active) {
+    viewport.classList.remove("is-timeline-scrubbing");
+    timelineDragState = null;
+  }
+}
+
+function bindTimelineDrag() {
+  if (timelineDragBound) return;
+  timelineDragBound = true;
+  if (!viewport) return;
+  const strip = ensureTimelineDragStrip();
+  if (!strip) return;
+
+  const finishDrag = (event) => {
+    if (!timelineDragState || event.pointerId !== timelineDragState.pointerId) return;
+    if (viewport.hasPointerCapture(event.pointerId)) {
+      viewport.releasePointerCapture(event.pointerId);
+    }
+    viewport.classList.remove("is-timeline-scrubbing");
+    if (timelineDragState.dragging && yearScroll) {
+      yearScroll.endPointerDrag();
+    }
+    timelineDragState = null;
+    if (lastPointer.known) {
+      applyOverviewHoverAtPointer(lastPointer.x, lastPointer.y);
+    }
+  };
+
+  strip.addEventListener("pointerdown", (event) => {
+    if (!isOverviewTimelineMode() || !yearScroll || event.button !== 0) return;
+    if (
+      event.target.closest(
+        "a, button, input, textarea, select, [data-no-timeline-drag]"
+      )
+    ) {
+      return;
+    }
+    event.preventDefault();
+    timelineDragState = {
+      pointerId: event.pointerId,
+      lastX: event.clientX,
+      dragging: false,
+    };
+    viewport.setPointerCapture(event.pointerId);
+  });
+
+  viewport.addEventListener("pointermove", (event) => {
+    if (!timelineDragState || event.pointerId !== timelineDragState.pointerId) return;
+    const deltaX = event.clientX - timelineDragState.lastX;
+    timelineDragState.lastX = event.clientX;
+    if (!timelineDragState.dragging && Math.abs(deltaX) < 2) return;
+    timelineDragState.dragging = true;
+    viewport.classList.add("is-timeline-scrubbing");
+    clearOverviewTermHover();
+    event.preventDefault();
+    const pixelsPerYear = getTimelineDragPixelsPerYear();
+    yearScroll.applyDragDeltaYears(deltaX / pixelsPerYear);
+    dismissTimelineScrollHint();
+  });
+
+  viewport.addEventListener("pointerup", finishDrag);
+  viewport.addEventListener("pointercancel", finishDrag);
+}
 
 function smoothstepTimelineTick(t) {
   const x = Math.max(0, Math.min(1, t));
@@ -15169,8 +15413,338 @@ function ensureTimelineTicksLayer() {
   return layer;
 }
 
+function ensureTimelineTickLabelsLayer() {
+  if (timelineTickLabelsEl) return timelineTickLabelsEl;
+  if (!viewport) return null;
+
+  const layer = document.createElement("div");
+  layer.id = "sun-timeline-tick-labels";
+  layer.className = "sun-timeline-tick-labels";
+  layer.setAttribute("aria-hidden", "true");
+
+  const yearEl = document.createElement("span");
+  yearEl.className = "sun-timeline-tick-labels__year";
+  yearEl.hidden = true;
+
+  const titleEl = document.createElement("span");
+  titleEl.className = "sun-timeline-tick-labels__title";
+  titleEl.hidden = true;
+
+  layer.append(yearEl, titleEl);
+  viewport.appendChild(layer);
+  timelineTickLabelsEl = layer;
+  timelineTickYearEl = yearEl;
+  timelineTickTitleEl = titleEl;
+  return layer;
+}
+
+function abortTimelineTickLabelScramble() {
+  if (timelineTickYearEl) abortLetterShuffle(timelineTickYearEl);
+  if (timelineTickTitleEl) abortLetterShuffle(timelineTickTitleEl);
+}
+
+function hideTimelineTickLabels() {
+  abortTimelineTickLabelScramble();
+  if (timelineTickYearEl) {
+    timelineTickYearEl.hidden = true;
+    timelineTickYearEl.textContent = "";
+  }
+  if (timelineTickTitleEl) {
+    timelineTickTitleEl.hidden = true;
+    timelineTickTitleEl.textContent = "";
+  }
+}
+
+function resetTimelineEnterState() {
+  timelineEnterArmed = false;
+  timelineEnterAnimating = false;
+  timelineEnterScramblePending = false;
+  lastTimelineTickLabelYear = null;
+  hideTimelineTickLabels();
+}
+
+function tryStartTimelineEnterAnimation() {
+  if (!timelineEnterArmed || timelineEnterAnimating) return;
+  if (overviewSubMode !== "timeline" || overviewTarget <= 0) return;
+
+  timelineEnterArmed = false;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    timelineEnterScramblePending = true;
+    startTimelineTicksLoop();
+    return;
+  }
+  timelineEnterAnimating = true;
+  timelineEnterStartTime = performance.now();
+  startTimelineTicksLoop();
+}
+
+function isTimelineTicksLoopDesired() {
+  if (overviewSubMode !== "timeline" || overviewTarget <= 0 || !yearScroll) return false;
+  if (isOverviewTimelineMode()) return true;
+  return timelineEnterArmed || timelineEnterAnimating || timelineEnterScramblePending;
+}
+
+function armTimelineEnterAnimation() {
+  resetTimelineEnterState();
+  timelineEnterArmed = true;
+  tryStartTimelineEnterAnimation();
+}
+
+function getTimelineEnterYearCount() {
+  return Math.max(1, timelineMaxYear - timelineMinYear);
+}
+
+function getTimelineEnterTotalMs() {
+  return (
+    getTimelineEnterYearCount() * TIMELINE_ENTER_YEAR_STEP_MS +
+    TIMELINE_ENTER_TICK_GROW_MS
+  );
+}
+
+function getTimelineEnterElapsed(now = performance.now()) {
+  if (!timelineEnterAnimating) return getTimelineEnterTotalMs();
+  const elapsed = now - timelineEnterStartTime;
+  const total = getTimelineEnterTotalMs();
+  if (elapsed >= total) {
+    timelineEnterAnimating = false;
+    if (!timelineEnterScramblePending) {
+      timelineEnterScramblePending = true;
+    }
+    return total;
+  }
+  return elapsed;
+}
+
+/** True once a tick's bottom-to-top grow has fully completed. */
+function isTimelineYearTickFullyRaised(year, minYear, elapsedMs) {
+  const tickStart = (year - minYear) * TIMELINE_ENTER_YEAR_STEP_MS;
+  return elapsedMs >= tickStart + TIMELINE_ENTER_TICK_GROW_MS;
+}
+
+function maybeTriggerTimelineEnterLabelScramble(labelYear, minYear, elapsedMs) {
+  if (!timelineEnterAnimating || timelineEnterScramblePending) return;
+  if (!isTimelineYearTickFullyRaised(labelYear, minYear, elapsedMs)) return;
+  timelineEnterScramblePending = true;
+}
+
+/** Each tick rises in sequence from minYear → maxYear. */
+function timelineTickEnterFactor(year, minYear, elapsedMs) {
+  const yearIndex = year - minYear;
+  const tickStart = yearIndex * TIMELINE_ENTER_YEAR_STEP_MS;
+  const localElapsed = elapsedMs - tickStart;
+  if (localElapsed <= 0) return 0;
+  const t = clamp(localElapsed / TIMELINE_ENTER_TICK_GROW_MS, 0, 1);
+  return smoothstepTimelineTick(t);
+}
+
+/**
+ * @param {HTMLElement} el
+ * @param {number} x
+ * @param {number} top
+ * @param {boolean} flipToLeft
+ * @param {number} viewportWidth
+ */
+function positionTimelineTickLabelEl(el, x, top, flipToLeft, viewportWidth) {
+  el.style.top = `${top}px`;
+  if (flipToLeft) {
+    el.style.left = "";
+    el.style.right = `${Math.max(0, viewportWidth - x)}px`;
+    el.style.textAlign = "right";
+  } else {
+    el.style.right = "";
+    el.style.left = `${x}px`;
+    el.style.textAlign = "left";
+  }
+}
+
+function scrambleTimelineTickLabels(
+  labelYear,
+  titleText,
+  labelX,
+  flipToLeft,
+  labelTopY,
+  viewportWidth
+) {
+  ensureTimelineTickLabelsLayer();
+  if (!timelineTickYearEl) return;
+
+  abortTimelineTickLabelScramble();
+
+  positionTimelineTickLabelEl(
+    timelineTickYearEl,
+    labelX,
+    labelTopY,
+    flipToLeft,
+    viewportWidth
+  );
+  timelineTickYearEl.hidden = false;
+  playLightLetterShuffleTo(timelineTickYearEl, String(labelYear));
+
+  const title = titleText ? applyTypographyRules(titleText) : "";
+  if (!timelineTickTitleEl) return;
+
+  positionTimelineTickLabelEl(
+    timelineTickTitleEl,
+    labelX,
+    labelTopY + TIMELINE_TICK_TITLE_OFFSET,
+    flipToLeft,
+    viewportWidth
+  );
+
+  if (!title) {
+    abortLetterShuffle(timelineTickTitleEl);
+    timelineTickTitleEl.hidden = true;
+    timelineTickTitleEl.textContent = "";
+    return;
+  }
+
+  timelineTickTitleEl.hidden = false;
+  playLightLetterShuffleTo(timelineTickTitleEl, title);
+}
+
+function setTimelineTickLabelsImmediate(
+  labelYear,
+  titleText,
+  labelX,
+  flipToLeft,
+  labelTopY,
+  viewportWidth
+) {
+  ensureTimelineTickLabelsLayer();
+  if (!timelineTickYearEl) return;
+
+  abortTimelineTickLabelScramble();
+  positionTimelineTickLabelEl(
+    timelineTickYearEl,
+    labelX,
+    labelTopY,
+    flipToLeft,
+    viewportWidth
+  );
+  timelineTickYearEl.hidden = false;
+  timelineTickYearEl.textContent = String(labelYear);
+
+  const title = titleText ? applyTypographyRules(titleText) : "";
+  if (!timelineTickTitleEl) return;
+
+  positionTimelineTickLabelEl(
+    timelineTickTitleEl,
+    labelX,
+    labelTopY + TIMELINE_TICK_TITLE_OFFSET,
+    flipToLeft,
+    viewportWidth
+  );
+
+  if (!title) {
+    timelineTickTitleEl.hidden = true;
+    timelineTickTitleEl.textContent = "";
+    return;
+  }
+
+  timelineTickTitleEl.hidden = false;
+  timelineTickTitleEl.textContent = title;
+}
+
+function repositionVisibleTimelineTickLabels(
+  labelX,
+  flipToLeft,
+  labelTopY,
+  viewportWidth
+) {
+  if (!timelineTickYearEl || timelineTickYearEl.hidden) return;
+  positionTimelineTickLabelEl(
+    timelineTickYearEl,
+    labelX,
+    labelTopY,
+    flipToLeft,
+    viewportWidth
+  );
+  if (!timelineTickTitleEl || timelineTickTitleEl.hidden) return;
+  positionTimelineTickLabelEl(
+    timelineTickTitleEl,
+    labelX,
+    labelTopY + TIMELINE_TICK_TITLE_OFFSET,
+    flipToLeft,
+    viewportWidth
+  );
+}
+
+function syncTimelineTickLabels(
+  labelYear,
+  titleText,
+  labelX,
+  flipToLeft,
+  labelTopY,
+  viewportWidth,
+  { reducedMotion = false } = {}
+) {
+  if (timelineEnterAnimating && !timelineEnterScramblePending) {
+    hideTimelineTickLabels();
+    return;
+  }
+
+  if (timelineEnterScramblePending) {
+    timelineEnterScramblePending = false;
+    revealTimelineScrollHint({ reducedMotion });
+    lastTimelineTickLabelYear = labelYear;
+    if (reducedMotion) {
+      setTimelineTickLabelsImmediate(
+        labelYear,
+        titleText,
+        labelX,
+        flipToLeft,
+        labelTopY,
+        viewportWidth
+      );
+    } else {
+      scrambleTimelineTickLabels(
+        labelYear,
+        titleText,
+        labelX,
+        flipToLeft,
+        labelTopY,
+        viewportWidth
+      );
+    }
+    return;
+  }
+
+  if (labelYear === lastTimelineTickLabelYear) {
+    repositionVisibleTimelineTickLabels(
+      labelX,
+      flipToLeft,
+      labelTopY,
+      viewportWidth
+    );
+    return;
+  }
+  lastTimelineTickLabelYear = labelYear;
+
+  if (reducedMotion) {
+    setTimelineTickLabelsImmediate(
+      labelYear,
+      titleText,
+      labelX,
+      flipToLeft,
+      labelTopY,
+      viewportWidth
+    );
+    return;
+  }
+
+  scrambleTimelineTickLabels(
+    labelYear,
+    titleText,
+    labelX,
+    flipToLeft,
+    labelTopY,
+    viewportWidth
+  );
+}
+
 function hideTimelineTicksLayer() {
   if (timelineTicksLayer) timelineTicksLayer.innerHTML = "";
+  hideTimelineTickLabels();
 }
 
 /**
@@ -15178,7 +15752,7 @@ function hideTimelineTicksLayer() {
  * (eased) year position so the elongation reads as a smooth travelling wave.
  * @param {number} visualYear
  */
-function drawTimelineTicks(visualYear) {
+function drawTimelineTicks(visualYear, now = performance.now()) {
   const layer = ensureTimelineTicksLayer();
   if (!layer) return;
 
@@ -15197,19 +15771,34 @@ function drawTimelineTicks(visualYear) {
 
   const labelYear = Math.max(minYear, Math.min(maxYear, Math.round(visualYear)));
   const activeTitle = getTimelineEventText(labelYear);
-  const hasTitle = Boolean(activeTitle);
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const enterElapsed = reducedMotion
+    ? getTimelineEnterTotalMs()
+    : getTimelineEnterElapsed(now);
 
   const baseY = viewportHeight;
   const usableW = viewportWidth - margin * 2;
   const yearToX = (year) => margin + ((year - minYear) / range) * usableW;
 
-  const tickLengthForYear = (year) => {
+  const settledTickLength = (year) => {
     const dist = Math.abs(year - visualYear);
     const t = smoothstepTimelineTick(1 - dist / TIMELINE_TICK_WAVE_SPREAD);
     return (
       TIMELINE_TICK_BASE_LEN +
       (TIMELINE_TICK_ACTIVE_LEN - TIMELINE_TICK_BASE_LEN) * t
     );
+  };
+
+  const enterWaveActive = timelineEnterAnimating;
+
+  const tickLengthForYear = (year) => {
+    const targetLen = settledTickLength(year);
+    const enterK = timelineTickEnterFactor(year, minYear, enterElapsed);
+    if (enterWaveActive) {
+      if (enterK <= 0) return 0;
+      return targetLen * smoothstepTimelineTick(enterK);
+    }
+    return targetLen;
   };
 
   const parts = [];
@@ -15221,36 +15810,33 @@ function drawTimelineTicks(visualYear) {
     );
   }
 
+  layer.innerHTML = parts.join("");
+
+  maybeTriggerTimelineEnterLabelScramble(labelYear, minYear, enterElapsed);
+
   const activeX = yearToX(labelYear);
-  // Fixed vertical anchor — the text stays put regardless of the wave height.
   const labelTopY = baseY - TIMELINE_TICK_LABEL_ANCHOR;
   const flipToLeft = activeX > viewportWidth * 0.5;
-  const textAnchor = flipToLeft ? "end" : "start";
   const labelX = flipToLeft
     ? activeX - TIMELINE_TICK_LABEL_GAP
     : activeX + TIMELINE_TICK_LABEL_GAP;
 
-  parts.push(
-    `<text class="sun-timeline-tick-year" x="${labelX.toFixed(2)}" y="${labelTopY.toFixed(2)}" text-anchor="${textAnchor}" dominant-baseline="hanging">${labelYear}</text>`
+  syncTimelineTickLabels(
+    labelYear,
+    activeTitle,
+    labelX,
+    flipToLeft,
+    labelTopY,
+    viewportWidth,
+    { reducedMotion }
   );
-
-  if (hasTitle) {
-    const titleText = applyTypographyRules(activeTitle);
-    parts.push(
-      `<text class="sun-timeline-tick-title" x="${labelX.toFixed(2)}" y="${(labelTopY + TIMELINE_TICK_TITLE_OFFSET).toFixed(2)}" text-anchor="${textAnchor}" dominant-baseline="hanging">${escapeHtml(titleText)}</text>`
-    );
-  }
-
-  layer.innerHTML = parts.join("");
 }
 
 function timelineTicksFrame(now) {
   timelineTicksRafId = null;
 
-  if (!isOverviewTimelineMode() || !yearScroll) {
-    hideTimelineTicksLayer();
-    timelineTicksVisualYear = null;
-    timelineTicksLastFrame = 0;
+  if (!isTimelineTicksLoopDesired()) {
+    pauseTimelineTicksLoop();
     return;
   }
 
@@ -15269,9 +15855,11 @@ function timelineTicksFrame(now) {
   const settled = Math.abs(target - timelineTicksVisualYear) < TIMELINE_TICK_SETTLE_EPS;
   if (settled) timelineTicksVisualYear = target;
 
-  drawTimelineTicks(timelineTicksVisualYear);
+  drawTimelineTicks(timelineTicksVisualYear, now);
 
-  if (!settled) {
+  const needsEnterFrames =
+    timelineEnterAnimating || timelineEnterScramblePending;
+  if (!settled || needsEnterFrames) {
     timelineTicksRafId = requestAnimationFrame(timelineTicksFrame);
   } else {
     timelineTicksLastFrame = 0;
@@ -15279,20 +15867,25 @@ function timelineTicksFrame(now) {
 }
 
 function startTimelineTicksLoop() {
-  if (!isOverviewTimelineMode() || !yearScroll) return;
+  if (!isTimelineTicksLoopDesired()) return;
   if (timelineTicksRafId != null) return;
   timelineTicksLastFrame = 0;
   timelineTicksRafId = requestAnimationFrame(timelineTicksFrame);
 }
 
-function stopTimelineTicksLoop() {
+function pauseTimelineTicksLoop() {
   if (timelineTicksRafId != null) {
     cancelAnimationFrame(timelineTicksRafId);
     timelineTicksRafId = null;
   }
   timelineTicksVisualYear = null;
   timelineTicksLastFrame = 0;
-  hideTimelineTicksLayer();
+  if (timelineTicksLayer) timelineTicksLayer.innerHTML = "";
+}
+
+function stopTimelineTicksLoop() {
+  pauseTimelineTicksLoop();
+  resetTimelineEnterState();
 }
 
 function prepareRenderParts(layout) {
@@ -15374,25 +15967,28 @@ function prepareRenderParts(layout) {
     "sun-is-unfocusing",
     focusState?.phase === "unfocusing"
   );
-  if (overview > 0.02 && hoveredRay) {
+  if (overview > 0.02 && hoveredRay && !isOverviewTimelineMode()) {
     hoveredRay.classList.remove("is-term-hover");
     hoveredWrap?.classList.remove("is-hovered");
     clearTermHover();
   }
 
-  const timelineYears =
+  const timelineContext =
     overview > 0.02 && overviewSubMode === "timeline" && yearScroll
-      ? yearScroll.getDisplayedYears()
+      ? {
+          continuousYear: yearScroll.getContinuousYear(),
+          settled: yearScroll.isSettled(),
+        }
       : null;
 
-  return { parts, overview, fontSize, timelineYears };
+  return { parts, overview, fontSize, timelineContext };
 }
 
 function appendRenderGroup(parts, layout, groupIndex, renderContext) {
   if (isOverviewTagsMode()) return;
   if (!isGroupVisible(groupIndex, layout)) return;
 
-  const { overview, fontSize, timelineYears } = renderContext;
+  const { overview, fontSize, timelineContext } = renderContext;
   const group = groups[groupIndex];
   const transform = getGroupTransform(groupIndex, layout);
   const { anchor, rotation, placed } = layoutTermsOnRay(transform, group.terms, layout);
@@ -15489,19 +16085,32 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
           ? " is-newly-censored is-censoring"
           : " is-newly-censored"
         : "";
+    const isSelectedTerm =
+      Boolean(selectedClass) &&
+      termPageSelectedFontSettled &&
+      focusState.phase === "locked";
 
     let termWrapStyle = "";
-    if (timelineYears) {
-      const termOpacity = getTermOpacity(
+    let timelineEdgeClass = "";
+    let termFontSize = isSelectedTerm
+      ? getTermPageSelectedFontSizePx(layout.viewportWidth)
+      : fontSize;
+
+    if (timelineContext) {
+      const timelineVisual = getTimelineTermVisual(
         termYearIndex,
         tp.term.id,
-        timelineYears.fromYear,
-        timelineYears.toYear,
-        timelineYears.blend
+        timelineContext.continuousYear,
+        { settled: timelineContext.settled }
       );
-      if (termOpacity < 0.01) continue;
-      if (termOpacity < 0.999) {
-        termWrapStyle = ` style="opacity:${termOpacity.toFixed(3)}"`;
+      if (!timelineVisual.visible) continue;
+
+      if (timelineVisual.opacity < 0.999) {
+        termWrapStyle = ` style="opacity:${timelineVisual.opacity.toFixed(3)}"`;
+      }
+      if (timelineVisual.useMutedFill) timelineEdgeClass = " is-timeline-edge";
+      if (timelineVisual.fontScale !== 1) {
+        termFontSize = Math.round(termFontSize * timelineVisual.fontScale);
       }
     }
 
@@ -15511,17 +16120,12 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
       isActiveRay &&
       usesTermPageAlphabeticBaseline();
     const termBaseline = useTermPageBaseline ? "alphabetic" : "middle";
-    const isSelectedTerm =
-      Boolean(selectedClass) &&
-      termPageSelectedFontSettled &&
-      focusState.phase === "locked";
-    const selectedFontSize = getTermPageSelectedFontSizePx(layout.viewportWidth);
     const termStyle = isSelectedTerm
-      ? `font-family:Secolo,serif;font-size:${selectedFontSize}px;font-weight:normal`
-      : `font-size:${fontSize}px`;
+      ? `font-family:Secolo,serif;font-size:${termFontSize}px;font-weight:normal`
+      : `font-size:${termFontSize}px`;
 
     parts.push(
-      `<g class="sun-term-wrap${selectedClass}${displayFontClass}${carouselClass}${newlyCensoredClass}"${termWrapStyle} data-term-index="${termIndex}" data-term-id="${escapeAttr(tp.term.id)}">`
+      `<g class="sun-term-wrap${selectedClass}${displayFontClass}${carouselClass}${newlyCensoredClass}${timelineEdgeClass}"${termWrapStyle} data-term-index="${termIndex}" data-term-id="${escapeAttr(tp.term.id)}">`
     );
     parts.push('<rect class="sun-term-hit" fill="rgba(0,0,0,0.001)" />');
     parts.push(
@@ -15545,9 +16149,14 @@ function appendRenderGroup(parts, layout, groupIndex, renderContext) {
 }
 
 function finalizeRender(layout) {
+  const previousTimelineHoverId = hoveredTimelineTermId;
   clearTermHover();
+  clearTimelineTermHoverClasses();
   if (hoveredTitleRowTermId && !isFocusActive()) {
     restoreOverviewTermHoverFromState();
+  }
+  if (isOverviewTimelineMode()) {
+    syncTimelineHoverFromPointer(previousTimelineHoverId);
   }
   refineTermPositions(layout);
   refineTermPagePositions();
@@ -15601,10 +16210,11 @@ function finalizeRender(layout) {
   syncSiteNavFromMap(getActiveNavTarget);
   repositionTimelineEventHint();
   repositionTimelineScrollHint();
-  if (isOverviewTimelineMode()) {
+  syncTimelineDragStripVisibility();
+  if (isTimelineTicksLoopDesired()) {
     startTimelineTicksLoop();
   } else {
-    stopTimelineTicksLoop();
+    pauseTimelineTicksLoop();
   }
 }
 
@@ -15638,21 +16248,46 @@ async function renderIncremental(layout, frameBudgetMs = 10) {
 }
 
 function clearTermHover() {
-  if (hoveredWrap) {
+  if (hoveredWrap?.isConnected) {
     stopLetterShuffle(getLetterShuffleTarget(hoveredWrap));
   }
   hoveredRay = null;
   hoveredWrap = null;
+  hoveredTimelineTermId = null;
 }
 
-function setTermHover(ray, wrap) {
+function syncTimelineHoverFromPointer(previousTermId = null) {
+  if (!isOverviewTimelineMode() || !lastPointer.known) return;
+  if (viewport?.classList.contains("is-timeline-scrubbing")) return;
+
+  const target = findTimelineHoverTargetAtPointer(lastPointer.x, lastPointer.y);
+  if (!target?.wrap || !target?.ray || !target.termId) return;
+
+  if (previousTermId && previousTermId === target.termId) {
+    hoveredTimelineTermId = target.termId;
+    hoveredRay = target.ray;
+    hoveredWrap = target.wrap;
+    target.ray.classList.add("is-term-hover");
+    target.wrap.classList.add("is-hovered");
+    return;
+  }
+
+  setTermHover(target.ray, target.wrap);
+}
+
+function setTermHover(ray, wrap, { scramble = true } = {}) {
   if (hoveredRay === ray && hoveredWrap === wrap) return;
   clearTermHover();
   hoveredRay = ray;
   hoveredWrap = wrap;
+  if (isOverviewTimelineMode()) {
+    hoveredTimelineTermId = wrap.dataset.termId || null;
+  }
   ray.classList.add("is-term-hover");
   wrap.classList.add("is-hovered");
-  startLetterShuffle(getLetterShuffleTarget(wrap));
+  if (scramble) {
+    startLetterShuffle(getLetterShuffleTarget(wrap));
+  }
 }
 
 function getCarouselSteps(clickedIndex, termCount) {
@@ -16013,6 +16648,13 @@ function nearestSnapIndexForGroup(groupIndex, arc) {
   return baseIndex + m * count;
 }
 
+/** Snap index k shifted to the period nearest the current scroll offset. */
+function nearestSnapIndexForSnapIndex(k, arc) {
+  const count = LAYOUT.rayCount || groups.length || 1;
+  const m = Math.round((scrollOffset - snapFract(arc) - k) / count);
+  return k + m * count;
+}
+
 /** Gentle ease-out for click-to-center — no overshoot/wobble bounce. */
 function easeCenterRowSnap(t) {
   if (t >= 1) return 1;
@@ -16064,7 +16706,7 @@ function handleMapTermPointerActivate(event) {
     const overviewTarget = resolveOverviewTermClickTarget(event);
     if (!overviewTarget) return false;
     event.preventDefault();
-    openTermById(overviewTarget.termId);
+    openTermViaHome(overviewTarget.termId);
     return true;
   }
 
@@ -16128,6 +16770,15 @@ function bindTermHover() {
   svgEl.addEventListener("mouseover", (event) => {
     if (!termHoverArmed) return;
     if (isFocusActive()) return;
+    if (isOverviewTimelineMode()) {
+      if (viewport?.classList.contains("is-timeline-scrubbing")) return;
+      const hit = event.target.closest(".sun-term-hit");
+      if (!hit) return;
+      const wrap = hit.closest(".sun-term-wrap");
+      const ray = hit.closest(".sun-ray");
+      if (wrap && ray) setTermHover(ray, wrap);
+      return;
+    }
     if (overviewProgress > 0.02) return;
     if (isArcScrollMotionActive()) return;
 
@@ -16926,7 +17577,8 @@ function animateSnapTo(targetIndex, arc, options = {}) {
   cancelMomentum();
   clearArcTermLayout();
   const start = scrollOffset;
-  const end = scrollOffsetForSnapIndex(targetIndex, arc);
+  const wrappedTarget = nearestSnapIndexForSnapIndex(targetIndex, arc);
+  const end = scrollOffsetForSnapIndex(wrappedTarget, arc);
   const distance = Math.abs(end - start);
   const onComplete = options.onComplete ?? null;
   // A short momentum snap (no explicit ease) lands gently instead of with the
@@ -16943,6 +17595,7 @@ function animateSnapTo(targetIndex, arc, options = {}) {
   if (distance < 0.0005) {
     scrollOffset = end;
     snapAnimTargetIndex = null;
+    snapAnimLockHighlight = true;
     updateActiveFromScroll(arc);
     render(currentLayout);
     onComplete?.();
@@ -16956,7 +17609,8 @@ function animateSnapTo(targetIndex, arc, options = {}) {
 
   clearTitleRowTermHover();
   isSnapping = true;
-  snapAnimTargetIndex = targetIndex;
+  snapAnimTargetIndex = wrappedTarget;
+  snapAnimLockHighlight = options.lockHighlight !== false;
 
   function frame(now) {
     const t = Math.min(1, (now - startTime) / durationMs);
@@ -16971,6 +17625,7 @@ function animateSnapTo(targetIndex, arc, options = {}) {
       isSnapping = false;
       snapAnimFrame = null;
       snapAnimTargetIndex = null;
+      snapAnimLockHighlight = true;
       updateActiveFromScroll(arc);
       render(currentLayout);
       onComplete?.();
@@ -17010,10 +17665,16 @@ function isMouseWheelEvent(event) {
   );
 }
 
-function applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc) {
+function applyMouseWheelDiscrete(
+  wheelDeltaY,
+  inFlightTarget,
+  arc,
+  { allowCooldown = true } = {}
+) {
   const now = performance.now();
   const dir = Math.sign(wheelDeltaY) || 1;
   if (
+    allowCooldown &&
     now - lastArcNotchAt < LAYOUT.mouseNotchCooldownMs &&
     dir === lastArcNotchDir
   ) {
@@ -17025,16 +17686,20 @@ function applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc) {
   scrollVelocity = 0;
   fineGestureActive = false;
   lastWheelAt = now;
-  const base = inFlightTarget ?? resolveSnapIndex(arc, 0);
+  const base = discreteBaseSnap(inFlightTarget, arc);
   animateSnapTo(base - dir, arc, {
     startVelocity: 0,
     ease: easeOutCubic,
-    durationMs: LAYOUT.scrollFineSettleMs,
+    durationMs: allowCooldown
+      ? LAYOUT.scrollFineSettleMs
+      : LAYOUT.mouseFastSettleMs,
+    lockHighlight: true,
   });
   return true;
 }
 
 function applyMouseWheelGlide(wheelDeltaY, arc) {
+  cancelSnapAnimation();
   lastWheelWasNotch = false;
   const mode = getActiveHomeScrollMode();
   wheelScrollLayoutOverrides = mode.layoutOverrides ?? null;
@@ -17051,7 +17716,8 @@ function applyMouseWheelGlide(wheelDeltaY, arc) {
   return true;
 }
 
-function applyMouseWheelRoll(wheelDeltaY, arc) {
+function applyMouseWheelRoll(wheelDeltaY, arc, { maxStep = null } = {}) {
+  cancelSnapAnimation();
   lastWheelWasNotch = false;
   scrollVelocity = 0;
   wheelScrollLayoutOverrides = null;
@@ -17065,7 +17731,11 @@ function applyMouseWheelRoll(wheelDeltaY, arc) {
     fineGestureAnchorIndex = resolveSnapIndex(arc, 0);
   }
 
-  scrollOffset -= wheelDeltaY * sensitivity;
+  let step = wheelDeltaY * sensitivity;
+  if (maxStep != null) {
+    step = clamp(step, -maxStep, maxStep);
+  }
+  scrollOffset -= step;
   lastWheelAt = performance.now();
   updateActiveFromScroll(arc);
   render(arc);
@@ -17074,22 +17744,26 @@ function applyMouseWheelRoll(wheelDeltaY, arc) {
 }
 
 function applyMouseWheelBetweenFast(wheelDeltaY, wheelLegacyDeltaY, inFlightTarget, arc) {
+  cancelSnapAnimation();
+  snapAnimLockHighlight = false;
   // Fast bursts use the same continuous momentum path as the trackpad, so the
   // active row (and its centred pixelated image) tracks the VISUAL centre via an
   // unlocked updateActiveFromScroll — it never locks to a far-ahead row. Two
   // taming tweaks vs the raw trackpad path: (1) the per-frame step is capped so a
   // single macOS-accelerated mouse event can't teleport 100+ rows past the
   // centre, keeping the image visible as rows pass; (2) the settle uses
-  // easeOutCubic instead of the bouncy roulette ease, so it lands centred.
+  // easeRoulette with lockHighlight off so the bounce stays smooth.
   lastWheelWasNotch = false;
   wheelScrollLayoutOverrides = null;
   forceEaseOutSnap = true;
   fineGestureActive = false;
 
   const rawDelta = applyWheelScroll(wheelDeltaY);
-  const maxStep = 4;
-  const delta = clamp(rawDelta, -maxStep, maxStep);
-  scrollVelocity = clamp(scrollVelocity, -maxStep, maxStep);
+  // Deposit impulse into momentum, but nudge scrollOffset gently per event (like
+  // trackpad deltas ~0.7–1.5) so rows pass through the horizontal centre instead
+  // of jumping 4 rows at once and highlighting at the arc edge.
+  const instantCap = 1.15;
+  const delta = clamp(rawDelta, -instantCap, instantCap);
   scrollOffset -= delta;
   updateActiveFromScroll(arc);
   render(arc);
@@ -17102,9 +17776,16 @@ function applyMouseWheelHybrid(wheelDeltaY, wheelLegacyDeltaY, inFlightTarget, a
   const absLegacy = Math.abs(wheelLegacyDeltaY ?? 0);
   const isSlowNotch = absLegacy > 0 && absLegacy <= 120;
   if (isSlowNotch) {
-    return applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc);
+    return applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc, {
+      allowCooldown: true,
+    });
   }
-  return applyMouseWheelBetweenFast(wheelDeltaY, wheelLegacyDeltaY, inFlightTarget, arc);
+  return applyMouseWheelBetweenFast(
+    wheelDeltaY,
+    wheelLegacyDeltaY,
+    inFlightTarget,
+    arc
+  );
 }
 
 function applyMouseWheelByMode(wheelDeltaY, inFlightTarget, arc, wheelLegacyDeltaY = null) {
@@ -17143,13 +17824,6 @@ function applyArcWheelDelta(
   // one row per notch instead of restarting from the in-between position.
   const inFlightTarget = snapAnimTargetIndex;
 
-  cancelSnapAnimation();
-  cancelMomentum();
-  settleSnapIndex = null;
-  clearTimeout(snapDebounceTimer);
-  clearArcTermLayout();
-  clearTitleRowTermHover();
-
   const wheelDeltaY =
     fromSplashHandoff &&
     deltaY !== 0 &&
@@ -17158,7 +17832,16 @@ function applyArcWheelDelta(
       : deltaY;
 
   if (isMouseWheel && !fromSplashHandoff) {
-    lastWheelWasNotch = true;
+    settleSnapIndex = null;
+    clearTimeout(snapDebounceTimer);
+    clearArcTermLayout();
+    clearTitleRowTermHover();
+    const absLegacy = Math.abs(wheelLegacyDeltaY ?? 0);
+    const isSlowMouseNotch = absLegacy > 0 && absLegacy <= 120;
+    if (isSlowMouseNotch) {
+      cancelMomentum();
+      lastWheelWasNotch = true;
+    }
     return applyMouseWheelByMode(
       wheelDeltaY,
       inFlightTarget,
@@ -17166,6 +17849,13 @@ function applyArcWheelDelta(
       wheelLegacyDeltaY
     );
   }
+
+  cancelSnapAnimation();
+  cancelMomentum();
+  settleSnapIndex = null;
+  clearTimeout(snapDebounceTimer);
+  clearArcTermLayout();
+  clearTitleRowTermHover();
 
   // Trackpad / splash handoff — notch detection by delta magnitude only.
   lastWheelWasNotch = isWheelNotch(wheelDeltaY);
@@ -17859,6 +18549,7 @@ async function init() {
     );
 
     bindWheelScroll();
+    bindTimelineDrag();
     bindTermPageScroll();
     bindOverviewHover();
     bindIdleRotate();

@@ -9,13 +9,15 @@ import {
 } from "./letter-shuffle.js";
 import { getGridSpanBounds } from "./grid-metrics.js";
 import { getTimelineEventText } from "./timeline-events.js";
-import { applyTypographyRules } from "./typography.js";
+import { applyBlockTypography, applyTypographyRules } from "./typography.js";
 
 const TIMELINE_HINT_COLUMNS = 10;
+const TIMELINE_SCROLL_HINT_COLUMNS = 5;
+const TIMELINE_SCROLL_HINT_ALIGN_FROM_RIGHT = 2;
 const TIMELINE_HINT_LINE_HEIGHT = 80;
 const TIMELINE_HINT_COLLISION_PAD = 8;
 const TIMELINE_HINT_HIDE_MS = 120;
-const TIMELINE_SCROLL_HINT_TEXT = "גללו לאורך ציר\nהזמן וצפו במונחים\nהמשתנים עם השנים";
+const TIMELINE_SCROLL_HINT_TEXT = "גללו לאורך ציר הזמן וצפו במונחים המשתנים עם השנים";
 const TIMELINE_SCROLL_HINT_DISMISS_MS = 350;
 /** Set to true to restore letter-scramble on show/hide. */
 const TIMELINE_HINT_SCRAMBLE_ENABLED = false;
@@ -25,6 +27,8 @@ let getOverviewSubMode = () => "filter";
 let getSunCircle = () => null;
 let hintEl = null;
 let scrollHintEl = null;
+let scrollHintTextEl = null;
+let scrollHintRevealed = false;
 let hintHideTimer = null;
 let hintResizeBound = false;
 let lastShownText = "";
@@ -117,9 +121,20 @@ function clearScrollHintDismissTimer() {
   scrollHintDismissTimer = null;
 }
 
+function getScrollHintTypographyText() {
+  return applyBlockTypography(TIMELINE_SCROLL_HINT_TEXT, {
+    ensurePeriod: false,
+  });
+}
+
 function hideTimelineScrollHint() {
   if (!scrollHintEl) return;
   clearScrollHintDismissTimer();
+  scrollHintRevealed = false;
+  if (scrollHintTextEl) {
+    abortLetterShuffle(scrollHintTextEl);
+    scrollHintTextEl.textContent = "";
+  }
   scrollHintEl.hidden = true;
   scrollHintDismissedForSession = false;
 }
@@ -127,43 +142,64 @@ function hideTimelineScrollHint() {
 export function resetTimelineScrollHint() {
   clearScrollHintDismissTimer();
   scrollHintDismissedForSession = false;
+  scrollHintRevealed = false;
+  if (scrollHintTextEl) {
+    abortLetterShuffle(scrollHintTextEl);
+    scrollHintTextEl.textContent = "";
+  }
+  if (scrollHintEl) scrollHintEl.hidden = true;
   syncTimelineScrollHint();
 }
 
 export function dismissTimelineScrollHint() {
-  // Keep the scroll hint pinned in the center while in timeline mode —
-  // it should not be dismissed on scroll anymore.
+  // Scroll hint stays visible in timeline mode — not dismissed on scroll.
+}
+
+export function revealTimelineScrollHint({ reducedMotion = false } = {}) {
+  if (!scrollHintEl || !scrollHintTextEl) return;
+  if (!isTimelineMode() || scrollHintDismissedForSession || scrollHintRevealed) return;
+
+  scrollHintRevealed = true;
+  positionScrollHint();
+  scrollHintEl.hidden = false;
+
+  const text = getScrollHintTypographyText();
+  abortLetterShuffle(scrollHintTextEl);
+  if (reducedMotion) {
+    scrollHintTextEl.textContent = text;
+  } else {
+    playLightLetterShuffleTo(scrollHintTextEl, text);
+  }
 }
 
 export function syncTimelineScrollHint() {
   if (!scrollHintEl) return;
-  scrollHintEl.hidden = !isTimelineMode() || scrollHintDismissedForSession;
-  if (!scrollHintEl.hidden) {
-    positionScrollHintAtCenter();
-  }
-}
-
-function positionScrollHintAtCenter() {
-  if (!scrollHintEl) return;
-
-  const sun = getSunCircle?.();
-  if (sun) {
-    scrollHintEl.style.top = `${sun.cy}px`;
-    scrollHintEl.style.left = `${sun.cx}px`;
-    scrollHintEl.style.bottom = "";
-    scrollHintEl.style.transform = "translate(-50%, -50%)";
+  if (!isTimelineMode() || scrollHintDismissedForSession) {
+    if (!scrollHintRevealed) scrollHintEl.hidden = true;
     return;
   }
+  positionScrollHint();
+  scrollHintEl.hidden = !scrollHintRevealed;
+}
 
-  scrollHintEl.style.top = "50%";
-  scrollHintEl.style.left = "50%";
-  scrollHintEl.style.bottom = "";
-  scrollHintEl.style.transform = "translate(-50%, -50%)";
+function positionScrollHint() {
+  if (!scrollHintEl) return;
+  const viewportEl = document.getElementById("sun-viewport");
+  const span = getGridSpanBounds(
+    TIMELINE_SCROLL_HINT_COLUMNS,
+    TIMELINE_SCROLL_HINT_ALIGN_FROM_RIGHT,
+    viewportEl || undefined
+  );
+  const viewportLeft = viewportEl?.getBoundingClientRect().left ?? 0;
+  scrollHintEl.style.left = `${viewportLeft + span.left}px`;
+  scrollHintEl.style.width = `${span.width}px`;
+  scrollHintEl.style.maxWidth = `${span.width}px`;
+  scrollHintEl.style.transform = "";
 }
 
 export function repositionTimelineScrollHint() {
   if (!scrollHintEl || scrollHintEl.hidden || !isTimelineMode()) return;
-  positionScrollHintAtCenter();
+  positionScrollHint();
 }
 
 function hideTimelineEventHint({ immediate = false } = {}) {
@@ -273,6 +309,7 @@ export function initSunTimelineHint({
   const existingScrollHint = document.getElementById("sun-timeline-scroll-hint");
   if (existingScrollHint) {
     scrollHintEl = existingScrollHint;
+    scrollHintTextEl = existingScrollHint.querySelector(".sun-timeline-scroll-hint__text");
   } else {
     const scrollHint = document.createElement("p");
     scrollHint.id = "sun-timeline-scroll-hint";
@@ -287,11 +324,12 @@ export function initSunTimelineHint({
 
     const scrollHintText = document.createElement("span");
     scrollHintText.className = "sun-timeline-scroll-hint__text";
-    scrollHintText.textContent = TIMELINE_SCROLL_HINT_TEXT;
+    scrollHintText.dataset.letterShuffleUnderline = "off";
 
     scrollHint.append(scrollHintArrow, scrollHintText);
     document.body.appendChild(scrollHint);
     scrollHintEl = scrollHint;
+    scrollHintTextEl = scrollHintText;
   }
 
   bindHintResize();
