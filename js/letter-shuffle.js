@@ -108,6 +108,7 @@ function isLightHoverShuffleEl(root) {
     root.classList.contains("splash__intro-link") ||
     root.classList.contains("sun-about__brand-link") ||
     root.classList.contains("sun-about__credit-link") ||
+    root.classList.contains("sun-term-page__back-home-text") ||
     root.classList.contains("sun-term-meta__tag") ||
     root.classList.contains("sun-term-meta__value")
   );
@@ -445,7 +446,10 @@ function isNoReflowLightShuffleEl(root) {
   return (
     root.classList.contains("splash__intro-link") ||
     root.classList.contains("sun-about__brand-link") ||
-    root.classList.contains("sun-about__credit-link")
+    root.classList.contains("sun-about__credit-link") ||
+    // Framing meta tags sit inline (comma-separated) on one line — pin their
+    // footprint so the random-glyph widths don't push the rest of the line.
+    root.classList.contains("sun-term-meta__tag")
   );
 }
 
@@ -563,22 +567,29 @@ function prepareState(root) {
     };
   }
 
+  if (isFixedLayoutBodyShuffleEl(root)) {
+    return preparePreservingBodyState(root);
+  }
+
   const metrics = captureHtmlMetrics(root);
   const config = getShuffleConfig(root);
   const font = readFont(root);
   const graphemes = [...original];
   const rawWidths = measureGraphemeWidths(original, font);
   const rawTotal = rawWidths.reduce((sum, w) => sum + w, 0);
-  const lockWidth = metrics.width > 0.5 ? metrics.width : rawTotal;
-  // For single-line labels the element's rendered width equals the text advance,
-  // so scaling each char to sum to lockWidth keeps the exact footprint. But a
-  // multi-line paragraph (e.g. the term definition) reports a single line's
-  // width, not the total advance — scaling to it squeezes the whole paragraph
-  // onto one line. Detect that and keep natural per-grapheme widths so the
-  // letters wrap to fill the block like the original text.
+  const isCaption = isNaturalWidthShuffleEl(root);
+  // Short labels in wide grid boxes (captions, משתמשים / נפוץ / בשימוש, side
+  // headings) — never stretch glyphs to the element box.
+  const lockWidth = isCaption
+    ? rawTotal > 0.5
+      ? rawTotal
+      : metrics.width
+    : metrics.width > 0.5
+      ? metrics.width
+      : rawTotal;
   const isMultiLine = rawTotal > lockWidth * 1.5;
   const widths =
-    rawTotal > 0 && !isMultiLine
+    rawTotal > 0 && !isMultiLine && !isCaption
       ? rawWidths.map((w) => (w / rawTotal) * lockWidth)
       : rawWidths;
   const htmlStyles = applyHtmlLayoutLock(root, lockWidth, metrics);
@@ -667,6 +678,16 @@ function finishShuffleState(state) {
     return;
   }
 
+  if (state.mode === "html-segments") {
+    root.innerHTML = state.originalHtml;
+    restoreHtmlLayoutStyles(root, state.htmlStyles);
+    activeStates.delete(root);
+    delete root.dataset.letterShuffleActive;
+    root.dataset.letterShuffleHover = "1";
+    onComplete?.();
+    return;
+  }
+
   const savedStyles = state.htmlStyles;
 
   for (const { el } of state.chars) {
@@ -736,6 +757,9 @@ function abortState(state) {
     root.removeAttribute("textLength");
     root.removeAttribute("lengthAdjust");
     root.textContent = state.original;
+  } else if (state.mode === "html-segments") {
+    root.innerHTML = state.originalHtml;
+    restoreHtmlLayoutStyles(root, state.htmlStyles);
   } else if (state.htmlStyles) {
     for (const { el } of state.chars ?? []) {
       el.remove();
@@ -773,6 +797,9 @@ function restoreState(state) {
     root.removeAttribute("textLength");
     root.removeAttribute("lengthAdjust");
     root.textContent = state.original;
+  } else if (state.mode === "html-segments") {
+    root.innerHTML = state.originalHtml;
+    restoreHtmlLayoutStyles(root, state.htmlStyles);
   } else if (state.htmlStyles) {
     restoreHtmlLayoutStyles(root, state.htmlStyles);
     state.htmlUnderline?.remove();
@@ -856,6 +883,87 @@ function glyphAtFrame(final, index, frame, settleFrames) {
   return randomGlyph();
 }
 
+/** Short labels laid out in a wide grid box — keep natural text width during shuffle. */
+function isNaturalWidthShuffleEl(root) {
+  return (
+    root.classList.contains("sun-term-page__caption") ||
+    root.classList.contains("sun-term-bleed-caption") ||
+    root.classList.contains("sun-term-hover-caption__line") ||
+    root.classList.contains("sun-term-page__label-row-heading") ||
+    root.classList.contains("sun-term-page__side-heading") ||
+    root.classList.contains("sun-term-meta__heading")
+  );
+}
+
+/** Multi-line term body copy — scramble in place, preserving markup and line breaks. */
+function isFixedLayoutBodyShuffleEl(root) {
+  return (
+    root.classList.contains("sun-term-page__label-row-text") ||
+    root.classList.contains("sun-term-page__definition") ||
+    root.classList.contains("sun-term-page__side-text") ||
+    root.classList.contains("sun-term-page__label-nav-panel-text")
+  );
+}
+
+/** @returns {object | null} */
+function preparePreservingBodyState(root) {
+  const originalHtml = root.innerHTML;
+  const original = root.textContent ?? "";
+  if (!original.trim()) return null;
+
+  const htmlStyles = lockHtmlLayout(root);
+  const rect = root.getBoundingClientRect();
+  const layoutHeight = Math.ceil(rect.height);
+  const layoutWidth = Math.ceil(rect.width);
+  if (layoutHeight > 0) {
+    root.style.minHeight = `${layoutHeight}px`;
+  }
+  if (layoutWidth > 0 && !root.style.width) {
+    root.style.width = `${layoutWidth}px`;
+  }
+
+  /** @type {{ el: HTMLSpanElement, original: string }[]} */
+  const segments = [];
+  const textNodes = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.textContent?.length) textNodes.push(node);
+  }
+
+  for (const textNode of textNodes) {
+    const parent = textNode.parentNode;
+    if (!(parent instanceof Element)) continue;
+    const text = textNode.textContent ?? "";
+    if (!text) continue;
+
+    const span = document.createElement("span");
+    span.className = "letter-shuffle-segment";
+    span.textContent = text;
+    parent.replaceChild(span, textNode);
+    segments.push({ el: span, original: text });
+  }
+
+  if (!segments.length) return null;
+
+  const charCount = segments.reduce((sum, { original: text }) => sum + [...text].length, 0);
+
+  return {
+    root,
+    original,
+    originalHtml,
+    segments,
+    frame: 0,
+    timerId: null,
+    mode: "html-segments",
+    config: getShuffleConfig(root),
+    htmlStyles,
+    layoutHeight,
+    layoutWidth,
+    settleFrames: buildSettleFrames(charCount),
+  };
+}
+
 function isLightScrambleEl(root) {
   return (
     root.classList.contains("sun-terms-index__term-label") ||
@@ -871,6 +979,10 @@ function isLightScrambleEl(root) {
     root.classList.contains("sun-term-page__label-nav-text") ||
     root.classList.contains("sun-term-page__label-nav-panel-text") ||
     root.classList.contains("sun-term-similar-label") ||
+    root.classList.contains("sun-term-page__caption") ||
+    root.classList.contains("sun-term-hover-caption__line") ||
+    root.classList.contains("sun-term-page__label-row-heading") ||
+    root.classList.contains("sun-term-page__side-heading") ||
     isTermMetaShuffleEl(root)
   );
 }
@@ -1312,7 +1424,15 @@ function startContinuousScrambleLight(root) {
 function tickContinuousState(state) {
   if (!isActiveShuffleState(state)) return;
 
-  if (state.mode === "svg") {
+  if (state.mode === "html-segments") {
+    for (const { el, original } of state.segments) {
+      el.textContent = [...original]
+        .map((ch) =>
+          ch === " " || ch === "\u00a0" || ch === "\n" || ch === "\t" ? ch : randomGlyph()
+        )
+        .join("");
+    }
+  } else if (state.mode === "svg") {
     state.root.textContent = state.graphemes
       .map((ch) => (ch === " " || ch === "\u00a0" ? ch : randomGlyph()))
       .join("");
@@ -1323,13 +1443,21 @@ function tickContinuousState(state) {
   }
 
   if (!isActiveShuffleState(state)) return;
-  state.timerId = window.setTimeout(() => tickContinuousState(state), CONFIG.frameMs);
+  state.timerId = window.setTimeout(
+    () => tickContinuousState(state),
+    state.config?.frameMs ?? CONFIG.frameMs
+  );
 }
 
 function tickState(state) {
   if (!isActiveShuffleState(state)) return;
 
   if (state.continuous) {
+    tickContinuousState(state);
+    return;
+  }
+
+  if (state.mode === "html-segments") {
     tickContinuousState(state);
     return;
   }

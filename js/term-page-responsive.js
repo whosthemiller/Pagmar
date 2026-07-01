@@ -76,7 +76,11 @@ export const TERM_PAGE_RESPONSIVE = {
   scrollBlockGap: { min: 112, ratio: 0.213, max: 220 },
   scrollContentOffsetY: { min: 12, ratio: 0.022, max: 28 },
   groupPinExtraRise: { min: 28, ratio: 0.044, max: 52 },
+  /** Extra upward lift for the title group resting position on term-page entry (px). */
+  groupEntryRestRise: { min: 14, ratio: 0.02, max: 30 },
   scrollPaddingBottom: { min: 100, ratio: 0.155, max: 160 },
+  /** Breathing room below the back-to-home link at the end of scroll content. */
+  scrollBackHomeBottomPadding: { min: 28, ratio: 0.036, max: 48 },
   metaBelowImageGap: { min: 20, ratio: 0.032, max: 36 },
   /** Desktop reference width — wide tier applies above narrowMaxWidth. */
   wideDesktopMinWidth: 1512,
@@ -145,8 +149,16 @@ export function getTermPageGroupPinExtraRisePx(viewportHeight) {
   return scaleFromViewport(TERM_PAGE_RESPONSIVE.groupPinExtraRise, viewportHeight);
 }
 
+export function getTermPageGroupEntryRestRisePx(viewportHeight) {
+  return scaleFromViewport(TERM_PAGE_RESPONSIVE.groupEntryRestRise, viewportHeight);
+}
+
 export function getTermPageScrollPaddingBottomPx(viewportHeight) {
   return scaleFromViewport(TERM_PAGE_RESPONSIVE.scrollPaddingBottom, viewportHeight);
+}
+
+export function getTermPageBackHomeBottomPaddingPx(viewportHeight) {
+  return scaleFromViewport(TERM_PAGE_RESPONSIVE.scrollBackHomeBottomPadding, viewportHeight);
 }
 
 export function getTermPageMetaBelowImageGapPx(viewportHeight) {
@@ -195,6 +207,7 @@ export function getTermPageScrollImageHeightFactor(tier) {
  *   emphasizeHeadingColumnFromRight: number,
  *   emphasizeValueColumns: number,
  *   emphasizeValueColumnFromRight: number,
+ *   emphasizeValueEndInsetColumns?: number,
  *   obscureHeadingColumns: number,
  *   obscureHeadingColumnFromRight: number,
  *   obscureValueColumns: number,
@@ -289,6 +302,7 @@ export function getTermPageScrollLayoutConfig(viewportWidth) {
     emphasizeHeadingColumnFromRight: 5,
     emphasizeValueColumns: 6,
     emphasizeValueColumnFromRight: 7,
+    emphasizeValueEndInsetColumns: 0.25,
     obscureHeadingColumns: 2,
     obscureHeadingColumnFromRight: 13,
     obscureValueColumns: 6,

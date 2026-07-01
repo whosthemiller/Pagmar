@@ -25,7 +25,7 @@ const CREDITS = [
     valueClass: "sun-about__credit-value--fonts",
   },
   { heading: "עריכת תוכן", value: "אבי בולוטינסקי" },
-  { heading: "עיצוב מחקר ופיתוח", value: "מיה מילר", link: "https://whosthemiller.com/" },
+  { heading: "עיצוב מחקר ופיתוח", value: "מיה מילר" },
 ];
 
 /** @type {HTMLElement | null} */

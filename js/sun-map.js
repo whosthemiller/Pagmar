@@ -3,6 +3,7 @@ import {
   collectTermImageUrls,
   enqueueTermImagePreload,
   boostTermImagePreloadPriority,
+  preloadTermImagesNow,
   getPreloadedTermImage,
   groupTermsByObject,
   swapGroupsByObjectId,
@@ -28,7 +29,6 @@ import { createOverviewGeometry, computeOverviewSpinOffset } from "./sun-overvie
 import { getTimelineBounds, getTermOpacity, loadTermYears, logYearIndexStats } from "./term-year-index.js";
 import { createYearScrollController, isWheelNotch } from "./sun-year-scroll.js";
 import { getTimelineEventText, loadTimelineEvents } from "./timeline-events.js";
-import { initTimelineLab } from "./timeline-lab.js";
 import {
   dismissTimelineScrollHint,
   hideTimelineEventHint,
@@ -47,11 +47,7 @@ import {
   notifyTermScroll,
   hideScrollHint,
 } from "./sun-home-scroll-hint.js";
-import {
-  getActiveHomeScrollMode,
-  initHomeScrollDebugPanel,
-  reportWheelDebug,
-} from "./home-scroll-mode.js";
+import { getActiveHomeScrollMode } from "./home-scroll-mode.js";
 import {
   bindLetterShuffleDelegation,
   getLetterShuffleOriginal,
@@ -87,6 +83,7 @@ import {
 } from "./sun-overview-terms-grid.js";
 import {
   runPageNavScrambleTransition,
+  runPageExitScramble,
   isPageNavTransitionActive,
   isIndexEnterScrambleActive,
   cancelPageNavScramble,
@@ -131,6 +128,7 @@ import {
 import {
   getTermPageFold2ChapterMinPx,
   getTermPageFold3ChapterMinPx,
+  getTermPageGroupEntryRestRisePx,
   getTermPageGroupPinExtraRisePx,
   getTermPageMetaBelowImageGapPx,
   getTermPageScrollBlockGapPx,
@@ -139,6 +137,7 @@ import {
   getTermPageScrollImageHeightFactor,
   getTermPageScrollImageMinHeightPx,
   getTermPageScrollLayoutConfig,
+  getTermPageBackHomeBottomPaddingPx,
   getTermPageScrollPaddingBottomPx,
   getTermPageTitleBandHeightPx,
   getTermPageTitleBaselineInsetPx,
@@ -477,7 +476,7 @@ const LAYOUT = {
   /** Vertical gap between wrapped censored-sibling rows (px). */
   termPageCensoredWrapRowGap: 8,
   focusRiseMs: 600,
-  focusExitMs: 800,
+  focusExitMs: 680,
   /** Re-pack the title row back to even arc spacing before the rise starts (ms). */
   focusUnfocusReflowMs: 300,
   focusReorderMs: 720,
@@ -604,6 +603,8 @@ const LAYOUT = {
   idleGalleryHoverTransitionMs: 380,
   /** Fixed thumbnail hide — reverse pixel transition; faster than bleed reveal. */
   titleRowFixedHideTransitionMs: 180,
+  /** Active-row fixed thumbnail — auto-cycle interval (ms). */
+  titleRowFixedImageCycleMs: 3000,
   /** Active-row image swap — fast pixel glitch (ms). */
   titleRowImageSwapTransitionMs: 150,
   /** Peak pixel block size during active-row image glitch. */
@@ -625,10 +626,12 @@ const SUN_GROUP_POSITION_SWAPS = [
 
 /** Compressed timings for term-page → home unfocus. */
 const UNFOCUS_TIMING = {
-  reflowMs: 140,
-  riseMs: 380,
-  exitMs: 480,
-  backCircleFadeMs: 520,
+  reflowMs: 120,
+  riseMs: 340,
+  exitMs: 330,
+  backCircleFadeMs: 400,
+  /** Start main arc rows returning inward before mini rays finish scattering (0–1). */
+  arcReturnOverlap: 0.55,
 };
 
 /** Compressed timings for in-page term-to-term navigation. */
@@ -648,7 +651,7 @@ const TERM_NAV_TIMING = {
   /** Same-object title-row carousel speed multiplier (< 1 = faster). */
   sameGroupSwitchScale: 0.75,
   /** Scroll term page to top before same-group term switch. */
-  scrollResetMs: 320,
+  scrollResetMs: 620,
 };
 
 const viewport = document.getElementById("sun-viewport");
@@ -675,6 +678,7 @@ const termPeriodEl = termPageEl?.querySelector(".sun-term-page__period");
 const termImagesEl = termPageEl?.querySelector(".sun-term-page__images");
 const termDetailsImageEl = document.getElementById("sun-term-details-image");
 const termLabelNavEl = document.getElementById("sun-term-label-nav");
+const termBackHomeEl = document.getElementById("sun-term-back-home");
 const termMetaEl = document.getElementById("sun-term-meta");
 const termSimilarLabelWrapEl = document.getElementById("sun-term-similar-label-wrap");
 const termHeaderBackdropEl = document.getElementById("sun-term-header-backdrop");
@@ -704,6 +708,8 @@ const pixelatedFixedImagePending = new Set();
 let bleedPixelAnimFrame = null;
 /** @type {number | null} */
 let fixedThumbHideAnimFrame = null;
+/** @type {ReturnType<typeof setInterval> | null} */
+let fixedRowImageCycleTimer = null;
 /** @type {{ key: string, start: number } | null} */
 let activeRowImageGlitch = null;
 /** @type {string | null} */
@@ -768,8 +774,6 @@ let fineGestureAnchorIndex = 0;
 let wheelScrollLayoutOverrides = null;
 /** Mouse glide/roll modes always settle with easeOutCubic (no roulette bounce). */
 let forceEaseOutSnap = false;
-/** @type {(() => void) | null} */
-let homeScrollDebugSyncVisibility = null;
 let overviewProgress = 0;
 
 function resolveLayoutOverview(layout = currentLayout) {
@@ -868,7 +872,6 @@ let termPagePinSnapLockedTarget = null;
 let termLocationById = new Map();
 
 const isBleedTextLabMode = () => Boolean(globalThis.__SUN_BLEED_LAB__);
-const isTimelineLabMode = () => Boolean(globalThis.__SUN_TIMELINE_LAB__);
 
 /** Live preview overrides from bleed-text-lab (term name → prefs + image). */
 /** @type {null | { termName: string, imageUrl: string | null, navText: string, titleRowText: string }} */
@@ -880,6 +883,8 @@ let termNavState = null;
 let backMiniWidthCache = null;
 let backMiniWidthCacheKey = "";
 let termPageSelectedFontSettled = false;
+/** Scroll position held while the title entrance animation runs. */
+let termPageEntranceLockScrollTop = 0;
 let termPageBleedTermId = null;
 /** Hover bleed image carried into term-page focus (same asset, bottom clip only). */
 let termPageBleedCarryImage = null;
@@ -1250,7 +1255,7 @@ function getExitArcU(groupIndex, arc, exitT) {
   const u = bestArcU(groupIndex);
   const hU = horizontalArcU(arc);
   const dir = u >= hU ? 1 : -1;
-  const magnitude = LAYOUT.focusExitMagnitude * easeInCubic(exitT);
+  const magnitude = LAYOUT.focusExitMagnitude * easeInOutCubic(exitT);
   return u + dir * magnitude;
 }
 
@@ -1343,7 +1348,9 @@ function updateActiveFromScroll(arc) {
   const hU = horizontalArcU(arc);
   const prevIndex = activeIndex;
   activeIndex = ((Math.round(scrollOffset + hU) % count) + count) % count;
-  if (prevIndex !== activeIndex) scheduleTermImagePreloadBoost();
+  if (prevIndex !== activeIndex) {
+    scheduleTermImagePreloadBoost();
+  }
 }
 
 /** Active ray index — while focused, the locked group can differ from wheel scroll. */
@@ -1415,16 +1422,6 @@ function findOverviewHoverTargetAtPointer(clientX, clientY) {
 
   for (const el of elements) {
     if (!(el instanceof Element) || !svgEl?.contains(el)) continue;
-
-    const fixedImage = el.closest(".sun-ray-fixed-image, .sun-ray-fixed-image-hit");
-    if (fixedImage) {
-      const termId = getFixedImageTermId(fixedImage);
-      const ray = fixedImage.closest(".sun-ray.is-active");
-      const wrap = termId && ray ? getHoveredTermWrap(ray, termId) : null;
-      if (termId && ray) {
-        if (wrap) return { wrap, ray, termId, source: "fixed" };
-      }
-    }
 
     const hit = el.closest(".sun-term-hit");
     if (hit) {
@@ -1717,8 +1714,20 @@ function easeInCubic(t) {
   return t ** 3;
 }
 
+function easeOutCubicInverse(t) {
+  const clamped = clamp(t, 0, 1);
+  return 1 - (1 - clamped) ** (1 / 3);
+}
+
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2;
+}
+
+function easeInOutCubicInverse(t) {
+  const clamped = clamp(t, 0, 1);
+  return clamped < 0.5
+    ? Math.cbrt(clamped / 4)
+    : 1 - Math.cbrt((1 - clamped) / 4);
 }
 
 function isTermPageScrollBgMode() {
@@ -2416,6 +2425,7 @@ function syncAfterTermPageWheelScroll(wheelDelta = 0) {
 
 function applyTermPageWheelScroll(deltaY) {
   if (!viewport) return;
+  if (isTermPageEntranceScrollLocked()) return;
   if (Math.abs(deltaY) > 0.5) notifyTermScroll();
   if (Math.abs(deltaY) < TERM_PAGE_WHEEL_FINE_MAX) {
     viewport.scrollTop += deltaY;
@@ -2761,7 +2771,8 @@ function getTermPageBottomFocusRowTopPx(viewportHeight) {
     viewportHeight -
     getTermPageTitleBandHeightPx(viewportHeight) +
     getTermPageTitleBaselineInsetPx(viewportHeight) +
-    LAYOUT.termPageTitleBaselineNudgePx
+    LAYOUT.termPageTitleBaselineNudgePx -
+    getTermPageGroupEntryRestRisePx(viewportHeight)
   );
 }
 
@@ -2987,6 +2998,8 @@ function getFocusRowRiseTargetPx(viewportHeight) {
 
 function resetViewportTermScroll() {
   cancelTermPagePinSnap();
+  termPageEntranceLockScrollTop = 0;
+  syncTermPageEntranceScrollLock();
   if (viewport) {
     viewport.scrollTop = 0;
     viewport.classList.remove(
@@ -3268,7 +3281,7 @@ function applyViewportTermScrollBounds(viewportHeight) {
   // when the bleed runway would otherwise overshoot — but never trim below the
   // real content. The page element is absolutely positioned, so its bottom edge
   // (via minHeight) sets scrollHeight; the spacer is matched to it below.
-  let fold3ScrollCap = 0;
+  let contentScrollCap = 0;
   if (isTermPageScrollContentMode() && hasTermPageFold3Content() && termPageEl) {
     const pageTop = termPageEl.offsetTop || 0;
     // A little breathing room below fold 3's resting position so the page can be
@@ -3279,10 +3292,23 @@ function applyViewportTermScrollBounds(viewportHeight) {
       viewportHeight + getTermPageFold3SnapTargetPx(viewportHeight) + fold3BottomRunway;
     if (fold3Rest > viewportHeight + 1) {
       const capped = Math.max(fold3Rest, scrollContentBottom + fold3BottomRunway);
-      fold3ScrollCap = capped;
+      contentScrollCap = capped;
       totalHeight = capped;
       termPageEl.style.paddingBottom = "0px";
       termPageEl.style.minHeight = `${Math.max(0, capped - pageTop)}px`;
+    }
+  }
+
+  const backHomeBottom = getTermPageBackHomeBottomPx();
+  if (backHomeBottom != null && termPageEl) {
+    const backHomeRunway = getTermPageBackHomeBottomPaddingPx(viewportHeight);
+    const backHomeCap = backHomeBottom + backHomeRunway;
+    if (backHomeCap > viewportHeight + 1) {
+      contentScrollCap = Math.max(contentScrollCap, backHomeCap);
+      totalHeight = backHomeCap;
+      const pageTop = termPageEl.offsetTop || 0;
+      termPageEl.style.paddingBottom = "0px";
+      termPageEl.style.minHeight = `${Math.max(0, backHomeCap - pageTop)}px`;
     }
   }
 
@@ -3315,10 +3341,12 @@ function applyViewportTermScrollBounds(viewportHeight) {
       // When fold 3 caps the scroll, the (absolute) page already defines the
       // full scrollHeight — adding the usual runway here would re-introduce the
       // empty tail below fold 3, so keep the spacer flush with the content.
-      const spacerHeight = fold3ScrollCap
+      const spacerHeight = contentScrollCap
         ? Math.max(0, totalHeight - spacerTop)
         : Math.max(
-            getTermPageScrollPaddingBottomPx(viewportHeight),
+            isTermPageBackHomeVisible()
+              ? getTermPageBackHomeBottomPaddingPx(viewportHeight)
+              : getTermPageScrollPaddingBottomPx(viewportHeight),
             totalHeight - spacerTop
           );
       scrollSpacerEl.style.marginTop = `${spacerTop}px`;
@@ -3404,7 +3432,7 @@ function animateViewportScrollToTop(onComplete) {
 
   function tick(now) {
     const t = clamp((now - startTime) / durationMs, 0, 1);
-    viewport.scrollTop = Math.round(startTop + (0 - startTop) * easeOutCubic(t));
+    viewport.scrollTop = Math.round(startTop + (0 - startTop) * easeInOutCubic(t));
     syncTermScrollBgPosition(currentLayout);
     syncTermHeaderPinState(currentLayout);
 
@@ -3478,15 +3506,22 @@ function getUnfocusReflowMs() {
   return UNFOCUS_TIMING.reflowMs;
 }
 
+function getUnfocusArcReturnDelayMs() {
+  const backCircleMs = getBackCircleAnimMs();
+  const overlap = UNFOCUS_TIMING.arcReturnOverlap ?? 1;
+  return backCircleMs * clamp(overlap, 0, 1);
+}
+
 function getUnfocusAnimDuration() {
   const reflowMs = getUnfocusReflowMs();
   const backCircleMs = getBackCircleAnimMs();
   const riseMs = getUnfocusRiseMs();
   const exitMs = getUnfocusExitMs();
+  const arcDelayMs = getUnfocusArcReturnDelayMs();
   // The row first re-packs to even spacing (reflowMs), then the rise ("row"
-  // motion) starts, while the main arc exit starts only after the mini/back
-  // circle finishes.
-  return reflowMs + Math.max(riseMs, backCircleMs + exitMs);
+  // motion) starts. Main arc rows can begin returning inward before the mini
+  // back-circle scatter fully completes (arcReturnOverlap).
+  return reflowMs + Math.max(riseMs, backCircleMs, arcDelayMs + exitMs);
 }
 
 function getBackCircleAnimMs() {
@@ -3730,10 +3765,17 @@ function tickUnfocus(now) {
   const scatterT = clamp(postReflow / backCircleMs, 0, 1);
   focusState.backMiniExitT = easeOutCubic(scatterT);
   focusState.backCircleT = scatterT < 1 ? 1 : 0;
-  // Allow the term row to move during the mini back-circle exit,
-  // but delay the main arc exit until the mini is fully gone.
-  focusState.riseT = 1 - clamp(postReflow / riseMs, 0, 1);
-  focusState.exitT = 1 - clamp((postReflow - backCircleMs) / exitMs, 0, 1);
+  // Allow the term row to move during the mini back-circle exit. Main arc rows
+  // can start returning inward partway through that scatter (arcReturnOverlap).
+  // These state values are eased again by the render path, so invert those
+  // curves here to make the visible return motion ease-in-out instead of
+  // rushing the landing.
+  const riseReturnT = riseMs > 0 ? clamp(postReflow / riseMs, 0, 1) : 1;
+  const arcReturnDelayMs = getUnfocusArcReturnDelayMs();
+  const arcReturnT =
+    exitMs > 0 ? clamp((postReflow - arcReturnDelayMs) / exitMs, 0, 1) : 1;
+  focusState.riseT = easeOutCubicInverse(1 - easeInOutCubic(riseReturnT));
+  focusState.exitT = easeInOutCubicInverse(1 - easeInOutCubic(arcReturnT));
 
   render(currentLayout);
 
@@ -4033,6 +4075,10 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   termSimilarLabelScrambleStarted = false;
   termSimilarLabelRestTop = null;
   termPageSimilarLabelAnchorStale = true;
+  if (resumeWithFontScramble) {
+    termPageEntranceLockScrollTop = preserveScrollTop;
+    syncTermPageEntranceScrollLock();
+  }
 
   focusState.switchTargetIndex = undefined;
   focusState.switchCarouselSteps = undefined;
@@ -4237,10 +4283,6 @@ function bindSameObjectMentionNavigation() {
     const termId = mention.dataset.termId;
     if (!termId) return;
     event.preventDefault();
-    if (hasUnrevealedMediaCensorImage()) {
-      revealMediaCensorImage();
-      return;
-    }
     navigateToTerm(termId);
   });
 }
@@ -4968,12 +5010,37 @@ function syncSameObjectHoverDuringScroll() {
   setSameObjectTermHover(termId, target);
 }
 
-function isTermPageFontScrambleInteractionBlocked() {
+function isTermPageEntranceScrollLocked() {
   if (focusState?.phase !== "locked") return false;
+  if (TERM_PAGE_LEGACY_CONTENT_ENABLED) return false;
   return (
     !termPageSelectedFontSettled ||
+    termPageLayoutAnimActive ||
     (viewport?.classList.contains("is-term-font-scrambling") ?? false)
   );
+}
+
+function syncTermPageEntranceScrollLock() {
+  viewport?.classList.toggle(
+    "is-term-entrance-locked",
+    isTermPageEntranceScrollLocked()
+  );
+}
+
+/** @returns {boolean} true when scroll was clamped and callers should skip follow-up. */
+function enforceTermPageEntranceScrollLock() {
+  if (!isTermPageEntranceScrollLocked() || !viewport) return false;
+  const anchor = termPageEntranceLockScrollTop;
+  if (Math.abs(viewport.scrollTop - anchor) <= 0.5) return false;
+  viewport.scrollTop = anchor;
+  termPagePrevScrollTop = anchor;
+  syncTermScrollBgPosition(currentLayout);
+  syncTermHeaderPinState(currentLayout);
+  return true;
+}
+
+function isTermPageFontScrambleInteractionBlocked() {
+  return isTermPageEntranceScrollLocked();
 }
 
 function allowSameObjectHoverActivation() {
@@ -5983,7 +6050,9 @@ function bindTermPageScroll() {
   viewport?.addEventListener(
     "scroll",
     () => {
-      if (!isViewportTermScrollable() || !isFocusActive()) return;
+      if (!isFocusActive()) return;
+      if (enforceTermPageEntranceScrollLock()) return;
+      if (!isViewportTermScrollable()) return;
       const scrollTop = viewport.scrollTop;
       const scrollDelta = scrollTop - termPagePrevScrollTop;
       if (Math.abs(scrollDelta) > 0.5) notifyTermScroll();
@@ -6433,6 +6502,8 @@ function resetTermPageLabelRow(rowEl) {
     textEl.innerHTML = "";
     textEl.style.left = "";
     textEl.style.width = "";
+    textEl.style.removeProperty("--term-page-value-end-inset");
+    textEl.classList.remove("has-first-lines-end-inset");
   }
   if (headingEl) {
     headingEl.style.left = "";
@@ -6735,17 +6806,24 @@ function resolveTermImageUrl(url) {
   }
 }
 
+/** Lightweight variant for inline slots and thumbnails (not full bleed). */
+function resolveTermDisplayImageUrl(url) {
+  if (!url) return "";
+  return resolveTermImageUrl(url.replace(/\.webp(\?.*)?$/i, "-display.webp$1"));
+}
+
 /** @type {string[]} */
 let termImagePreloadAllUrls = [];
 let termImagePreloadBoostIndex = -1;
 let termImagePreloadBoostTimer = 0;
+let bleedDripToken = 0;
 
 function getTermImagePreloadConcurrency() {
   const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
   const type = conn?.effectiveType;
-  if (type === "slow-2g" || type === "2g") return 4;
-  if (type === "3g") return 6;
-  return 10;
+  if (type === "slow-2g" || type === "2g") return 3;
+  if (type === "3g") return 5;
+  return 8;
 }
 
 function groupRingDistance(groupIndex, centerIndex, count) {
@@ -6753,48 +6831,55 @@ function groupRingDistance(groupIndex, centerIndex, count) {
   return Math.min(diff, count - diff);
 }
 
-function collectGroupTermImageUrls(groupIndex) {
-  const group = groups[groupIndex];
-  if (!group?.terms?.length) return [];
-  const urls = [];
-  const seen = new Set();
-  for (const term of group.terms) {
-    for (const image of termImagesByName.get(term.name) || []) {
-      if (!image?.url) continue;
-      const resolved = resolveTermImageUrl(image.url);
-      if (!resolved || seen.has(resolved)) continue;
-      seen.add(resolved);
-      urls.push(resolved);
-    }
-  }
-  return urls;
-}
-
-function collectTermImageUrlsForTerm(termName) {
-  if (!termName) return [];
+function collectTermDisplayUrlsForTerm(termName) {
   return (termImagesByName.get(termName) || [])
-    .map((image) => (image?.url ? resolveTermImageUrl(image.url) : ""))
+    .map((image) => (image?.url ? resolveTermDisplayImageUrl(image.url) : ""))
     .filter(Boolean);
 }
 
-function buildPriorityTermImageUrlOrder(centerGroupIndex) {
-  const count = groups.length;
-  if (!count || !termImagePreloadAllUrls.length) return [...termImagePreloadAllUrls];
+function getTermBleedFullUrl(termName) {
+  const layout = currentLayout;
+  const viewportWidth = layout?.viewportWidth ?? window.innerWidth;
+  const viewportHeight = layout?.viewportHeight ?? window.innerHeight;
+  const image = getTermChosenBleedImage(termName, viewportWidth, viewportHeight);
+  return image?.url ? resolveTermImageUrl(image.url) : null;
+}
 
-  const tiers = new Map();
-  for (let groupIndex = 0; groupIndex < count; groupIndex += 1) {
-    const dist = groupRingDistance(groupIndex, centerGroupIndex, count);
-    const urls = collectGroupTermImageUrls(groupIndex);
-    if (!urls.length) continue;
-    if (!tiers.has(dist)) tiers.set(dist, []);
-    tiers.get(dist).push(...urls);
+/**
+ * Display URLs grouped by ring distance from the active arc group.
+ * Within each ring: group order, then term order, then image 1→3 per term.
+ */
+function buildSmartPreloadRings(centerGroupIndex) {
+  const count = groups.length;
+  const maxDist = Math.floor(count / 2);
+  const rings = Array.from({ length: maxDist + 1 }, () => []);
+  const seen = new Set();
+
+  for (let dist = 0; dist <= maxDist; dist += 1) {
+    for (let groupIndex = 0; groupIndex < count; groupIndex += 1) {
+      if (groupRingDistance(groupIndex, centerGroupIndex, count) !== dist) continue;
+      const group = groups[groupIndex];
+      if (!group?.terms?.length) continue;
+      for (const term of group.terms) {
+        for (const image of termImagesByName.get(term.name) || []) {
+          if (!image?.url) continue;
+          const url = resolveTermDisplayImageUrl(image.url);
+          if (!url || seen.has(url)) continue;
+          seen.add(url);
+          rings[dist].push(url);
+        }
+      }
+    }
   }
 
+  return rings;
+}
+
+function flattenPreloadRings(rings) {
   const ordered = [];
   const seen = new Set();
-  const maxDist = Math.floor(count / 2);
-  for (let dist = 0; dist <= maxDist; dist += 1) {
-    for (const url of tiers.get(dist) || []) {
+  for (const ring of rings) {
+    for (const url of ring) {
       if (seen.has(url)) continue;
       seen.add(url);
       ordered.push(url);
@@ -6808,6 +6893,13 @@ function buildPriorityTermImageUrlOrder(centerGroupIndex) {
   return ordered;
 }
 
+function buildPriorityTermImageUrlOrder(centerGroupIndex) {
+  if (!groups.length || !termImagePreloadAllUrls.length) {
+    return [...termImagePreloadAllUrls];
+  }
+  return flattenPreloadRings(buildSmartPreloadRings(centerGroupIndex));
+}
+
 function scheduleTermImagePreloadBoost(centerGroupIndex = getDisplayActiveIndex()) {
   if (!termImagePreloadAllUrls.length) return;
   window.clearTimeout(termImagePreloadBoostTimer);
@@ -6816,23 +6908,136 @@ function scheduleTermImagePreloadBoost(centerGroupIndex = getDisplayActiveIndex(
     if (centerGroupIndex === termImagePreloadBoostIndex) return;
     termImagePreloadBoostIndex = centerGroupIndex;
     boostTermImagePreloadPriority(buildPriorityTermImageUrlOrder(centerGroupIndex));
+    startBleedDripForActiveGroup(centerGroupIndex);
   }, 100);
 }
 
+/** Urgent: one full bleed + lightweight display variants only. */
 function boostTermImagePreloadForTerm(termName) {
-  const urls = collectTermImageUrlsForTerm(termName);
-  if (urls.length) boostTermImagePreloadPriority(urls);
+  const bleedFull = getTermBleedFullUrl(termName);
+  const displayUrls = collectTermDisplayUrlsForTerm(termName);
+  if (!bleedFull && !displayUrls.length) return;
+
+  boostTermImagePreloadPriority(displayUrls);
+
+  if (bleedFull) {
+    void preloadTermImagesNow([bleedFull], { decode: false, retries: 2 });
+  }
+
+  const secondaryDisplay = displayUrls.slice(1);
+  if (secondaryDisplay.length) {
+    void preloadTermImagesNow(secondaryDisplay, { decode: false, retries: 1 });
+  }
+}
+
+/**
+ * After display images load, drip one bleed at a time for the active group only.
+ * Pauses while the user hovers a term so hover bleed is never competing.
+ */
+function startBleedDripForActiveGroup(centerGroupIndex = getDisplayActiveIndex()) {
+  bleedDripToken += 1;
+  const token = bleedDripToken;
+  const group = groups[centerGroupIndex];
+  if (!group?.terms?.length) return;
+
+  const bleedUrls = [];
+  const seen = new Set();
+  for (const term of group.terms) {
+    const url = getTermBleedFullUrl(term.name);
+    if (!url || seen.has(url) || getPreloadedTermImage(url)) continue;
+    seen.add(url);
+    bleedUrls.push(url);
+  }
+  if (!bleedUrls.length) return;
+
+  let index = 0;
+  const dripNext = () => {
+    if (token !== bleedDripToken || index >= bleedUrls.length) return;
+    if (hoveredTitleRowTermId || focusState) return;
+
+    void preloadTermImagesNow([bleedUrls[index]], { decode: false, retries: 1 });
+    index += 1;
+
+    if (index < bleedUrls.length) {
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(dripNext, { timeout: 3500 });
+      } else {
+        window.setTimeout(dripNext, 500);
+      }
+    }
+  };
+
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(dripNext, { timeout: 10000 });
+  } else {
+    window.setTimeout(dripNext, 4000);
+  }
 }
 
 function startBackgroundTermImagePreload(urls, centerGroupIndex = 0) {
   if (!urls.length) return;
   termImagePreloadAllUrls = urls;
   termImagePreloadBoostIndex = centerGroupIndex;
-  enqueueTermImagePreload(buildPriorityTermImageUrlOrder(centerGroupIndex), {
-    decode: false,
-    concurrency: getTermImagePreloadConcurrency(),
-    retries: 1,
-  });
+
+  const rings = buildSmartPreloadRings(centerGroupIndex);
+  const concurrency = getTermImagePreloadConcurrency();
+
+  if (rings[0]?.length) {
+    enqueueTermImagePreload(rings[0], {
+      decode: false,
+      concurrency,
+      retries: 1,
+    });
+  }
+
+  if (rings[1]?.length) {
+    window.setTimeout(() => {
+      enqueueTermImagePreload(rings[1], {
+        decode: false,
+        concurrency: Math.max(3, concurrency - 2),
+        retries: 1,
+      });
+    }, 600);
+  }
+
+  let ringIndex = 2;
+  const enqueueDistantRings = () => {
+    while (ringIndex < rings.length && !rings[ringIndex]?.length) ringIndex += 1;
+    if (ringIndex >= rings.length) {
+      startBleedDripForActiveGroup(centerGroupIndex);
+      return;
+    }
+
+    enqueueTermImagePreload(rings[ringIndex], {
+      decode: false,
+      concurrency: 3,
+      retries: 1,
+    });
+    ringIndex += 1;
+
+    if (ringIndex < rings.length) {
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(enqueueDistantRings, { timeout: 4000 });
+      } else {
+        window.setTimeout(enqueueDistantRings, 1200);
+      }
+    } else {
+      startBleedDripForActiveGroup(centerGroupIndex);
+    }
+  };
+
+  if (rings.length > 2) {
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(enqueueDistantRings, { timeout: 7000 });
+    } else {
+      window.setTimeout(enqueueDistantRings, 3000);
+    }
+  } else {
+    window.setTimeout(
+      () => startBleedDripForActiveGroup(centerGroupIndex),
+      rings[1]?.length ? 1200 : 800
+    );
+  }
 }
 
 function termImageSrcMatches(imgEl, url) {
@@ -6852,17 +7057,25 @@ function cancelTermImageLoad(img) {
   img.removeAttribute("data-pending-src");
 }
 
-function assignPreloadedTermImage(img, url) {
+function assignPreloadedTermImage(img, url, options = {}) {
   if (!(img instanceof HTMLImageElement) || !url) return Promise.resolve();
 
   const src = resolveTermImageUrl(url);
   img.removeAttribute("data-src");
+  const awaitDecode = options.awaitDecode !== false;
+  if (options.fetchPriority && "fetchPriority" in img) {
+    img.fetchPriority = options.fetchPriority;
+  }
 
   const finish = async () => {
-    try {
-      await img.decode();
-    } catch {
-      // decoded bitmap may still be usable
+    if (awaitDecode) {
+      try {
+        await img.decode();
+      } catch {
+        // decoded bitmap may still be usable
+      }
+    } else {
+      void img.decode().catch(() => {});
     }
     if (shouldApplyMediaCensorPlaceholder()) {
       syncMediaCensorFrame();
@@ -7103,6 +7316,7 @@ function revealTermPageContent(termId, revealToken) {
 
 function hideTermPageContent() {
   resetTermPageScrollReveal();
+  resetTermPageBackHome();
   termPageEl?.classList.remove("is-visible", "is-scroll-content");
   termMetaEl?.classList.remove("is-visible");
   viewport?.classList.remove("is-term-scroll-content");
@@ -7406,6 +7620,59 @@ function layoutTermPageLabelNav(imageTopInPage, imageHeight, term) {
   return imageHeight + gap + navHeight;
 }
 
+/**
+ * Grid column that the back-to-home link's inline-start (right edge, RTL) is
+ * aligned to, counted the same way as the other term-page columns (matches the
+ * "column 20 from the left" target on the 24-column grid).
+ */
+const TERM_PAGE_BACK_HOME_COLUMN = 20;
+
+function resetTermPageBackHome() {
+  if (!termBackHomeEl) return;
+  const textEl = termBackHomeEl.querySelector(".sun-term-page__back-home-text");
+  if (textEl) stopLetterShuffle(textEl);
+  termBackHomeEl.hidden = true;
+  termBackHomeEl.style.top = "";
+  termBackHomeEl.style.left = "";
+  termBackHomeEl.style.width = "";
+}
+
+/**
+ * Place the back-to-home link at the bottom of the scrollable term page, with
+ * its RTL start aligned to grid column 20 counting from the left.
+ * @param {number} topInPage
+ * @returns {number} the link height
+ */
+function layoutTermPageBackHome(topInPage) {
+  if (!termBackHomeEl) return 0;
+  const anchorRightX = getGridColumnRight(
+    GRID.columns - TERM_PAGE_BACK_HOME_COLUMN,
+    viewport
+  );
+  termBackHomeEl.hidden = false;
+  termBackHomeEl.style.left = "0px";
+  termBackHomeEl.style.width = `${Math.max(0, anchorRightX)}px`;
+  termBackHomeEl.style.top = `${topInPage}px`;
+  return termBackHomeEl.offsetHeight;
+}
+
+/** Whether the back-to-home link is currently laid out and visible. */
+function isTermPageBackHomeVisible() {
+  return Boolean(termBackHomeEl && !termBackHomeEl.hidden);
+}
+
+/**
+ * Bottom edge of the back-to-home link in viewport-scroll coordinates (the page
+ * is absolutely positioned, so its bottom edge sets scrollHeight). Returns null
+ * when the link isn't visible.
+ * @returns {number | null}
+ */
+function getTermPageBackHomeBottomPx() {
+  if (!isTermPageBackHomeVisible() || !termBackHomeEl || !termPageEl) return null;
+  const pageTop = termPageEl.offsetTop || 0;
+  return pageTop + termBackHomeEl.offsetTop + termBackHomeEl.offsetHeight;
+}
+
 function refreshTermPageLabelNavLayout() {
   if (!termPageEl?.classList.contains("is-scroll-content")) return;
   if (!currentLayout) return;
@@ -7452,6 +7719,24 @@ function bindTermPageLabelNav() {
     refreshTermPageLabelNavLayout();
     syncActivePageCensorOverlays();
     requestAnimationFrame(() => syncActivePageCensorOverlays());
+  });
+}
+
+function bindTermPageBackHome() {
+  if (!termBackHomeEl) return;
+  const textEl = termBackHomeEl.querySelector(".sun-term-page__back-home-text");
+
+  termBackHomeEl.addEventListener("mouseenter", () => {
+    if (textEl) startLetterShuffle(textEl);
+  });
+  termBackHomeEl.addEventListener("mouseleave", () => {
+    if (textEl) stopLetterShuffle(textEl);
+  });
+  termBackHomeEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (isTermNavigating() || isPageNavTransitionActive()) return;
+    if (textEl) stopLetterShuffle(textEl);
+    handleMapNav("home");
   });
 }
 
@@ -7595,15 +7880,20 @@ function getTermChosenBleedImage(termName, viewportWidth, viewportHeight) {
     return findTermImageByUrl(termName, preview.imageUrl);
   }
   const primary = getTermPrimaryImage(termName);
-  if (
-    primary?.url &&
-    getTermImagePixelSize(primary.url) &&
-    isTermImageBleedQuality(primary.url, viewportWidth, viewportHeight)
-  ) {
-    return primary;
+  if (!primary?.url) {
+    const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
+    return eligible[0] ?? null;
   }
-  const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
-  return eligible[0] ?? primary;
+  const size = getTermImagePixelSize(primary.url);
+  if (
+    size &&
+    !isTermImageBleedQuality(primary.url, viewportWidth, viewportHeight)
+  ) {
+    const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
+    const alternative = eligible.find((image) => image.url !== primary.url);
+    if (alternative) return alternative;
+  }
+  return primary;
 }
 
 /** Term-page full bleed — the single lab-chosen image, never a hover cycle. */
@@ -8194,6 +8484,69 @@ function advanceFixedRowGroupTerm(group) {
   const nextIdx = (currentIdx + 1) % candidates.length;
   fixedRowImageContentTerm = candidates[nextIdx];
   return true;
+}
+
+/**
+ * After title-row hover ends or a home-map term is tapped — advance the active-row
+ * fixed thumbnail and restart its auto-cycle timer.
+ * @param {string} termId
+ * @returns {boolean} whether the thumbnail image changed
+ */
+function notifyTitleRowTermEngagementEnd(termId) {
+  if (!termId || !canShowRowFixedContent(currentLayout)) return false;
+  const term = findTermById(termId);
+  const group = findGroupContainingTermId(termId);
+  let advanced = false;
+  if (group) advanced = advanceFixedRowGroupTerm(group) || advanced;
+  if (term?.name) advanced = advanceTitleRowSharedImage(term.name) || advanced;
+  if (advanced) activeRowFixedImageKey = null;
+  clearFixedRowImageCycleTimer();
+  return advanced;
+}
+
+function clearFixedRowImageCycleTimer() {
+  if (fixedRowImageCycleTimer === null) return;
+  clearInterval(fixedRowImageCycleTimer);
+  fixedRowImageCycleTimer = null;
+}
+
+function shouldRunFixedRowImageCycle(layout) {
+  if (!canShowRowFixedContent(layout)) return false;
+  const activeIndex = getDisplayActiveIndex();
+  const group = groups[activeIndex];
+  if (!group || !rowHasFixedRowImage(group)) return false;
+  if (shouldHideFixedForActiveRowHover(activeIndex)) return false;
+  return getFixedRowContentCandidates(group).length >= 2;
+}
+
+function advanceFixedRowImageCycle() {
+  if (!currentLayout) return;
+  if (!shouldRunFixedRowImageCycle(currentLayout)) {
+    clearFixedRowImageCycleTimer();
+    return;
+  }
+  const group = groups[getDisplayActiveIndex()];
+  if (!group) return;
+  if (advanceFixedRowGroupTerm(group)) {
+    activeRowFixedImageKey = null;
+    syncRayFixedImages(currentLayout);
+    applyAllRowFixedPushes(currentLayout);
+  }
+}
+
+function syncFixedRowImageCycleTimer(layout) {
+  if (!shouldRunFixedRowImageCycle(layout)) {
+    clearFixedRowImageCycleTimer();
+    return;
+  }
+  // Don't reset an already-running interval — syncRayFixedImages is called many
+  // times per second (glitch ticks, scroll, relayout), so re-arming each time
+  // would keep pushing the 3s fire point back indefinitely.
+  if (fixedRowImageCycleTimer !== null) return;
+  fixedRowImageCycleTimer = setInterval(
+    advanceFixedRowImageCycle,
+    LAYOUT.titleRowFixedImageCycleMs
+  );
 }
 
 function getRowEndTermWrap(rayGroup, group) {
@@ -8816,6 +9169,7 @@ function shouldHideRayFixedImage(groupIndex) {
 
 function clearRayFixedImages() {
   stopFixedThumbnailHideAnimation();
+  clearFixedRowImageCycleTimer();
   clearActiveRowImageGlitch();
   clearPendingTitleRowBleedReveal();
   svgEl?.querySelectorAll(".sun-ray-fixed-image, .sun-ray-fixed-image-hit").forEach((el) =>
@@ -8832,23 +9186,6 @@ function stopFixedThumbnailHideAnimation() {
     el.classList.remove("is-hiding");
     el.removeAttribute("opacity");
   });
-}
-
-function layoutRayFixedImageHit(rayGroup, fixedTerm, localLayout) {
-  let hitEl = rayGroup.querySelector(".sun-ray-fixed-image-hit");
-  if (!hitEl) {
-    hitEl = document.createElementNS(SVG_NS, "rect");
-    hitEl.classList.add("sun-ray-fixed-image-hit");
-    hitEl.setAttribute("fill", "transparent");
-    hitEl.setAttribute("aria-hidden", "true");
-    rayGroup.appendChild(hitEl);
-  }
-  setFixedImageTermId(hitEl, fixedTerm.id);
-  hitEl.setAttribute("x", localLayout.x.toFixed(3));
-  hitEl.setAttribute("y", localLayout.y.toFixed(3));
-  hitEl.setAttribute("width", localLayout.width.toFixed(3));
-  hitEl.setAttribute("height", localLayout.height.toFixed(3));
-  rayGroup.appendChild(hitEl);
 }
 
 function clearRayFixedImagePointerHit(rayGroup) {
@@ -8903,8 +9240,6 @@ function syncRayFixedImages(layout) {
     }
 
     const shouldShowImage = !shouldHideRayFixedImage(groupIndex);
-    const keepHoverHit =
-      hoveredTitleRowTermId === contentTerm.id && shouldHideRayFixedImage(groupIndex);
 
     if (!shouldShowImage) {
       if (existing?.classList.contains("is-hiding")) {
@@ -8931,7 +9266,9 @@ function syncRayFixedImages(layout) {
     } else {
       const { viewportWidth, viewportHeight } = layout;
       const sharedImage = pickTitleRowSharedImage(contentTerm.name, viewportWidth, viewportHeight);
-      const url = sharedImage?.url ? resolveTermImageUrl(sharedImage.url) : null;
+      const url = sharedImage?.url
+        ? resolveTermDisplayImageUrl(sharedImage.url)
+        : null;
       const pixelWidth = localLayout.width * getRayLocalScaleX(rayGroup);
       const pixelHeight = localLayout.height * getRayLocalScaleX(rayGroup);
 
@@ -8977,21 +9314,16 @@ function syncRayFixedImages(layout) {
       }
 
       anyFixed = Boolean(resolvedHref);
-      if (resolvedHref) {
-        layoutRayFixedImageHit(rayGroup, contentTerm, localLayout);
-      } else {
-        clearRayFixedImagePointerHit(rayGroup);
-      }
+      clearRayFixedImagePointerHit(rayGroup);
     }
-
-    if (keepHoverHit) layoutRayFixedImageHit(rayGroup, contentTerm, localLayout);
-    else if (!shouldShowImage) clearRayFixedImagePointerHit(rayGroup);
 
     continue;
   }
 
   if (anyFixed) viewport?.classList.add("is-title-row-inline");
   else viewport?.classList.remove("is-title-row-inline");
+
+  syncFixedRowImageCycleTimer(layout);
 }
 
 function shouldApplyRowFixedPushes(layout, groupIndex, rayGroup = null) {
@@ -9893,7 +10225,10 @@ function showBleedBackdrop(url, shouldAnimate, options = {}) {
     }
   };
 
-  assignPreloadedTermImage(bleedBackdropImgEl, url).then(reveal);
+  assignPreloadedTermImage(bleedBackdropImgEl, url, {
+    awaitDecode: false,
+    fetchPriority: "high",
+  }).then(reveal);
 }
 
 function clearTitleRowImageClasses() {
@@ -10153,19 +10488,14 @@ function clearTitleRowTermHover() {
   clearTitleRowHoverImage();
   titleRowInlineExpandedSession = -1;
   titleRowHoverSessionId += 1;
-  // Title-row hover exit cycles the fixed thumbnail through every group term.
-  // Each term keeps a single lab-chosen full-bleed image, so its own image
-  // never advances (advanceTitleRowSharedImage is a no-op for a 1-item pool).
-  const term = findTermById(termId);
-  const group = findGroupContainingTermId(termId);
-  let advanced = false;
-  if (group) advanced = advanceFixedRowGroupTerm(group) || advanced;
-  if (term?.name) advanced = advanceTitleRowSharedImage(term.name) || advanced;
-  if (advanced) activeRowFixedImageKey = null;
+  notifyTitleRowTermEngagementEnd(termId);
   if (currentLayout) {
     updateTitleRowImage(currentLayout);
     syncRayFixedImages(currentLayout);
     applyAllRowFixedPushes(currentLayout);
+    if (!focusState) {
+      startBleedDripForActiveGroup(getDisplayActiveIndex());
+    }
   } else {
     hideTitleRowImage();
     clearRayFixedImages();
@@ -10213,7 +10543,7 @@ function renderTermPageImageSlot(image, index, { captionText } = {}) {
     captionText ?? (image ? formatTermImageCaption(image) : "");
   const figcaption = `<figcaption class="sun-term-page__caption">${escapeAttr(caption)}</figcaption>`;
   if (image?.url) {
-    const src = resolveTermImageUrl(image.url);
+    const src = resolveTermDisplayImageUrl(image.url);
     const preloaded = getPreloadedTermImage(src);
     const srcAttr = preloaded
       ? `src="${escapeAttr(src)}"`
@@ -10297,6 +10627,7 @@ function getTermPageEmphasizeColumnConfig() {
     headingColumnFromRight: cfg.emphasizeHeadingColumnFromRight,
     valueColumns: cfg.emphasizeValueColumns,
     valueColumnFromRight: cfg.emphasizeValueColumnFromRight,
+    valueEndInsetColumns: cfg.emphasizeValueEndInsetColumns ?? 0,
   };
 }
 
@@ -10367,6 +10698,10 @@ function updateTermPageScrollDetailRow(
     viewport
   );
 
+  const valueEndInsetColumns = columnConfig.valueEndInsetColumns ?? 0;
+  const { colWidth, gutter } = getGridMetrics();
+  const valueEndInsetPx = valueEndInsetColumns * (colWidth + gutter);
+
   if (!layoutOnly) {
     setAnnotatedTermText(textEl, trimmed, term);
   }
@@ -10375,6 +10710,12 @@ function updateTermPageScrollDetailRow(
   headingEl.style.width = `${headingSpan.width}px`;
   textEl.style.left = `${valueSpan.left}px`;
   textEl.style.width = `${valueSpan.width}px`;
+  textEl.classList.toggle("has-first-lines-end-inset", valueEndInsetPx > 0);
+  if (valueEndInsetPx > 0) {
+    textEl.style.setProperty("--term-page-value-end-inset", `${valueEndInsetPx}px`);
+  } else {
+    textEl.style.removeProperty("--term-page-value-end-inset");
+  }
   sideEl.hidden = false;
   sideEl.style.height = `${Math.max(headingEl.offsetHeight, textEl.offsetHeight)}px`;
   return true;
@@ -10465,6 +10806,22 @@ function layoutTermPageScrollEmphasizeObscure(startTopInPage, term, contentOnly 
   );
   termDetailsEl.style.height = `${rowHeight}px`;
   return rowHeight;
+}
+
+/** Bottom edge of the last visible label-row text block (משתמשים / נפוץ / בשימוש). */
+function getTermPageLastLabelRowContentBottomInPage() {
+  const rows = [termUsersEl, termContextsEl, termPeriodEl];
+  let bottom = 0;
+  for (const rowEl of rows) {
+    if (!rowEl || rowEl.hidden) continue;
+    const textEl = rowEl.querySelector(".sun-term-page__label-row-text");
+    if (!textEl) continue;
+    bottom = Math.max(
+      bottom,
+      rowEl.offsetTop + textEl.offsetTop + textEl.offsetHeight
+    );
+  }
+  return bottom;
 }
 
 function layoutTermPageScrollLabelRows(startTopInPage, term, contentOnly = false) {
@@ -10631,7 +10988,7 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
   termPageEl.style.width = "100%";
   termPageEl.style.top = `${pageTop}px`;
   termPageEl.style.paddingTop = "0";
-  termPageEl.style.paddingBottom = `${getTermPageBottomPadding(viewportHeight)}px`;
+  termPageEl.style.paddingBottom = "0";
 
   if (termChanged) {
     setAnnotatedTermText(termDefinitionEl, term.definition, term);
@@ -10699,6 +11056,18 @@ function layoutTermPageScrollContent(layout, term, termChanged, options = {}) {
     );
   }
 
+  // Anchor the back-to-home link from the last label-row paragraph (בשימוש when
+  // present), using the same text↔image gap as every other block transition on
+  // the page — not from contentBottom, which meta-below-image can push lower.
+  const textImageGap = getTermPageScrollDefinitionImageGapPx(viewportHeight);
+  const labelContentBottom = getTermPageLastLabelRowContentBottomInPage();
+  const backHomeAnchor = labelContentBottom > 0 ? labelContentBottom : contentBottom;
+  const backHomeHeight = layoutTermPageBackHome(backHomeAnchor + textImageGap);
+  if (backHomeHeight > 0) {
+    contentBottom = Math.max(contentBottom, backHomeAnchor + textImageGap + backHomeHeight);
+  }
+
+  termPageEl.style.paddingBottom = `${getTermPageBottomPadding(viewportHeight)}px`;
   termPageEl.style.minHeight = `${Math.max(headerBlockHeight, contentBottom)}px`;
 
   termPageEl.hidden = false;
@@ -10749,6 +11118,7 @@ function getTermPageScrollContentBottomPx() {
   if (termMetaEl && !termMetaEl.hidden) {
     bottom = Math.max(bottom, termMetaEl.offsetTop + termMetaEl.offsetHeight);
   }
+  if (isTermPageBackHomeVisible()) return bottom;
   return bottom + LAYOUT.termPageBottomMargin;
 }
 
@@ -12203,6 +12573,8 @@ function hideTermPageChrome() {
   termPageBleedTermId = null;
   termPageBleedImage = null;
   termPageSelectedFontSettled = false;
+  termPageEntranceLockScrollTop = 0;
+  syncTermPageEntranceScrollLock();
   termSimilarLabelScrambleStarted = false;
   clearTermPageSiblingFreeze();
   termPageFontScrambleToken++;
@@ -13387,6 +13759,7 @@ function finishSelectedTermFontScramble(scrambleToken, onComplete) {
     clearTermFontScrambleOverlay();
     updateTermPageSimilarLabel(currentLayout);
     termPageCensoredPushTarget = null;
+    onTermPageEntranceSettled();
     requestAnimationFrame(() => {
       if (scrambleToken !== termPageFontScrambleToken) return;
       termPageCensoredPreserveBarsAfterHandoff = false;
@@ -13398,6 +13771,7 @@ function finishSelectedTermFontScramble(scrambleToken, onComplete) {
   clearTermFontScrambleOverlay();
   termPageSelectedFontSettled = true;
   termPageCensoredPushTarget = null;
+  onTermPageEntranceSettled();
   onComplete?.();
 }
 
@@ -13412,11 +13786,14 @@ function runSelectedTermFontScramble(onComplete) {
   const textEl = getSelectedTermTextEl();
   if (!textEl || !selectedTerm) {
     termPageSelectedFontSettled = true;
+    onTermPageEntranceSettled();
     onComplete?.();
     return;
   }
 
   termPageSelectedFontSettled = false;
+  termPageEntranceLockScrollTop = viewport?.scrollTop ?? 0;
+  syncTermPageEntranceScrollLock();
   clearSameObjectMentionHover();
   termPageCensoredFrozenScreenAlign = null;
   termPageFrozenSecoloBaselineScreenY = null;
@@ -13482,18 +13859,24 @@ function maybeShowTermScrollHint() {
     termScrollHintEntranceTimer = null;
     if (focusState?.phase !== "locked" || isTermNavigating()) return;
     if (!isViewportTermScrollable()) return;
-    // If the visitor already started scrolling during the entrance beat, they
-    // don't need the nudge — showing it now would just leave it stuck on screen.
+    // If the visitor already started scrolling before the nudge arms, skip it.
     if ((viewport?.scrollTop ?? 0) > 4) return;
     showTermScrollHint();
   }, TERM_SCROLL_HINT_ENTRANCE_DELAY_MS);
+}
+
+function onTermPageEntranceSettled() {
+  syncTermPageEntranceScrollLock();
+  if (currentLayout) {
+    applyViewportTermScrollBounds(currentLayout.viewportHeight);
+  }
+  maybeShowTermScrollHint();
 }
 
 function onTermPageFocusLocked() {
   if (TERM_PAGE_LEGACY_CONTENT_ENABLED) return;
   termPageSelectedFontSettled = false;
   runSelectedTermFontScramble();
-  maybeShowTermScrollHint();
 }
 
 function updateTermMeta(layout, { contentOnly = false } = {}) {
@@ -13621,6 +14004,7 @@ function updateTermPage(layout) {
     resetTermPageLabelRow(termPeriodEl);
     resetTermPageImages();
     resetTermPageDetailsImage();
+    resetTermPageBackHome();
     resetTermMetaRow(termMetaTypeEl);
     resetTermMetaRow(termMetaFramingEl);
     resetTermMetaRow(termMetaConnotationEl);
@@ -13997,7 +14381,7 @@ function navigateToHome() {
     return;
   }
   if (isFocusActive()) {
-    startUnfocusAnimation();
+    navigateTermToHome();
     return;
   }
   if (isInOverview()) {
@@ -14159,6 +14543,37 @@ function runTermDirectNav(showDestination, enterView, timing = PAGE_TERM_EXIT_TI
     syncNavAfterPageEnter,
     timing
   );
+}
+
+/**
+ * Term page → home: scramble text + pixelate images on the exit beat (same as
+ * other term-page departures), then run the unfocus zoom back to the sun map.
+ * @returns {boolean}
+ */
+function navigateTermToHome() {
+  stabilizeFocusForNav();
+  if (!focusState || focusState.phase !== "locked") return false;
+  if (isPageNavTransitionActive()) return false;
+
+  releaseSiblingTermCensorHold();
+  disableTermEnterSiblingCensor();
+  cancelTermScrollReset();
+
+  runTermPageImagesExitPixelation(PAGE_TERM_EXIT_TIMING.exitMs);
+
+  const started = runPageExitScramble(
+    "termFocus",
+    () => {
+      clearTermPageImageExitPixelation();
+      startUnfocusAnimation();
+    },
+    PAGE_TERM_EXIT_TIMING
+  );
+  if (!started) {
+    clearTermPageImageExitPixelation();
+    startUnfocusAnimation();
+  }
+  return started;
 }
 
 function navigateTermToTermsIndex() {
@@ -15191,7 +15606,6 @@ function finalizeRender(layout) {
   } else {
     stopTimelineTicksLoop();
   }
-  homeScrollDebugSyncVisibility?.();
 }
 
 function render(layout) {
@@ -15541,7 +15955,17 @@ function activateMapTerm(wrap, ray) {
   cancelScrollMotion();
   clearTimeout(snapDebounceTimer);
   setOverviewTarget(0);
-  clearTermHover();
+  if (hoveredTitleRowTermId) {
+    clearOverviewTermHover();
+  } else {
+    const termId = wrap.dataset.termId;
+    if (termId) notifyTitleRowTermEngagementEnd(termId);
+    clearTermHover();
+    if (currentLayout && termId) {
+      syncRayFixedImages(currentLayout);
+      applyAllRowFixedPushes(currentLayout);
+    }
+  }
   refreshMapLayoutFromViewport();
   ensureActiveRowSnapped(currentLayout);
   startFocusAnimation(clickedIndex);
@@ -15616,14 +16040,6 @@ function resolveHomeMapTermClickTarget(event) {
     if (wrap && ray) return { wrap, ray };
   }
 
-  const fixedHit = event.target.closest(".sun-ray-fixed-image-hit");
-  if (fixedHit) {
-    const termId = getFixedImageTermId(fixedHit);
-    const ray = fixedHit.closest(".sun-ray.is-active");
-    const wrap = termId && ray ? getHoveredTermWrap(ray, termId) : null;
-    if (wrap && ray) return { wrap, ray };
-  }
-
   return null;
 }
 
@@ -15670,10 +16086,7 @@ function handleMapTermPointerActivate(event) {
 function bindTermClick() {
   let pointerDown = null;
 
-  const isPointerTrackingTarget = (el) =>
-    Boolean(
-      el?.closest(".sun-term-hit") || el?.closest(".sun-ray-fixed-image-hit")
-    );
+  const isPointerTrackingTarget = (el) => Boolean(el?.closest(".sun-term-hit"));
 
   const resetPointerDown = () => {
     pointerDown = null;
@@ -15718,18 +16131,6 @@ function bindTermHover() {
     if (overviewProgress > 0.02) return;
     if (isArcScrollMotionActive()) return;
 
-    const fixedImage = event.target.closest(".sun-ray-fixed-image, .sun-ray-fixed-image-hit");
-    if (fixedImage) {
-      const termId = getFixedImageTermId(fixedImage);
-      const ray = fixedImage.closest(".sun-ray.is-active");
-      const wrap = termId && ray ? getHoveredTermWrap(ray, termId) : null;
-      if (!termId || !ray) return;
-      if (!wrap) return;
-      setTermHover(ray, wrap);
-      setTitleRowTermHover(termId);
-      return;
-    }
-
     const hit = event.target.closest(".sun-term-hit");
     if (!hit) return;
     const wrap = hit.closest(".sun-term-wrap");
@@ -15743,24 +16144,13 @@ function bindTermHover() {
 
   svgEl.addEventListener("mouseout", (event) => {
     const hit = event.target.closest(".sun-term-hit");
-    const fixedImage = event.target.closest(".sun-ray-fixed-image, .sun-ray-fixed-image-hit");
-    if (!hit && !fixedImage) return;
+    if (!hit) return;
 
     const related = event.relatedTarget;
-    if (hit) {
-      const wrap = hit.closest(".sun-term-wrap");
-      if (wrap && (!related || !wrap.contains(related))) {
-        clearOverviewTermHover();
-      }
-      return;
+    const wrap = hit.closest(".sun-term-wrap");
+    if (wrap && (!related || !wrap.contains(related))) {
+      clearOverviewTermHover();
     }
-
-    const termId = getFixedImageTermId(fixedImage);
-    const ray = fixedImage.closest(".sun-ray.is-active");
-    const wrap = termId && ray ? getHoveredTermWrap(ray, termId) : null;
-    if (!wrap) return;
-    if (related instanceof Node && wrap.contains(related)) return;
-    clearOverviewTermHover();
   });
 }
 
@@ -16602,9 +16992,19 @@ function isMouseWheelEvent(event) {
   if (!event) return false;
   if (event.deltaMode && event.deltaMode !== 0) return true; // line/page mode → mouse
   if (event.deltaX !== 0) return false; // horizontal jitter → trackpad
+  const wheelDelta = event.wheelDeltaY;
+  // macOS can apply smooth acceleration to a physical mouse wheel, producing
+  // fractional pixel `deltaY` values while preserving legacy 120-step wheelDeltaY.
+  // Treat that legacy signal as authoritative for a notched mouse.
+  if (
+    typeof wheelDelta === "number" &&
+    wheelDelta !== 0 &&
+    wheelDelta % 120 === 0
+  ) {
+    return true;
+  }
   const dy = event.deltaY;
   if (!Number.isInteger(dy) || dy === 0) return false; // fractional → trackpad
-  const wheelDelta = event.wheelDeltaY;
   return (
     typeof wheelDelta === "number" && wheelDelta !== 0 && wheelDelta % 120 === 0
   );
@@ -16673,20 +17073,59 @@ function applyMouseWheelRoll(wheelDeltaY, arc) {
   return true;
 }
 
-function applyMouseWheelByMode(wheelDeltaY, inFlightTarget, arc) {
+function applyMouseWheelBetweenFast(wheelDeltaY, wheelLegacyDeltaY, inFlightTarget, arc) {
+  // Fast bursts use the same continuous momentum path as the trackpad, so the
+  // active row (and its centred pixelated image) tracks the VISUAL centre via an
+  // unlocked updateActiveFromScroll — it never locks to a far-ahead row. Two
+  // taming tweaks vs the raw trackpad path: (1) the per-frame step is capped so a
+  // single macOS-accelerated mouse event can't teleport 100+ rows past the
+  // centre, keeping the image visible as rows pass; (2) the settle uses
+  // easeOutCubic instead of the bouncy roulette ease, so it lands centred.
+  lastWheelWasNotch = false;
+  wheelScrollLayoutOverrides = null;
+  forceEaseOutSnap = true;
+  fineGestureActive = false;
+
+  const rawDelta = applyWheelScroll(wheelDeltaY);
+  const maxStep = 4;
+  const delta = clamp(rawDelta, -maxStep, maxStep);
+  scrollVelocity = clamp(scrollVelocity, -maxStep, maxStep);
+  scrollOffset -= delta;
+  updateActiveFromScroll(arc);
+  render(arc);
+  ensureMomentumLoop();
+  scheduleSnapEnd(arc);
+  return true;
+}
+
+function applyMouseWheelHybrid(wheelDeltaY, wheelLegacyDeltaY, inFlightTarget, arc) {
+  const absLegacy = Math.abs(wheelLegacyDeltaY ?? 0);
+  const isSlowNotch = absLegacy > 0 && absLegacy <= 120;
+  if (isSlowNotch) {
+    return applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc);
+  }
+  return applyMouseWheelBetweenFast(wheelDeltaY, wheelLegacyDeltaY, inFlightTarget, arc);
+}
+
+function applyMouseWheelByMode(wheelDeltaY, inFlightTarget, arc, wheelLegacyDeltaY = null) {
   const mode = getActiveHomeScrollMode();
   switch (mode.mouseHandling) {
     case "glide":
       return applyMouseWheelGlide(wheelDeltaY, arc);
     case "roll":
       return applyMouseWheelRoll(wheelDeltaY, arc);
+    case "between":
+      return applyMouseWheelHybrid(wheelDeltaY, wheelLegacyDeltaY, inFlightTarget, arc);
     case "discrete":
     default:
       return applyMouseWheelDiscrete(wheelDeltaY, inFlightTarget, arc);
   }
 }
 
-function applyArcWheelDelta(deltaY, { fromSplashHandoff = false, isMouseWheel = false } = {}) {
+function applyArcWheelDelta(
+  deltaY,
+  { fromSplashHandoff = false, isMouseWheel = false, wheelLegacyDeltaY = null } = {}
+) {
   if (!currentLayout || isFocusActive() || isTermNavigating()) return false;
 
   if (isOverviewTimelineMode() && yearScroll) {
@@ -16712,13 +17151,20 @@ function applyArcWheelDelta(deltaY, { fromSplashHandoff = false, isMouseWheel = 
   clearTitleRowTermHover();
 
   const wheelDeltaY =
-    fromSplashHandoff && deltaY > 0 && deltaY < LAYOUT.scrollFineThresholdPx
-      ? LAYOUT.scrollFineThresholdPx
+    fromSplashHandoff &&
+    deltaY !== 0 &&
+    Math.abs(deltaY) < LAYOUT.scrollFineThresholdPx
+      ? Math.sign(deltaY) * LAYOUT.scrollFineThresholdPx
       : deltaY;
 
   if (isMouseWheel && !fromSplashHandoff) {
     lastWheelWasNotch = true;
-    return applyMouseWheelByMode(wheelDeltaY, inFlightTarget, currentLayout);
+    return applyMouseWheelByMode(
+      wheelDeltaY,
+      inFlightTarget,
+      currentLayout,
+      wheelLegacyDeltaY
+    );
   }
 
   // Trackpad / splash handoff — notch detection by delta magnitude only.
@@ -16795,7 +17241,7 @@ function bindSplashWheelHandoff() {
   window.addEventListener("splash-wheel-handoff", (event) => {
     const deltaY = event.detail?.deltaY;
     const fromSplashHandoff = Boolean(event.detail?.fromSplashHandoff);
-    if (!deltaY || deltaY <= 0) return;
+    if (!deltaY) return;
     if (!applyArcWheelDelta(deltaY, { fromSplashHandoff })) {
       pendingSplashWheelDelta = (pendingSplashWheelDelta ?? 0) + deltaY;
     }
@@ -16823,7 +17269,7 @@ function runSplashNavEntrance() {
     // initHomeScrollHint(), so ensure the element exists before showing —
     // otherwise the hint silently no-ops on a fast scroll-past entrance.
     initHomeScrollHint();
-    showHomeScrollHint();
+    showHomeScrollHint({ ignoreSeen: true });
   }, NAV_SPLASH_ENTRANCE_DELAY_MS);
 }
 
@@ -16920,23 +17366,32 @@ function bindWheelScroll() {
         return;
       }
 
-      if (isViewportTermScrollable() && isFocusActive() && !isTermNavigating()) {
+      if (
+        isViewportTermScrollable() &&
+        isFocusActive() &&
+        !isTermNavigating() &&
+        !isTermPageEntranceScrollLocked()
+      ) {
         applyTermPageWheelScroll(event.deltaY);
+        event.preventDefault();
+        return;
+      }
+
+      if (isTermPageEntranceScrollLocked() && isFocusActive() && !isTermNavigating()) {
         event.preventDefault();
         return;
       }
 
       event.preventDefault();
       const detectedMouse = isMouseWheelEvent(event);
-      reportWheelDebug({
-        deltaY: event.deltaY,
-        deltaX: event.deltaX,
-        deltaMode: event.deltaMode,
-        wheelDeltaY:
-          typeof event.wheelDeltaY === "number" ? event.wheelDeltaY : null,
-        detected: detectedMouse ? "mouse" : "trackpad",
-      });
-      if (!applyArcWheelDelta(event.deltaY, { isMouseWheel: detectedMouse })) return;
+      if (
+        !applyArcWheelDelta(event.deltaY, {
+          isMouseWheel: detectedMouse,
+          wheelLegacyDeltaY:
+            typeof event.wheelDeltaY === "number" ? event.wheelDeltaY : null,
+        })
+      )
+        return;
     },
     { passive: false }
   );
@@ -17244,35 +17699,6 @@ function exposeBleedTextLabApi() {
   document.dispatchEvent(new CustomEvent("sun-map-ready", { detail: api }));
 }
 
-function exposeTimelineLabApi() {
-  if (!isTimelineLabMode()) return;
-  const api = {
-    getTimelineLayout() {
-      return {
-        timelineCxOffset: LAYOUT.timelineCxOffset,
-        timelineCyOffset: LAYOUT.timelineCyOffset,
-        timelineRadiusScale: LAYOUT.timelineRadiusScale,
-        timelineStartYear: LAYOUT.timelineStartYear,
-        overviewTweenMs: LAYOUT.overviewTweenMs,
-        overviewFontSize: LAYOUT.overviewFontSize,
-      };
-    },
-    setTimelineLayout(patch) {
-      Object.assign(LAYOUT, patch);
-      overviewGeo.resetFitCache();
-      rebuild(true);
-    },
-    getYearScroll: () => yearScroll,
-    getDisplayedYear: () => yearScroll?.getDisplayedYears() ?? null,
-    rebuild: () => rebuild(true),
-    goToTimeline: () => navigateToOverviewMode("timeline"),
-    goToHome: () => navigateToHome(),
-  };
-  globalThis.__SUN_TIMELINE_LAB_API__ = api;
-  initTimelineLab(api);
-  document.dispatchEvent(new CustomEvent("sun-timeline-lab-ready", { detail: api }));
-}
-
 async function init() {
   bindSplashWheelHandoff();
   bindSplashNavEntrance();
@@ -17288,7 +17714,9 @@ async function init() {
       loadTimelineEvents(),
       loadBleedTextPrefs(),
     ]);
-    const imageUrls = collectTermImageUrls(termImages).map((url) => resolveTermImageUrl(url));
+    const imageUrls = collectTermImageUrls(termImages).map((url) =>
+      resolveTermDisplayImageUrl(url)
+    );
     resetLoadingWork(2);
     advanceLoadingWork(LOADING_WORK_WEIGHT.dataFetch * 2, "טוען נתונים…");
 
@@ -17400,12 +17828,6 @@ async function init() {
     // bindWheelScroll() is idempotent, so the later call is a no-op.
     bindWheelScroll();
 
-    // Timeline lab: snap straight into the timeline so the page opens on the
-    // timeline itself — no splash, no home-map beat, no produced transition.
-    if (isTimelineLabMode()) {
-      beginOverviewOpen("timeline", { snap: true });
-    }
-
     flushPendingSplashWheelDelta();
 
     if (currentLayout) {
@@ -17446,6 +17868,7 @@ async function init() {
     bindMentionNavigation();
     bindMetaFilterNavigation();
     bindTermPageLabelNav();
+    bindTermPageBackHome();
     bindSameObjectMentionNavigation();
     bindMediaCensorRevealClick();
     bindSameObjectMentionHover();
@@ -17454,11 +17877,7 @@ async function init() {
     bindGridToggle();
 
     exposeBleedTextLabApi();
-    exposeTimelineLabApi();
     exposeFold3CentreTuner();
-
-    const debugPanel = initHomeScrollDebugPanel({ isHomeView: isAtHomeView });
-    homeScrollDebugSyncVisibility = debugPanel?.syncVisibility ?? null;
 
     new ResizeObserver(() => {
       syncGridCssVars(viewport);

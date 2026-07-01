@@ -20,8 +20,8 @@ const NAV_LABELS = "#site-nav .site-nav__label";
 const LOADING_SCRAMBLE_MS = 75;
 /** Standard exit/enter beat for page-to-page navigation (non-term). */
 export const PAGE_ROUTE_TIMING = {
-  exitMs: 95,
-  enterMs: 95,
+  exitMs: 68,
+  enterMs: 68,
 };
 /** Timeline ring is sparse (most terms year-faded at the latest year), so its
  * scramble leg gets a longer beat than the standard 95ms to read as a deliberate
@@ -56,9 +56,11 @@ const VIEW_SELECTORS = {
     ".sun-term-page__label-row-heading",
     ".sun-term-page__label-nav-text",
     ".sun-term-page__caption",
+    ".sun-term-bleed-caption .sun-term-hover-caption__line",
     ".sun-term-page__definition",
     ".sun-term-page__side-text",
     ".sun-term-page__label-row-text",
+    ".sun-term-page__back-home-text",
   ],
   about: [
     ".sun-about__intro",
@@ -360,6 +362,29 @@ export function runPageNavScrambleTransition(
     },
     timing
   );
+}
+
+/**
+ * Exit-only page scramble (no enter leg). Clears the nav-transition lock when done.
+ * @param {PageScrambleView} exitView
+ * @param {() => void} onComplete
+ * @param {{ exitMs?: number }} [timing]
+ * @returns {boolean}
+ */
+export function runPageExitScramble(exitView, onComplete, timing = PAGE_ROUTE_TIMING) {
+  if (pageNavTransitionActive) return false;
+  pageNavTransitionActive = true;
+  const exitMs = timing.exitMs ?? PAGE_ROUTE_TIMING.exitMs;
+  scrambleExitView(
+    exitView,
+    () => {
+      abortExitContentContinuous();
+      pageNavTransitionActive = false;
+      onComplete();
+    },
+    exitMs
+  );
+  return true;
 }
 
 /** @param {PageScrambleView} view @param {() => void} [onComplete] */

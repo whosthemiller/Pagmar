@@ -2,7 +2,7 @@ import { syncGridCssVars } from "./grid-metrics.js";
 import { getMapTypographyScale } from "./viewport-layout.js";
 import { packColumnsBalanced } from "./terms-column-packer.js";
 
-const LINE_HEIGHT = 20;
+const LINE_HEIGHT = 23;
 const FONT_SIZE = 14;
 const TERM_COL_SPAN = 3;
 const TERM_COL_START = 2;
@@ -300,13 +300,21 @@ function isFastScanAt(x, y, t) {
   return pointerVelocity > SCAN_VELOCITY_PX_S;
 }
 
+/** @param {HTMLElement} termEl */
+function isTermClickBlocked(termEl) {
+  return termEl.classList.contains("is-sibling-censored");
+}
+
 /** @param {number} x @param {number} y */
 function termAtPoint(x, y) {
-  const hit = document.elementFromPoint(x, y);
-  if (!(hit instanceof Element)) return null;
-  const termEl = hit.closest(".sun-terms-index__term");
-  if (!(termEl instanceof HTMLElement) || !rootEl?.contains(termEl)) return null;
-  return termEl;
+  const stack = document.elementsFromPoint(x, y);
+  for (const hit of stack) {
+    if (!(hit instanceof Element)) continue;
+    const termEl = hit.closest(".sun-terms-index__term");
+    if (!(termEl instanceof HTMLElement) || !rootEl?.contains(termEl)) continue;
+    return termEl;
+  }
+  return null;
 }
 
 /** @param {number} x @param {number} y @param {number} t */
@@ -649,7 +657,11 @@ function renderGrid(blockLayouts) {
         termEl.dataset.objectId = cell.term.objectId || "";
         termEl.style.gridRow = String(cell.row);
         termEl.style.gridColumn = `${cell.colStart} / span ${cell.colSpan}`;
-        termEl.addEventListener("click", () => {
+        termEl.addEventListener("click", (event) => {
+          if (isTermClickBlocked(termEl)) {
+            event.preventDefault();
+            return;
+          }
           onTermSelect(cell.term.id);
         });
         block.appendChild(termEl);

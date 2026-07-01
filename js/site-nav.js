@@ -135,13 +135,14 @@ function handleNavClick(event) {
   const target = link.dataset.nav;
   if (!target) return;
 
+  // Always block the anchor href first — index.html links must not reload the SPA
+  // when the map controller handles (or fails mid-) in-app navigation.
+  event.preventDefault();
+
   if (currentPage === "map" && mapController) {
-    const handled = mapController.navigate(target);
-    if (handled) event.preventDefault();
+    mapController.navigate(target);
     return;
   }
-
-  event.preventDefault();
   const storageTarget =
     target === "tags" ? "filter" : target === "home" ? "home" : target;
   sessionStorage.setItem(NAV_STORAGE_KEY, storageTarget);

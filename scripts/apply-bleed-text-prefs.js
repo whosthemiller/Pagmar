@@ -25,12 +25,28 @@ function normalizeTextMode(value) {
   return TEXT_MODES.has(value) ? value : "auto";
 }
 
+function imageStem(url) {
+  if (!url) return "";
+  const base = path.basename(url);
+  return base.replace(/\.[^.]+$/, "").trim();
+}
+
+function findTermImageIndex(images, imageUrl) {
+  const stem = imageStem(imageUrl);
+  const webpUrl = imageUrl.replace(/\.(jpe?g|png|gif)$/i, ".webp");
+  return images.findIndex((image) => {
+    if (!image?.url) return false;
+    if (image.url === imageUrl || image.url === webpUrl) return true;
+    return imageStem(image.url) === stem;
+  });
+}
+
 function reorderTermImages(termImages, termName, imageUrl) {
   const entry = termImages.terms?.[termName];
   if (!entry?.images?.length) {
     return { updated: false, reason: "term-not-found" };
   }
-  const index = entry.images.findIndex((image) => image?.url === imageUrl);
+  const index = findTermImageIndex(entry.images, imageUrl);
   if (index < 0) {
     return { updated: false, reason: "image-not-found" };
   }

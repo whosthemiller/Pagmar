@@ -78,11 +78,18 @@ function isBleedQuality(size) {
   );
 }
 
-/** Prefer full-bleed assets, then largest short edge, then filename. */
-function pickImagesForTerm(dir, maxCount = 3) {
+function isDisplayVariant(filename) {
+  return /-display\.webp$/i.test(filename);
+}
+
+/** Prefer full-bleed assets, then largest short edge, then filename. Skips -display.webp variants. */
+function pickImagesForTerm(dir, maxCount = 3, preferredBleedUrl = null) {
   const files = fs
     .readdirSync(dir)
-    .filter((name) => IMAGE_EXTS.has(path.extname(name).toLowerCase()));
+    .filter(
+      (name) =>
+        IMAGE_EXTS.has(path.extname(name).toLowerCase()) && !isDisplayVariant(name)
+    );
 
   const ranked = files
     .map((name) => {
@@ -91,7 +98,8 @@ function pickImagesForTerm(dir, maxCount = 3) {
       const bleedOk = isBleedQuality(size);
       const shortEdge = size ? Math.min(size.width, size.height) : 0;
       const coverScale = size ? getBleedCoverScale(size) : Infinity;
-      return { name, bleedOk, shortEdge, coverScale };
+      const url = toPosixRel(absPath);
+      return { name, url, bleedOk, shortEdge, coverScale };
     })
     .sort((a, b) => {
       if (a.bleedOk !== b.bleedOk) return a.bleedOk ? -1 : 1;
@@ -100,15 +108,49 @@ function pickImagesForTerm(dir, maxCount = 3) {
       return a.name.localeCompare(b.name, "he");
     });
 
-  return ranked.slice(0, maxCount).map(({ name }) => ({
-    url: toPosixRel(path.join(dir, name)),
+  const picked = [];
+  const seen = new Set();
+
+  if (preferredBleedUrl) {
+    const preferred = ranked.find((row) => row.url === preferredBleedUrl);
+    if (preferred) {
+      picked.push(preferred);
+      seen.add(preferred.url);
+    }
+  }
+
+  for (const row of ranked) {
+    if (picked.length >= maxCount) break;
+    if (seen.has(row.url)) continue;
+    picked.push(row);
+    seen.add(row.url);
+  }
+
+  return picked.slice(0, maxCount).map(({ url, name }) => ({
+    url,
     source: "local",
     caption: captionFromFilename(name),
   }));
 }
 
+function loadExistingBleedChoices() {
+  if (!fs.existsSync(JSON_PATH)) return new Map();
+  try {
+    const data = JSON.parse(fs.readFileSync(JSON_PATH, "utf8"));
+    const map = new Map();
+    for (const [termName, entry] of Object.entries(data.terms || {})) {
+      const primary = entry?.images?.[0]?.url;
+      if (primary) map.set(termName, primary);
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
 function build() {
   const terms = loadTerms();
+  const existingBleedChoices = loadExistingBleedChoices();
   const result = {
     meta: {
       generatedAt: new Date().toISOString(),
@@ -132,7 +174,7 @@ function build() {
   for (const folder of folders) {
     const termName = FOLDER_ALIASES[folder] || folder;
     const dir = path.join(IMG_ROOT, folder);
-    const images = pickImagesForTerm(dir, 3);
+    const images = pickImagesForTerm(dir, 3, existingBleedChoices.get(termName));
 
     if (!images.length) {
       skipped.push(folder);

@@ -54,8 +54,8 @@ body.is-splash-active .sun-app {
   direction: rtl;
   overflow: hidden;
   transition:
-    opacity var(--splash-dismiss-duration) ease,
-    transform var(--splash-dismiss-duration) ease;
+    opacity var(--splash-dismiss-duration) cubic-bezier(0.4, 0, 0.2, 1),
+    transform var(--splash-dismiss-duration) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .splash.is-dismissed {
@@ -118,12 +118,28 @@ body.is-splash-active .sun-app {
   display: none;
 }
 
-/* Quote — Secolo 82/64, cols 6-20 */
-.splash__quote {
+/* Quote block — shrink-wraps to quote text width */
+.splash__quote-block {
   grid-column: 5 / 21;
   grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--splash-row-gap);
+  justify-self: center;
+  width: fit-content;
+  max-width: 100%;
   margin: 0;
   padding: 0;
+}
+
+/* Quote — Secolo 82/64, cols 6-20 */
+.splash__quote {
+  margin: 0;
+  padding: 0;
+  width: fit-content;
+  max-width: 100%;
+  align-self: center;
   font-family: "Secolo", serif;
   font-size: var(--splash-quote-size);
   line-height: var(--splash-quote-lh);
@@ -133,15 +149,24 @@ body.is-splash-active .sun-app {
   pointer-events: none;
 }
 
-/* Attribution — Roobert Mono 14, cols 21-24, bottom-aligned to quote */
+.splash__quote-mark--open {
+  font-size: inherit;
+  line-height: 0;
+  vertical-align: 0.52em;
+}
+
+.splash__quote-mark--close {
+  font-size: inherit;
+  line-height: 0;
+  vertical-align: baseline;
+}
+
+/* Attribution — Roobert regular, below quote, right-aligned to quote text */
 .splash__cite {
-  grid-column: 20 / 24;
-  grid-row: 1;
   margin: 0;
   padding: 0;
-  align-self: end;
-  font-family: var(--sun-mono-font);
-  font-variation-settings: "MONO" 100, "slnt" 0;
+  font-family: var(--sun-prose-font);
+  font-variation-settings: var(--sun-prose-variation, normal);
   font-weight: 400;
   font-style: normal;
   font-size: var(--splash-cite-size);
@@ -151,48 +176,10 @@ body.is-splash-active .sun-app {
   pointer-events: none;
 }
 
-/* Intro paragraph — Roobert 18/22, right edge at col 3 */
-.splash__intro {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  justify-self: center;
-  max-width: calc(11 * var(--grid-column-width, 1fr) + 10 * var(--grid-gutter, 10px));
-  margin: 0;
-  padding: 0;
-  font-family: var(--sun-prose-font);
-  font-variation-settings: "MONO" 0, "slnt" 0;
-  font-weight: 400;
-  font-size: var(--splash-body-size);
-  line-height: var(--splash-body-lh);
-  text-align: center;
-  pointer-events: none;
-}
-
-.splash__intro-link {
-  font-family: var(--sun-mono-font);
-  font-variation-settings: "MONO" 100, "slnt" 0;
-  font-weight: 400;
-  position: relative;
-  display: inline;
-  line-height: inherit;
-  cursor: default;
-  pointer-events: auto;
-  text-decoration: underline;
-  text-decoration-thickness: 0.08em;
-  text-underline-offset: 0.12em;
-}
-
-.splash__intro-space {
-  font-family: var(--sun-mono-font);
-  font-variation-settings: "MONO" 100, "slnt" 0;
-  font-weight: 400;
-  white-space: pre;
-}
-
 /* Scroll hint — col 3, arrow circle on the left */
 .splash__scroll-hint {
   grid-column: 1 / -1;
-  grid-row: 3;
+  grid-row: 2;
   margin: var(--splash-hint-gap) 0 0;
   padding: 0;
   display: flex;
@@ -220,8 +207,8 @@ body.is-splash-active .sun-app {
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 1.9em;
-  height: 1.9em;
+  width: 1.6em;
+  height: 1.6em;
   border-radius: 50%;
   background: transparent;
   border: 1.5px solid var(--ink);
@@ -244,16 +231,19 @@ body.is-splash-active .sun-app {
   }
 
   .splash__image-band,
-  .splash__quote,
-  .splash__cite,
-  .splash__intro,
+  .splash__quote-block,
   .splash__scroll-hint {
     grid-column: 1 / -1;
     grid-row: auto;
   }
 
+  .splash__quote-block {
+    justify-self: center;
+    width: fit-content;
+    max-width: 100%;
+  }
+
   .splash__cite {
-    align-self: auto;
     text-align: right;
   }
 
@@ -267,10 +257,5 @@ body.is-splash-active .sun-app {
   .splash__quote {
     font-size: clamp(36px, 10vw, 64px);
     line-height: 1.1;
-  }
-
-  .splash__intro {
-    font-size: 16px;
-    line-height: 22px;
   }
 }

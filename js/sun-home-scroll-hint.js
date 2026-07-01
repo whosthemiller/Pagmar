@@ -32,6 +32,7 @@ let shown = false;
 let armTimer = null;
 let dismissTimer = null;
 let scrambleTimer = null;
+let forcedHomeHintShownThisLoad = false;
 /** Whether the current showing should persist a "seen" flag once dismissed. */
 let persistOnDismiss = false;
 /** If true, a scroll during the arm grace is remembered and dismisses on arm. */
@@ -108,10 +109,11 @@ function showScrollHint({
   persist,
   armDelay = ARM_DELAY_MS,
   deferDismiss = false,
+  ignoreSeen = false,
   typewriter = false,
 }) {
   if (!hintEl) return;
-  if (persist && hasSeen()) return;
+  if (persist && !ignoreSeen && hasSeen()) return;
   // Already on-screen and not exiting — nothing to do.
   if (shown && !dismissing) return;
 
@@ -155,8 +157,13 @@ function notifyScroll() {
   scheduleDismiss();
 }
 
-export function showHomeScrollHint() {
-  showScrollHint({ persist: true });
+export function showHomeScrollHint(options = {}) {
+  const ignoreSeen = Boolean(options.ignoreSeen);
+  if (ignoreSeen) {
+    if (forcedHomeHintShownThisLoad) return;
+    forcedHomeHintShownThisLoad = true;
+  }
+  showScrollHint({ persist: true, ignoreSeen });
 }
 
 /** User started scrolling the home map — schedule the scramble-out. */

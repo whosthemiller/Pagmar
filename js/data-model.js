@@ -925,6 +925,17 @@ async function runBackgroundPreloadWorker() {
 }
 
 /**
+ * Load one or more URLs immediately (not via the background queue).
+ */
+export function preloadTermImagesNow(urls, options = {}) {
+  const list = [...urls].filter(Boolean);
+  if (!list.length) return Promise.resolve([]);
+  return Promise.all(
+    list.map((url) => loadImageElement(url, options.retries ?? 1, options))
+  );
+}
+
+/**
  * Queue term images for background preload (deduped, skips already cached).
  * @param {string[]} urls — earlier entries load first.
  */

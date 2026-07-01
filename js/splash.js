@@ -1,16 +1,13 @@
 /**
  * Splash entry overlay — small pixelated image slideshow with pixel transitions,
- * scroll-to-dismiss into the main sun-map site.
+ * scroll-to-dismiss (any direction) into the main sun-map site.
  */
 
-import { applyBlockTypography } from "./typography.js";
 import { syncGridCssVars } from "./grid-metrics.js";
 import {
   abortLetterShuffle,
   initLetterShuffle,
   startContinuousScramble,
-  startLetterShuffle,
-  stopLetterShuffle,
 } from "./letter-shuffle.js";
 
 const CONFIG = {
@@ -54,7 +51,6 @@ const splashEl = document.getElementById("splash");
 const imageBandEl = splashEl?.querySelector(".splash__image-band");
 const imageEl = splashEl?.querySelector(".splash__image");
 const canvasEl = splashEl?.querySelector(".splash__pixel-canvas");
-const introEl = splashEl?.querySelector(".splash__intro");
 const scrollHintTextEl = splashEl?.querySelector(".splash__scroll-hint-text");
 
 function prefersReducedMotion() {
@@ -341,7 +337,7 @@ function stopGallery() {
 let scrollHandoffActive = false;
 
 function handoffScrollToSite(deltaY) {
-  if (!deltaY || deltaY <= 0) return;
+  if (!deltaY) return;
   globalThis.dispatchEvent(
     new CustomEvent("splash-wheel-handoff", {
       detail: { deltaY, fromSplashHandoff: true },
@@ -353,7 +349,7 @@ function beginScrollHandoff(initialDeltaY = 0) {
   removeScrollListeners();
   document.body.classList.remove("is-splash-active");
 
-  if (initialDeltaY > 0) {
+  if (initialDeltaY !== 0) {
     handoffScrollToSite(initialDeltaY);
   }
 
@@ -398,12 +394,9 @@ export function dismissSplash(options = {}) {
   }, CONFIG.dismissDurationMs);
 }
 
-function isDownwardScrollIntent(event) {
-  if (event.type === "wheel") {
-    return event.deltaY > 0;
-  }
+function isScrollDismissIntent(event) {
   if (event.type === "keydown") {
-    return ["ArrowDown", "PageDown", "Space"].includes(event.key);
+    return ["ArrowDown", "PageDown", "Space", "ArrowUp", "PageUp"].includes(event.key);
   }
   return false;
 }
@@ -412,13 +405,13 @@ function onWheel(event) {
   if (!active) return;
   event.preventDefault();
   event.stopPropagation();
-  if (event.deltaY > 0) dismissSplash({ scrollDeltaY: event.deltaY });
+  if (event.deltaY !== 0) dismissSplash({ scrollDeltaY: event.deltaY });
 }
 
 function onWheelHandoff(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
-  if (event.deltaY > 0) {
+  if (event.deltaY !== 0) {
     handoffScrollToSite(event.deltaY);
   }
 }
@@ -435,9 +428,10 @@ function onTouchMove(event) {
   event.preventDefault();
   event.stopPropagation();
   const deltaY = touchStartY - event.touches[0].clientY;
-  if (deltaY > 24) {
+  if (Math.abs(deltaY) > 24) {
     dismissSplash({
-      scrollDeltaY: Math.max(deltaY, CONFIG.dismissScrollDelta),
+      scrollDeltaY:
+        Math.sign(deltaY) * Math.max(Math.abs(deltaY), CONFIG.dismissScrollDelta),
     });
   }
 }
@@ -447,7 +441,7 @@ function onTouchHandoff(event) {
   event.preventDefault();
   event.stopImmediatePropagation();
   const deltaY = touchStartY - event.touches[0].clientY;
-  if (deltaY > 0) {
+  if (deltaY !== 0) {
     handoffScrollToSite(deltaY);
   }
   touchStartY = event.touches[0].clientY;
@@ -455,9 +449,13 @@ function onTouchHandoff(event) {
 
 function onKeyDown(event) {
   if (!active) return;
-  if (isDownwardScrollIntent(event)) {
+  if (isScrollDismissIntent(event)) {
     event.preventDefault();
-    dismissSplash({ scrollDeltaY: CONFIG.dismissScrollDelta });
+    const scrollDeltaY =
+      event.key === "ArrowUp" || event.key === "PageUp"
+        ? -CONFIG.dismissScrollDelta
+        : CONFIG.dismissScrollDelta;
+    dismissSplash({ scrollDeltaY });
   }
 }
 
@@ -474,27 +472,6 @@ function removeScrollListeners() {
   window.removeEventListener("touchstart", onTouchStart);
   window.removeEventListener("touchmove", onTouchMove);
   window.removeEventListener("keydown", onKeyDown);
-}
-
-function applyIntroTypography() {
-  if (!introEl) return;
-  const linkText = "טרמינולוגיה פוליטית";
-  const rest =
-    "הוא אינדקס אינטראקטיבי של מושגים בעלי פרשנויות שונות בשיח הפוליטי בישראל. האתר בוחן כיצד מילים שונות המתייחסות לאותה מציאות יכולות לעצב תפיסות שונות שלה, וכיצד המאבק על הנרטיב מתנהל גם דרך השפה עצמה.";
-  const restTyped = applyBlockTypography(rest, { ensurePeriod: false });
-
-  const link = document.createElement("span");
-  link.className = "splash__intro-link";
-  link.textContent = linkText;
-  link.addEventListener("mouseenter", () => startLetterShuffle(link));
-  link.addEventListener("mouseleave", () => stopLetterShuffle(link));
-
-  const monoSpace = document.createElement("span");
-  monoSpace.className = "splash__intro-space";
-  monoSpace.textContent = " ";
-
-  introEl.textContent = "";
-  introEl.append(link, monoSpace, document.createTextNode(restTyped));
 }
 
 /** Fisher–Yates shuffle — random playback order on each page load. */
@@ -531,7 +508,6 @@ async function initSplash() {
 
   syncGridCssVars();
   initLetterShuffle();
-  applyIntroTypography();
   addScrollListeners();
 
   try {

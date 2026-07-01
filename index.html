@@ -74,12 +74,13 @@
       aria-label="עמוד פתיחה"
     >
       <div class="splash__group">
-        <blockquote class="splash__quote">
-          „המאבק האמיתי מתרחש על המילון … מי שמנצח<br />
-          בשדה המילים – מנצח, לעיתים, גם בשדה הזיכרון."
-        </blockquote>
-        <p class="splash__cite">-ג׳ורג׳ אורוול</p>
-        <p class="splash__intro"></p>
+        <div class="splash__quote-block">
+          <blockquote class="splash__quote">
+            <span class="splash__quote-mark splash__quote-mark--open">„</span>המאבק האמיתי מתרחש על המילון […] מי שמנצח<br />
+            בשדה המילים – מנצח, לעיתים, גם בשדה הזיכרון.<span class="splash__quote-mark splash__quote-mark--close">“</span>
+          </blockquote>
+          <p class="splash__cite">– ג׳ורג׳ אורוול</p>
+        </div>
         <p class="splash__scroll-hint">
           <span class="splash__scroll-hint-arrow" aria-hidden="true">↓</span>
           <span class="splash__scroll-hint-text">גללו כדי להתחיל לחקור</span>
@@ -197,6 +198,16 @@
             <h3 class="sun-term-page__side-heading sun-term-page__label-row-heading">בשימוש</h3>
             <p class="sun-term-page__side-text sun-term-page__label-row-text" data-letter-shuffle-underline="off"></p>
           </div>
+          <a
+            id="sun-term-back-home"
+            class="sun-term-page__back-home"
+            href="index.html"
+            data-nav="home"
+            hidden
+          >
+            <span class="sun-term-page__back-home-arrow" aria-hidden="true"></span>
+            <span class="sun-term-page__back-home-text">בחזרה לעמוד הבית</span>
+          </a>
         </div>
         <div
           id="sun-term-header-backdrop"
@@ -239,17 +250,6 @@
         </div>
       </div>
       <svg id="sun-back-fixed" class="sun-back-fixed" aria-hidden="true"></svg>
-    </div>
-
-    <div id="home-scroll-debug" class="home-scroll-debug" aria-label="בחירת מצב גלילה">
-      <span class="home-scroll-debug__title">גלילת עכבר</span>
-      <div class="home-scroll-debug__buttons">
-        <button type="button" data-scroll-mode="discrete">A דיסקרטי</button>
-        <button type="button" data-scroll-mode="glide">B גלישה</button>
-        <button type="button" data-scroll-mode="roll">C גלגול</button>
-      </div>
-      <span class="home-scroll-debug__status" aria-live="polite"></span>
-      <span class="home-scroll-debug__wheel" aria-hidden="true">גלגלי כדי לראות ערכים…</span>
     </div>
 
     <script type="module" src="js/idle-refresh.js"></script>

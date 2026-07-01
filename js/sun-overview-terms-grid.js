@@ -231,6 +231,7 @@ function updateTermCensorClasses(el, { isHovered, isSibling, fastScan }) {
  */
 function setTermHoverState(termEl, { fastScan = false } = {}) {
   if (!rootEl) return;
+  if (isTermFilterCensored(termEl)) return;
   const termId = termEl.dataset.termId;
   const objectId = termEl.dataset.objectId;
   if (!objectId || !termId) return;
@@ -302,13 +303,30 @@ function isFastScanAt(x, y, t) {
   return pointerVelocity > SCAN_VELOCITY_PX_S;
 }
 
+/** @param {HTMLElement} termEl */
+function isTermFilterCensored(termEl) {
+  return termEl.classList.contains("is-filter-censored");
+}
+
+/** @param {HTMLElement} termEl */
+function isTermClickBlocked(termEl) {
+  return (
+    isTermFilterCensored(termEl) ||
+    termEl.classList.contains("is-sibling-censored")
+  );
+}
+
 /** @param {number} x @param {number} y */
 function termAtPoint(x, y) {
-  const hit = document.elementFromPoint(x, y);
-  if (!(hit instanceof Element)) return null;
-  const termEl = hit.closest(".sun-terms-index__term");
-  if (!(termEl instanceof HTMLElement) || !rootEl?.contains(termEl)) return null;
-  return termEl;
+  const stack = document.elementsFromPoint(x, y);
+  for (const hit of stack) {
+    if (!(hit instanceof Element)) continue;
+    const termEl = hit.closest(".sun-terms-index__term");
+    if (!(termEl instanceof HTMLElement) || !rootEl?.contains(termEl)) continue;
+    if (isTermFilterCensored(termEl)) continue;
+    return termEl;
+  }
+  return null;
 }
 
 /** @param {number} x @param {number} y @param {number} t */
@@ -553,7 +571,11 @@ function renderGrid(blockLayouts) {
       termEl.dataset.objectId = cell.objectId;
       termEl.style.gridRow = String(cell.row);
       termEl.style.gridColumn = `${cell.colStart} / span ${cell.colSpan}`;
-      termEl.addEventListener("click", () => {
+      termEl.addEventListener("click", (event) => {
+        if (isTermClickBlocked(termEl)) {
+          event.preventDefault();
+          return;
+        }
         onTermSelect(cell.term.id);
       });
       block.appendChild(termEl);
@@ -651,11 +673,17 @@ export function applyFilterCensorToGrid(termIds) {
     const shouldCensor = termId != null && censoredTermIds.has(termId);
     const wasCensored = termEl.classList.contains("is-filter-censored");
     termEl.classList.toggle("is-filter-censored", shouldCensor);
+    if (termEl instanceof HTMLButtonElement) {
+      termEl.disabled = shouldCensor;
+    }
     if (shouldCensor && !wasCensored) {
       applyCensorWriteTiming(termEl, termEl.offsetWidth);
     } else if (!shouldCensor) {
       termEl.style.removeProperty("--sun-censor-write-duration");
       termEl.style.removeProperty("--sun-censor-write-steps");
+      if (termEl instanceof HTMLButtonElement) {
+        termEl.disabled = false;
+      }
     }
   }
 }
