@@ -6,519 +6,648 @@
   "terms": {
     "0מאלנים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/0שמלאנים/איתמר בם גביר ויואב אליסי ״הצל״ במטה מפלגת עוצמה יהודית .webp"
     },
     "אזור חיץ": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/אזור החיץ/טנקים סמוך לגבול עזה.webp"
     },
     "אירוע ה־7 באוקטובר": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/אירוע ה-7 באוקטובר/פגיעה ישירה של רקטה שנורתה מעזה לאשקלון 17.26.48.webp"
     },
     "אנרכיסטים": {
       "navText": "light",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/אנרכיסטים/מחאה בנתיבי איילון לאחר פרישתו של ניצב עמי אשד.webp"
     },
     "אסירים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/אסירים/חייל שומר על עצורים פלסטינים המיועדים לשחרור במסגרת הסכם החזרת החטופים בכלא קציעות בדרום הארץ.webp"
     },
     "אספקה לאויב": {
       "navText": "dark",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/אספקה לאויב/משאית אספקה נכנסת לעזה.webp"
     },
     "אפרטהייד": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/אפרטהייד/עימות בין חיילים לפלסטינים ליד סלפית.webp"
     },
     "אש לא מידתית": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/אש לא מידתית/תושבות הרצועה מול הריסות בניין שהופצץ בבית חאנון.webp"
     },
     "בוגדים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/בוגדים/פעיל ליכוד אוחז בשלט \"שמאלנים בוגדים\".webp"
     },
     "ביביסטים": {
       "navText": "dark",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/ביביסטים/חולצת I Love BIBIZIM.webp"
     },
     "בני ערובה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/בני ערובה/בני הערובה מאנטבה נוחתים בישראל.webp"
     },
     "ג׳יהאד": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/ג׳יהאד/פעילי חמאס.webp"
     },
     "גבול שביתת הנשק": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/גבול שביתת הנשק/ועדת שביתת הנשק ישראל־מצרים נפגשת בשטח לקביעת תוואי הגבול.webp"
     },
     "גבולות אושוויץ": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/גבולות אושוויץ/גדר במחנה ההשמדה בירקנאו.webp"
     },
     "גדר הבטחון": {
       "navText": "auto",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/גדר הבטחון/פלסטינים חוצים את הגדר לשטח ישראל ליד חברון.webp"
     },
     "גדר ההפרדה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/גדר ההפרדה/מבט על גדר ההפרדה בין ירושלים לגדה המערבית.webp"
     },
     "גזירת הגיוס": {
       "navText": "light",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/גזירת הגיוס/מפגינים נגד מעצר עריק.webp"
     },
     "גירוש": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/גירוש/הפגנה נגד הגירוש .webp"
     },
     "דיפ סטייט": {
       "navText": "dark",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/דיפ סטייט/בנימין נתניהו.webp"
     },
     "הגדה המערבית": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הגדה המערבית/חיילים בגדה המערבית.webp"
     },
     "ההפיכה המשטרית": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/ההפיכה המשטרית/אבוקות בהפגנה בקפלן.webp"
     },
     "הוצאה להורג": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הוצאה להורג/משפט אדולף אייכמן.webp"
     },
     "הכיבוש": {
       "navText": "light",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/הכיבוש/חיילי צה״ל מונעים מתושבי חברון להתפלל באלחרם אלאיבראהימי.webp"
     },
     "המגזר הערבי": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/המגזר הערבי/הפגנה מול ‏משרד ראש הממשלה בעקבות הפשיעה בחברה הערבית.webp"
     },
     "המרד הערבי הגדול": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/המרד הערבי הגדול/חיילים ושוטרים בריטים בפעולות ביטחון בירושלים וברחבי הארץ.webp"
     },
     "הנכבה": {
       "navText": "auto",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/הנכבה/צעדת השיבה של פלסטינים בישראל לציון 75 שנה לנכבה.webp"
     },
     "הסברה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הסברה/אילון לוי.webp"
     },
     "הסכסוך": {
       "navText": "auto",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/הסכסוך/ילדים פלסטינים מול כוחות צה\"ל ליד בית לחם.webp"
     },
     "הסלמה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הסלמה/חאן יונס.webp"
     },
     "הפגנות": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הפגנות/מפגינים למען השבת החטופים ונגד הממשלה בצומת עזריאלי בתל אביב.webp"
     },
     "הפרעות סדר": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הפרעות סדר/מדורה שמפגינים הדליקו.webp"
     },
     "הקו הירוק": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הקו הירוק/סימונים של הקו הירוק באזור מכבים.webp"
     },
     "הרג אזרחים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הרג אזרחים/מתחם פסטיבל נובה בחניון רעים.webp"
     },
     "הרפורמה המשפטית": {
       "navText": "light",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/הרפורמה המשפטית/יריב לוין.webp"
     },
     "הרתעה": {
       "navText": "light",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/הרתעה/הפצצות צה״ל בעיר עזה.webp"
     },
     "השטחים הכבושים": {
       "navText": "auto",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/השטחים הכבושים/בית הרוס בכפר זנותא.webp"
     },
     "התיישבויות": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/התיישבויות/חוות צאן של מתנחלים ישראלים בגדה המערבית.webp"
     },
     "התנחלויות": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/התנחלויות/צעדת מחאה של מתנחלים בחומש.webp"
     },
     "התנקשות": {
       "navText": "dark",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/התנקשות/איסמעיל הנייה.webp"
     },
     "התנתקות": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/התנתקות/מתנגדות לפינוי חוסמות את הכניסה לנווה דקלים.webp"
     },
     "חומת ההפרדה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/חומת ההפרדה/ילד פלסטיני ליד חומת ההפרדה.webp"
     },
     "חוסל": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/חוסל/יחיא סינוואר.webp"
     },
     "חוק הגיוס": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/חוק הגיוס/פלסטינים חוצים כביש שסגר הצבא ליד חברון בגדה המערבית.webp"
     },
     "חטופים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/חטופים/הפגנה למען החטופים מחוץ לכנסת.webp"
     },
     "חיסול": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/חיסול/המכתש אחרי תקיפת הבונקר של נסראללה וחיסולו.webp"
     },
     "חסם הומניטרי": {
       "navText": "auto",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/חסם הומניטרי/חמושים בעזה על משאיות סיוע הומניטרי.webp"
     },
     "טבח": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/טבח/מכוניות העוטף עזה.webp"
     },
     "טבח דיר יאסין": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/טבח דיר יאסין/מרכז הכפר דיר יאסין.webp"
     },
     "טבח ה־7 באוקטובר": {
       "navText": "light",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/טבח ה-7 באוקטובר/ההרס בקיבוץ כפר עזה .webp"
     },
     "טיהור אתני": {
       "navText": "light",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/טיהור אתני/שיירה של תושבי העיר עזה נמלטים דרומה.webp"
     },
     "טרור מתנחלים": {
       "navText": "light",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/טרור מתנחלים/עימותים בין מתנחלים לפלסטינים בחווארה.webp"
     },
     "טרנספר": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/טרנספר/פליטים פלסטינים נמלטים מרפיח, רצועת עזה.webp"
     },
     "טרנספר מרצון": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/טרנספר מרצון/הקהל בכנס הטרנספר .webp"
     },
     "יהודה ושומרון": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/יהודה ושומרון/נוף מהר גריזים.webp"
     },
     "יודונאצים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/יודונאצים/שלט יודנאצים החוצה בהפגנה.webp"
     },
     "ימנים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/ימנים/מנחם בגין.webp"
     },
     "כיבוש": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/כיבוש/חייל צה\"ל בפעולה מבצעית בחלחול.webp"
     },
     "כיבוש דיר יאסין": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/כיבוש דיר יאסין/חיילים ישראלים בכפר לפני קום המדינה.webp"
     },
     "כיבוש צבאי": {
       "navText": "light",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/כיבוש צבאי/פעילות כוחות בטחון באיו״ש.webp"
     },
     "כליאה ללא משפט": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/כליאה ללא משפט/מעצר חשודים בגדה.webp"
     },
     "כניסה קרקעית": {
       "navText": "light",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/כניסה קרקעית/חטיבת השריון מתרגלת כניסה קרקעית ללבנון.webp"
     },
     "מאורעות תרפ״ט": {
       "navText": "auto",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/מאורעות תרפ״ט/חייל בריטי בחזית מרפאת הדסה, חברון.webp"
     },
     "מאורעות תרצ״ו–תרצ”ט": {
       "navText": "dark",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/מאורעות תרצ״ו - תרצ״ט/הנודדת של אורד וינגייט.webp"
     },
     "מאחזים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מאחזים/מאחז בצומת טייבה.webp"
     },
     "מאחזים בלתי חוקיים": {
       "navText": "light",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/מאחזים בלתי חוקיים/בניית חווה יהודית בשטחים.webp"
     },
     "מבצע": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מבצע/מבצע שובר גלים.webp"
     },
     "מבקשי מקלט": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מבקשי מקלט/מבקשי מקלט במתקן הכליאה חולות.webp"
     },
     "מהגרים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מהגרים/מהגרי עבודה בשדה כרוב בנגב .webp"
     },
     "מחאות": {
       "navText": "light",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מחאות/עמותים במחאות נגד נתיחת גופות פעוטות בירושלים.webp"
     },
     "מחסום": {
       "navText": "light",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מחסום/חיילים בודקים רכבים באזור שכם.webp"
     },
     "מלחמה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מלחמה/חיילים בעזה.webp"
     },
     "מלחמת ה־7 באוקטובר": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מלחמת ה-7 באוקטובר/כוחות צה\"ל נלחמים ברצועת עזה .webp"
     },
     "מלחמת העצמאות": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מלחמת העצמאות/חיילי חטיבת יפתח עם משוריין הלגיון שחוסל במבצע דני.webp"
     },
     "מלחמת השחרור": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מלחמת השחרור/חיילי צה\"ל מצטיידים במקלעים שהגיעו מצ'כוסלבקיה.webp"
     },
     "מלחמת התקומה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מלחמת התקומה/חיילי צה״ל בעזה.webp"
     },
     "מלחמת עזה 2023": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מלחמת עזה 2023/פלסטינים על הריסות מבנה שנהרס בהפצצה ישראלית על ח'אן יונס.webp"
     },
     "ממשל צבאי": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/ממשל צבאי/הפגנות לסיום הממשל הצבאי.webp"
     },
     "מסתננים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מסתננים/הגדר הפרוצה בגבול עם ירדן לאחר ששני מסתננים מירדן נורו למוות .webp"
     },
     "מעבר": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מעבר/פלסטינים ממתינים במעבר בכניסה לישראל .webp"
     },
     "מעצר מנהלי": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מעצר מנהלי/חשוד מובא לדיון בהארכת מעצרו בבית המשפט.webp"
     },
     "מפונים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מפונים/מלון כפר המכביה ברמת גן, שקלט מפונים מאשקלון ונתיבות.webp"
     },
     "מצור": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מצור/ילדים בעזה.webp"
     },
     "מתקפת ה־7 באוקטובר": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מתקפת ה-7 באוקטובר/חמושים פלסטינים מגדודי עז א-דין אל-קסאם נעים לעבר מעבר ארז בין ישראל לצפון רצועת עזה.webp"
     },
     "נהרג": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/נהרג/מיגונית בעוטף.webp"
     },
     "נוטרל": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/נוטרל/זירת פיגוע בצומת ניר צבי.webp"
     },
     "נזק אגבי": {
       "navText": "light",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/נזק אגבי/הרס מפגיעת טיל איראני ברמת גן.webp"
     },
     "נספה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/נספה/הלוויה של חייל.webp"
     },
     "נערי גבעות": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/נערי גבעות/מתנחלים מחוות מעון רועים בחלקות פרטיות של תושבי הכפר תוואני.webp"
     },
     "נפל": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/נפל/הלוויה צבאית.webp"
     },
     "נרצח": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/נרצח/הפגנה נגד הפשיעה בחברה הערבית.webp"
     },
     "סגר": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/סגר/פלסטינים ומצרים בציר פילדלפי לאחר נסיגת הצבא.webp"
     },
     "סיוע הומניטרי": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/סיוע הומניטרי/חלוקת סיוע הומניטרי בעזה.webp"
     },
     "סיכול ממוקד": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/סיכול ממוקד/סיכול ממוקד באמצעות מסוק קרב של חיל האוויר הישראלי המשגר טיל לעבר חוליית משגרי רקטות ברצועת עזה .webp"
     },
     "סילוואן": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/סילוואן/ציורי קיר של עיניים בסילוואן.webp"
     },
     "עולים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/עולים/עולים מברית המועצות.webp"
     },
     "עיירות פיתוח": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/עיירות פיתוח/בית מקורי מימי ראשית עיירת הפיתוח בשדרות.webp"
     },
     "עיירות פריפריה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/עיירות פריפריה/מבנה שעבר “שיקום שכונות” באופקים, ועליו שלט “למכירה”.webp"
     },
     "עיר דוד": {
       "navText": "light",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/עיר דוד/שטח ג'י בעיר דוד.webp"
     },
     "ענישה": {
       "navText": "light",
-      "titleRowText": "dark"
+      "titleRowText": "dark",
+      "imageUrl": "assets/img/ענישה/אסירים פלסטינים בכלא בדרום.webp"
     },
     "עקורים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/עקורים/עקורים פלסטינים בעזה.webp"
     },
     "עקירה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/עקירה/ילד פלסטיני ישן בחורבות ביתו ההרוס בשכונת שג׳עייה שבעיר עזה.webp"
     },
     "ערבים ישראליים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/ערבים ישראליים/צעירים ערבים בישראל.webp"
     },
     "פגיעה בבלתי מעורבים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פגיעה בבלתי מעורבים/קיבוץ ניר עוז.webp"
     },
     "פיגוע": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פיגוע/זירת פיגוע בצות תפוח.webp"
     },
     "פינוי": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פינוי/בית בקיבוץ בארי שנפגע במתקפת 7 באוקטובר.webp"
     },
     "פליטים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פליטים/מהגרים, רובם מאריתריאה, קופצים למים במבצע חילוץ של ארגון לא־ממשלתי בים התיכון.webp"
     },
     "פלישה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פלישה/כוח רדואן.webp"
     },
     "פלסטין": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פלסטין/מיעאר.webp"
     },
     "פלסטינים אזרחי ישראל": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פלסטינים אזרחי ישראל/הפגנה באום אל־פחם .webp"
     },
     "פעולה מבצעית": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פעולה מבצעית/מפקדת גדוד שחר במהלך פעילות מבצעית בלב הרצועה.webp"
     },
     "פעולת התנגדות": {
       "navText": "light",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פעולת התנגדות/פלסטינים מוחים מול כוחות ישראליים ליד גדר ההפרדה בין רצועת עזה לישראל.webp"
     },
     "פעולת טרור": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פעולת טרור/שוטרים בזירת פיגוע הטרור בעיר אלעד.webp"
     },
     "פרעות תרפ״ט": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פרעות תרפ״ט/שריפת הרטוב.webp"
     },
     "פרשת דיר יאסין": {
       "navText": "dark",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/פרשת דיר יאסין/דיר יאסין .webp"
     },
     "פשיטה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/פשיטה/פשיטה על בתיהם של בכירי חמאס.webp"
     },
     "פשיעה לאומנית": {
       "navText": "dark",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/פשיעה לאומנית/ישראלים רעולי פנים בכפר ביתא.webp"
     },
     "קו העימות": {
       "navText": "dark",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/קו העימות/טנקים של צה\"ל בגבול לבנון.webp"
     },
     "קפלניסטים": {
       "navText": "auto",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/קפלניסטים/מפגין מצלם את המחאה בקפלן.webp"
     },
     "רצועת הבטחון": {
       "navText": "dark",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/רצועת בטחון/רצועת הבטחון בלבנון.webp"
     },
     "רצח עם": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/רצח עם/הפגנה נגד המלחמה בתל אביב.webp"
     },
     "שבויים": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/שבויים/חיילי צה\"ל לצד שבויים מצרים ברפיח.webp"
     },
     "שוויון בנטל": {
       "navText": "auto",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/שוויון בנטל/מחאת שוויון בנטל.webp"
     },
     "שטח כבוש": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/שטח כבוש/פעילות צה\"ל ברצועת עזה.webp"
     },
     "שלטון החוק": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/שלטון החוק/בית המשפט העליון.webp"
     },
     "שלטון הפקידים": {
       "navText": "auto",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/שלטון הפקידים/גלי בהרב מיארה.webp"
     },
     "שמאלנים": {
       "navText": "auto",
-      "titleRowText": "light"
+      "titleRowText": "light",
+      "imageUrl": "assets/img/שמלאנים/עצרת השלום בכיכר מלכי ישראל.webp"
     },
     "תגובה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/תגובה/מטוסי חיל האוויר בדרך לתקיפה באיראן.webp"
     },
     "תמרון קרקעי": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/תמרון קרקעי/הרמטכ״ל הרצי הלוי בתרגיל בגבול הצפון.webp"
     },
     "תעמולה": {
       "navText": "auto",
-      "titleRowText": "auto"
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/תעמולה/ינון מגל.webp"
     }
   }
 }

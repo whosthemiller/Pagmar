@@ -12,6 +12,7 @@ const { execSync } = require("child_process");
 const ROOT = path.join(__dirname, "..");
 const IMG_ROOT = path.join(ROOT, "assets", "img");
 const JSON_PATH = path.join(ROOT, "data", "term-images.json");
+const PREFS_PATH = path.join(ROOT, "data", "bleed-text-prefs.json");
 const SHEET_PATH = path.join(ROOT, "data", "sheet-data.json");
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
 
@@ -134,18 +135,31 @@ function pickImagesForTerm(dir, maxCount = 3, preferredBleedUrl = null) {
 }
 
 function loadExistingBleedChoices() {
-  if (!fs.existsSync(JSON_PATH)) return new Map();
+  const map = new Map();
+
+  if (fs.existsSync(PREFS_PATH)) {
+    try {
+      const prefs = JSON.parse(fs.readFileSync(PREFS_PATH, "utf8"));
+      for (const [termName, entry] of Object.entries(prefs.terms || {})) {
+        if (entry?.imageUrl) map.set(termName, entry.imageUrl);
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  if (!fs.existsSync(JSON_PATH)) return map;
   try {
     const data = JSON.parse(fs.readFileSync(JSON_PATH, "utf8"));
-    const map = new Map();
     for (const [termName, entry] of Object.entries(data.terms || {})) {
+      if (map.has(termName)) continue;
       const primary = entry?.images?.[0]?.url;
       if (primary) map.set(termName, primary);
     }
-    return map;
   } catch {
-    return new Map();
+    // fall through
   }
+  return map;
 }
 
 function build() {

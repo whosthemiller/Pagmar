@@ -87,13 +87,7 @@ function main() {
   for (const [termName, entry] of Object.entries(exportData.terms || {})) {
     if (!entry || typeof entry !== "object") continue;
 
-    prefs.terms[termName] = {
-      navText: normalizeTextMode(entry.navText ?? prefs.terms[termName]?.navText),
-      titleRowText: normalizeTextMode(
-        entry.titleRowText ?? prefs.terms[termName]?.titleRowText
-      ),
-    };
-    summary.textUpdated += 1;
+    let bleedImageUrl = prefs.terms[termName]?.imageUrl ?? null;
 
     if (entry.imageUrl) {
       const result = reorderTermImages(termImages, termName, entry.imageUrl);
@@ -104,7 +98,18 @@ function main() {
       } else if (result.reason === "image-not-found") {
         summary.imageSkipped.push(`${termName} (תמונה לא נמצאה)`);
       }
+      const primary = termImages.terms?.[termName]?.images?.[0]?.url;
+      if (primary) bleedImageUrl = primary;
     }
+
+    prefs.terms[termName] = {
+      navText: normalizeTextMode(entry.navText ?? prefs.terms[termName]?.navText),
+      titleRowText: normalizeTextMode(
+        entry.titleRowText ?? prefs.terms[termName]?.titleRowText
+      ),
+      ...(bleedImageUrl ? { imageUrl: bleedImageUrl } : {}),
+    };
+    summary.textUpdated += 1;
   }
 
   writeJson(PREFS_PATH, prefs);

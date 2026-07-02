@@ -9,9 +9,10 @@ export const TEXT_MODES = ["auto", "dark", "light"];
 const DEFAULT_TERM_PREFS = {
   navText: "auto",
   titleRowText: "auto",
+  imageUrl: null,
 };
 
-/** @type {{ meta: { version: number }, terms: Record<string, { navText?: string, titleRowText?: string }> }} */
+/** @type {{ meta: { version: number }, terms: Record<string, { navText?: string, titleRowText?: string, imageUrl?: string | null }> }} */
 let loadedPrefs = {
   meta: { version: 1 },
   terms: {},
@@ -22,9 +23,14 @@ export function normalizeTextMode(value) {
 }
 
 export function normalizeTermPrefs(entry = {}) {
+  const imageUrl =
+    typeof entry.imageUrl === "string" && entry.imageUrl.trim()
+      ? entry.imageUrl.trim()
+      : null;
   return {
     navText: normalizeTextMode(entry.navText),
     titleRowText: normalizeTextMode(entry.titleRowText),
+    imageUrl,
   };
 }
 
@@ -77,6 +83,7 @@ export function mergeBleedTextPrefsExport(exportData) {
     merged.terms[name] = normalizeTermPrefs({
       navText: entry.navText ?? prev.navText,
       titleRowText: entry.titleRowText ?? prev.titleRowText,
+      imageUrl: entry.imageUrl ?? prev.imageUrl,
     });
   }
   return merged;

@@ -7959,10 +7959,24 @@ function getBleedTextPrefsForActiveTerm(term) {
   };
 }
 
+function termImageUrlStem(url) {
+  if (!url) return "";
+  const base = url.split("/").pop() || "";
+  return base.replace(/\.[^.]+$/, "").trim();
+}
+
 function findTermImageByUrl(termName, imageUrl) {
   if (!termName || !imageUrl) return null;
   const images = termImagesByName.get(termName) || [];
-  return images.find((image) => image?.url === imageUrl) ?? { url: imageUrl };
+  const exact = images.find((image) => image?.url === imageUrl);
+  if (exact) return exact;
+  const webpUrl = imageUrl.replace(/\.(jpe?g|png|gif)$/i, ".webp");
+  const webpMatch = images.find((image) => image?.url === webpUrl);
+  if (webpMatch) return webpMatch;
+  const stem = termImageUrlStem(imageUrl);
+  const stemMatch = images.find((image) => termImageUrlStem(image?.url) === stem);
+  if (stemMatch) return stemMatch;
+  return null;
 }
 
 function getTermBleedEligibleImages(termName, viewportWidth, viewportHeight) {
@@ -7986,10 +8000,14 @@ function getTermChosenBleedImage(termName, viewportWidth, viewportHeight) {
   if (preview?.imageUrl) {
     return findTermImageByUrl(termName, preview.imageUrl);
   }
+  const savedBleedUrl = getTermTextPrefs(termName).imageUrl;
+  if (savedBleedUrl) {
+    const fromPrefs = findTermImageByUrl(termName, savedBleedUrl);
+    if (fromPrefs) return fromPrefs;
+  }
   const primary = getTermPrimaryImage(termName);
   if (primary?.url) return primary;
-  const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
-  return eligible[0] ?? null;
+  return null;
 }
 
 /** Term-page full bleed — the single lab-chosen image, never a hover cycle. */
@@ -13680,9 +13698,7 @@ function updateTermPageBleedCaption(layout, image) {
  * is preserved by `object-fit: cover`. Default for all other terms is
  * `center top`.
  */
-const TERM_BLEED_OBJECT_POSITION = {
-  "ביביסטים": "50% 100%",
-};
+const TERM_BLEED_OBJECT_POSITION = {};
 
 function applyTermPageBleedObjectPosition(termName) {
   if (!bleedBackdropImgEl) return;
@@ -13719,15 +13735,10 @@ function updateTermPageBleed(layout) {
     return;
   }
 
-  const carryImage = termPageBleedCarryImage;
-  const carriedFromHover = Boolean(carryImage);
-  if (carryImage) termPageBleedCarryImage = null;
+  termPageBleedCarryImage = null;
   const { viewportWidth, viewportHeight } = layout;
-  // Term-page bleed is pinned to the chosen/primary image — no hover cycling.
-  const image =
-    pickTermBleedImage(term.name, viewportWidth, viewportHeight) ??
-    carryImage ??
-    pickTermDisplayImage(term.name);
+  // Term-page bleed is pinned to the single lab-chosen image — never hover carry or fallback.
+  const image = pickTermBleedImage(term.name, viewportWidth, viewportHeight);
   const url = image?.url;
   if (!url) {
     hideBleedBackdropFully();
@@ -13762,7 +13773,7 @@ function updateTermPageBleed(layout) {
     viewport?.classList.add("is-term-page-bleed");
     bleedBackdropEl.classList.add("is-term-page");
   } else {
-    showBleedBackdrop(url, termChanged && !carriedFromHover && !bleedSrcMatches, {
+    showBleedBackdrop(url, termChanged && !bleedSrcMatches, {
       mode: "termPage",
     });
   }
