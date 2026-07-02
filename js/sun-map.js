@@ -85,6 +85,12 @@ import {
   setSunOverviewTermsGridRebuildGuard,
 } from "./sun-overview-terms-grid.js";
 import {
+  beginCensorUncensor,
+  beginCensorWriteInReturn,
+  finishCensorUncensor,
+  finishCensorWriteInReturn,
+} from "./censor-scramble-rgb.js";
+import {
   runPageNavScrambleTransition,
   runPageExitScramble,
   isPageNavTransitionActive,
@@ -1437,7 +1443,169 @@ function isArcScrollMotionActive() {
   return isSnapping || momentumFrame !== null;
 }
 
+/** @type {number | null} */
+let censorUncensorTimer = null;
+let censorUncensorGeneration = 0;
+
+function cancelCensorUncensorSequence() {
+  censorUncensorGeneration += 1;
+  if (censorUncensorTimer != null) {
+    clearTimeout(censorUncensorTimer);
+    censorUncensorTimer = null;
+  }
+  document.querySelectorAll(".is-censor-uncensoring").forEach((el) => {
+    finishCensorUncensor(el);
+  });
+  document.querySelectorAll(".is-censor-write-in-return").forEach((el) => {
+    finishCensorWriteInReturn(el);
+  });
+}
+
+function getCensorElementWidth(el) {
+  const attrWidth = parseFloat(el.getAttribute?.("width") ?? "");
+  if (Number.isFinite(attrWidth) && attrWidth > 0) return attrWidth;
+  const styleWidth = parseFloat(el.style?.width ?? "");
+  if (Number.isFinite(styleWidth) && styleWidth > 0) return styleWidth;
+  return el.getBoundingClientRect().width;
+}
+
+/**
+ * @param {Element[]} censorEls
+ * @param {() => void} onDone
+ * @param {{ afterBegin?: () => void }} [options]
+ */
+function runCensorUncensorSequence(censorEls, onDone, options = {}) {
+  cancelCensorUncensorSequence();
+  if (!censorEls.length) {
+    onDone();
+    return;
+  }
+
+  const pageLines = censorEls.filter((el) => el.classList.contains("sun-page-censor-line"));
+  const svgCensors = censorEls.filter((el) => el.classList.contains("sun-term-censor"));
+  const generation = censorUncensorGeneration;
+
+  let maxDurationMs = 0;
+  for (const el of censorEls) {
+    const { durationS, steps } = getCensorWriteTiming(getCensorElementWidth(el));
+    maxDurationMs = Math.max(maxDurationMs, beginCensorUncensor(el, durationS, steps));
+  }
+
+  options.afterBegin?.();
+
+  censorUncensorTimer = window.setTimeout(() => {
+    censorUncensorTimer = null;
+    if (generation !== censorUncensorGeneration || hoveredSameObjectMentionId) return;
+    if (pageCensorLayer && pageLines.length) {
+      pageCensorLayer.replaceChildren();
+    }
+    for (const el of svgCensors) finishCensorUncensor(el);
+    onDone();
+  }, maxDurationMs + 20);
+}
+
+/** Title-row censor hidden while this term is revealed during same-object hover. */
+function getRevealedTitleRowCensorEl(termId) {
+  if (!termId) return null;
+  const wrap = getFocusRayGroup()?.querySelector(
+    `.sun-term-wrap:not(.is-selected).is-mention-revealed[data-term-id="${CSS.escape(termId)}"]`
+  );
+  const censor = wrap?.querySelector(".sun-term-censor");
+  return censor instanceof Element ? censor : null;
+}
+
+function collectSameObjectHoverExitCensorEls() {
+  if (!pageCensorLayer) return [];
+  return [...pageCensorLayer.querySelectorAll(".sun-page-censor-line")];
+}
+
+function runSameObjectMentionExitSequence(termId, onDone) {
+  cancelCensorUncensorSequence();
+  const pageLines = collectSameObjectHoverExitCensorEls();
+  const titleCensor = getRevealedTitleRowCensorEl(termId);
+
+  if (!pageLines.length && !(titleCensor instanceof Element)) {
+    onDone();
+    return;
+  }
+
+  const generation = censorUncensorGeneration;
+  let maxDurationMs = 0;
+
+  for (const el of pageLines) {
+    const { durationS, steps } = getCensorWriteTiming(getCensorElementWidth(el));
+    maxDurationMs = Math.max(maxDurationMs, beginCensorUncensor(el, durationS, steps));
+  }
+
+  clearRevealedMentionMarks();
+
+  if (titleCensor instanceof Element) {
+    const { durationS } = getCensorWriteTiming(getCensorElementWidth(titleCensor));
+    maxDurationMs = Math.max(maxDurationMs, beginCensorWriteInReturn(titleCensor, durationS));
+  }
+
+  censorUncensorTimer = window.setTimeout(() => {
+    censorUncensorTimer = null;
+    if (generation !== censorUncensorGeneration || hoveredSameObjectMentionId) return;
+    if (pageCensorLayer && pageLines.length) {
+      pageCensorLayer.replaceChildren();
+    }
+    for (const el of pageLines) finishCensorUncensor(el);
+    if (titleCensor instanceof Element) finishCensorWriteInReturn(titleCensor);
+    onDone();
+  }, maxDurationMs + 20);
+}
+
+function resetTitleRowCensorInlineStyles(termId) {
+  if (!termId) return;
+  const censor = getFocusRayGroup()?.querySelector(
+    `.sun-term-wrap:not(.is-selected)[data-term-id="${CSS.escape(termId)}"] .sun-term-censor`
+  );
+  if (!(censor instanceof Element)) return;
+  censor.style.removeProperty("animation");
+  censor.style.removeProperty("opacity");
+  censor.style.removeProperty("transform");
+  censor.classList.remove("is-censor-write-in-return");
+}
+
+function collectOverviewHoverCensorEls(ray, hoveredWrap) {
+  if (!ray) return [];
+  return [...ray.querySelectorAll(".sun-term-wrap")]
+    .filter(
+      (wrap) =>
+        wrap !== hoveredWrap &&
+        !wrap.classList.contains("is-newly-censored") &&
+        !wrap.classList.contains("is-selected")
+    )
+    .map((wrap) => wrap.querySelector(".sun-term-censor"))
+    .filter((el) => el instanceof Element);
+}
+
 function clearOverviewTermHover() {
+  const ray = hoveredRay?.isConnected ? hoveredRay : null;
+  const hovered = hoveredWrap?.isConnected ? hoveredWrap : null;
+  const censorEls = ray && hovered ? collectOverviewHoverCensorEls(ray, hovered) : [];
+
+  if (hovered) {
+    hovered.classList.remove("is-hovered");
+    stopLetterShuffle(getLetterShuffleTarget(hovered));
+  }
+  clearTitleRowTermHover();
+  hoveredRay = null;
+  hoveredWrap = null;
+  hoveredTimelineTermId = null;
+
+  if (!censorEls.length) {
+    if (ray) ray.classList.remove("is-term-hover");
+    return;
+  }
+
+  runCensorUncensorSequence(censorEls, () => {});
+  if (ray) ray.classList.remove("is-term-hover");
+}
+
+function clearOverviewTermHoverImmediate() {
+  cancelCensorUncensorSequence();
   if (hoveredRay?.isConnected) hoveredRay.classList.remove("is-term-hover");
   if (hoveredWrap?.isConnected) hoveredWrap.classList.remove("is-hovered");
   clearTermHover();
@@ -1504,7 +1672,7 @@ function applyOverviewHoverAtPointer(clientX, clientY, { maintainOnMiss = false 
 
   if (isOverviewTimelineMode()) {
     if (viewport?.classList.contains("is-timeline-scrubbing")) {
-      if (hoveredTimelineTermId || hoveredWrap) clearOverviewTermHover();
+      if (hoveredTimelineTermId || hoveredWrap) clearOverviewTermHoverImmediate();
       return;
     }
     const target = findTimelineHoverTargetAtPointer(clientX, clientY);
@@ -2982,11 +3150,17 @@ function syncTermHeaderScrollTransform(layout = currentLayout) {
 
   if (
     hoveredSameObjectMentionId &&
-    !isTermNavigating() &&
     !viewport?.classList.contains("is-term-font-scrambling")
   ) {
     syncMediaCensorPlaceholder();
     rebuildPageCensorOverlays();
+  } else if (
+    isTermNavigating() &&
+    !viewport?.classList.contains("is-page-censor-exiting") &&
+    pageCensorLayer?.childElementCount
+  ) {
+    pageCensorLayer.replaceChildren();
+    syncMediaCensorPlaceholder();
   }
 
   syncTermPageScrollReveal(layout);
@@ -4133,8 +4307,9 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   const preservedBarBottoms = captureCensoredBarScreenBottoms(getFocusRayGroup());
   const oldText = applyTypographyRules(group.terms[focusState.clickedIndex]?.name ?? "");
   const prevTermId = group.terms[focusState.clickedIndex]?.id ?? null;
+  const newTermId = group.terms[newTermIndex]?.id ?? null;
 
-  clearSameObjectMentionHover();
+  detachSameObjectHoverForSwitch(newTermId);
   armSameObjectHoverReenterGate();
   if (group.terms.length > 1) {
     holdSiblingTermCensors();
@@ -4295,6 +4470,13 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
 }
 
 function startSameGroupTermSwitch(newTermIndex) {
+  const group = groups[focusState?.activeIndex];
+  const newTermId = group?.terms[newTermIndex]?.id ?? null;
+  // Drop hover/page-censor overlays before the scroll-to-top beat. While
+  // isTermNavigating() is true the scroll handler skips overlay rebuilds, so
+  // leaving them on desyncs the fixed SVG lift from the absolute censor layer.
+  detachSameObjectHoverForSwitch(newTermId);
+
   if (viewport && viewport.scrollTop > 0.5) {
     animateViewportScrollToTop(() => {
       applyInstantSameGroupTermSwitch(newTermIndex);
@@ -5290,8 +5472,11 @@ function getRevealedMentionCutouts() {
   const scrollTop = viewport.scrollTop;
   const cutouts = [];
   const range = document.createRange();
+  const revealedEls = viewport.querySelectorAll(
+    ".sun-def-mention--same-object.is-mention-revealed"
+  );
 
-  for (const el of viewport.querySelectorAll(".sun-def-mention--same-object.is-mention-revealed")) {
+  for (const el of revealedEls) {
     for (const rect of collectMentionCutoutRects(el, range)) {
       cutouts.push({
         left: rect.left - viewportRect.left,
@@ -5444,34 +5629,48 @@ function appendPageCensorLine(layer, band, { instant = false } = {}) {
   layer.appendChild(line);
 }
 
-function getSelectedTitleRowTermCutouts() {
-  if (!svgEl || !viewport) return [];
-  const textEl = svgEl.querySelector(".sun-ray.is-active .sun-term-wrap.is-selected .sun-term");
-  if (!textEl) return [];
-
+function getTitleRowTermTextCutouts(wraps) {
+  if (!viewport) return [];
   const viewportRect = viewport.getBoundingClientRect();
   const scrollTop = viewport.scrollTop;
-  const bbox = textEl.getBoundingClientRect();
-  if (bbox.width <= 0 || bbox.height <= 0) return [];
-
   const padX = MENTION_CENSOR_WIDTH_PAD + 1;
   const padY = 2;
+  const cutouts = [];
 
-  return [
-    {
+  for (const wrap of wraps) {
+    const textEl = wrap.querySelector(".sun-term");
+    if (!textEl) continue;
+    const bbox = textEl.getBoundingClientRect();
+    if (bbox.width <= 0 || bbox.height <= 0) continue;
+    cutouts.push({
       left: bbox.left - viewportRect.left - padX,
       right: bbox.right - viewportRect.left + padX,
       top: bbox.top - viewportRect.top + scrollTop - padY,
       bottom: bbox.bottom - viewportRect.top + scrollTop + padY,
-    },
-  ];
+    });
+  }
+
+  return cutouts;
+}
+
+function getSelectedTitleRowTermCutouts() {
+  if (!svgEl) return [];
+  const selectedWrap = svgEl.querySelector(".sun-ray.is-active .sun-term-wrap.is-selected");
+  return selectedWrap ? getTitleRowTermTextCutouts([selectedWrap]) : [];
+}
+
+function getRevealedTitleRowTermCutouts() {
+  const rayGroup = getFocusRayGroup();
+  if (!rayGroup) return [];
+  return getTitleRowTermTextCutouts(
+    rayGroup.querySelectorAll(".sun-term-wrap.is-mention-revealed:not(.is-selected)")
+  );
 }
 
 function appendViewportPageCensorBands(layer, revealedTermId = null, extraCutouts = [], options = {}) {
-  const cutouts = [
-    ...(revealedTermId ? getRevealedMentionCutouts() : []),
-    ...extraCutouts,
-  ];
+  const titleRowCutouts = revealedTermId ? getRevealedTitleRowTermCutouts() : [];
+  const bodyCutouts = revealedTermId ? getTermMentionCutouts(revealedTermId) : [];
+  const cutouts = [...bodyCutouts, ...titleRowCutouts, ...extraCutouts];
   const useCutouts = cutouts.length > 0;
   const instant = Boolean(options.instant);
 
@@ -5992,37 +6191,78 @@ function rebuildPageCensorOverlays() {
   appendViewportPageCensorBands(layer, hoveredSameObjectMentionId);
 }
 
-function detachSameObjectHoverForSwitch() {
+function detachSameObjectHoverForSwitch(targetTermId = null) {
+  cancelCensorUncensorSequence();
   if (hoveredSameObjectMention) {
     stopLetterShuffle(getLetterShuffleTarget(hoveredSameObjectMention));
   }
   clearRevealedMentionMarks();
   hoveredSameObjectMention = null;
   hoveredSameObjectMentionId = null;
-  viewport?.classList.remove("is-same-object-mention-hover");
+  viewport?.classList.remove("is-same-object-mention-hover", "is-page-censor-exiting");
+  svgEl?.classList.remove("sun-is-page-censored");
+  pageCensorLayer?.replaceChildren();
+  if (targetTermId) resetTitleRowCensorInlineStyles(targetTermId);
   syncMediaCensorPlaceholder();
 }
 
 function clearSameObjectMentionHover() {
   if (!hoveredSameObjectMentionId) return;
-  if (hoveredSameObjectMention) {
-    stopLetterShuffle(getLetterShuffleTarget(hoveredSameObjectMention));
+
+  const termId = hoveredSameObjectMentionId;
+  const sourceEl = hoveredSameObjectMention;
+  const titleCensor = getRevealedTitleRowCensorEl(termId);
+  const pageLineCount = pageCensorLayer?.querySelectorAll(".sun-page-censor-line").length ?? 0;
+
+  if (sourceEl) {
+    stopLetterShuffle(getLetterShuffleTarget(sourceEl));
   }
-  clearRevealedMentionMarks();
+
+  // Drop hover/page-censor mode before clearing reveal marks. If reveal is
+  // removed while sun-is-page-censored is still on, the forward censor rule
+  // matches the title term for a frame and replays scramble-in on mouse-out.
+  viewport?.classList.add("is-page-censor-exiting");
+  viewport?.classList.remove("is-same-object-mention-hover");
+  svgEl?.classList.remove("sun-is-page-censored");
+
   hoveredSameObjectMention = null;
   hoveredSameObjectMentionId = null;
-  viewport?.classList.remove("is-same-object-mention-hover");
-  syncMediaCensorPlaceholder();
-  if (!viewport?.classList.contains("is-term-switch-censor")) {
-    svgEl?.classList.remove("sun-is-page-censored");
-    pageCensorLayer?.replaceChildren();
+  armSameObjectHoverReenterGate();
+
+  const finish = () => {
+    if (hoveredSameObjectMentionId) return;
+    syncMediaCensorPlaceholder();
+    if (!viewport?.classList.contains("is-term-switch-censor")) {
+      pageCensorLayer?.replaceChildren();
+    }
+  };
+
+  if (!pageLineCount && !titleCensor) {
+    clearRevealedMentionMarks();
+    viewport?.classList.remove("is-page-censor-exiting");
+    finish();
+    return;
   }
+
+  runSameObjectMentionExitSequence(termId, () => {
+    viewport?.classList.remove("is-page-censor-exiting");
+    finish();
+  });
 }
 
 function setSameObjectTermHover(termId, sourceEl = null) {
   if (!termId) return;
-  if (isSameObjectHoverReenterGuardActive()) return;
-  if (isSameObjectHoverScrollGuardActive()) return;
+  if (isSameObjectHoverReenterGuardActive()) {
+    return;
+  }
+  if (isSameObjectHoverScrollGuardActive()) {
+    return;
+  }
+
+  cancelCensorUncensorSequence();
+  viewport?.classList.remove("is-page-censor-exiting");
+  resetTitleRowCensorInlineStyles(termId);
+
   const prevSource = hoveredSameObjectMention;
   const changed = hoveredSameObjectMentionId !== termId;
   if (!changed && hoveredSameObjectMention === sourceEl) {
@@ -6041,9 +6281,9 @@ function setSameObjectTermHover(termId, sourceEl = null) {
     stopLetterShuffle(getLetterShuffleTarget(prevSource));
   }
   hoveredSameObjectMention = sourceEl;
+  applyRevealedMentionMarks(termId, sourceEl);
   viewport?.classList.add("is-same-object-mention-hover");
   svgEl?.classList.add("sun-is-page-censored");
-  applyRevealedMentionMarks(termId, sourceEl);
   if (sourceEl) {
     startLetterShuffle(getLetterShuffleTarget(sourceEl));
   }
@@ -8523,6 +8763,7 @@ function hideBleedBackdropFully() {
   if (bleedBackdropImgEl) {
     bleedBackdropImgEl.removeAttribute("src");
     bleedBackdropImgEl.classList.remove("is-loaded");
+    bleedBackdropImgEl.style.removeProperty("object-position");
   }
 }
 
@@ -9582,7 +9823,14 @@ function parseObjectPositionFraction(value) {
 
 /** Crop fractions matching the bleed `<img>` current `object-position`. */
 function getBleedBackdropObjectPositionFraction() {
-  return parseObjectPositionFraction(bleedBackdropImgEl?.style.objectPosition);
+  const inline = bleedBackdropImgEl?.style.objectPosition;
+  if (typeof inline === "string" && inline.trim()) {
+    return parseObjectPositionFraction(inline);
+  }
+  if (bleedBackdropImgEl) {
+    return parseObjectPositionFraction(getComputedStyle(bleedBackdropImgEl).objectPosition);
+  }
+  return parseObjectPositionFraction(null);
 }
 
 /**
@@ -10248,9 +10496,7 @@ function showBleedBackdrop(url, shouldAnimate, options = {}) {
   if (!bleedBackdropEl || !bleedBackdropImgEl || !url) return;
 
   const mode = options.mode ?? (hoveredTitleRowTermId ? "hover" : "idle");
-  if (mode !== "termPage") {
-    applyBleedObjectPositionForUrl(url);
-  }
+  applyBleedObjectPositionForUrl(url);
   const seamlessTermPage =
     mode === "termPage" &&
     isBleedBackdropLoaded() &&
@@ -13698,29 +13944,49 @@ function updateTermPageBleedCaption(layout, image) {
  * is preserved by `object-fit: cover`. Default for all other terms is
  * `center top`.
  */
-const TERM_BLEED_OBJECT_POSITION = {};
+const DEFAULT_BLEED_OBJECT_POSITION = "center top";
+
+const TERM_BLEED_OBJECT_POSITION = {
+  "ביביסטים": "50% 100%",
+};
+
+function resolveBleedObjectPosition(termName) {
+  if (termName && TERM_BLEED_OBJECT_POSITION[termName]) {
+    return TERM_BLEED_OBJECT_POSITION[termName];
+  }
+  return DEFAULT_BLEED_OBJECT_POSITION;
+}
+
+function applyBleedObjectPosition(termName) {
+  if (!bleedBackdropImgEl) return;
+  bleedBackdropImgEl.style.objectPosition = resolveBleedObjectPosition(termName);
+}
 
 function applyTermPageBleedObjectPosition(termName) {
-  if (!bleedBackdropImgEl) return;
-  bleedBackdropImgEl.style.objectPosition =
-    TERM_BLEED_OBJECT_POSITION[termName] || "";
+  applyBleedObjectPosition(termName);
+}
+
+/** Normalized `assets/...` key for bleed image URL lookups. */
+function termImageUrlKey(url) {
+  if (!url) return "";
+  const decoded = decodeURIComponent(url);
+  const assetsIdx = decoded.indexOf("assets/");
+  return assetsIdx >= 0 ? decoded.slice(assetsIdx) : decoded;
 }
 
 /** Reverse lookup: which term owns this bleed image URL (for the framing override). */
 function getTermNameForBleedUrl(url) {
   if (!url) return null;
+  const key = termImageUrlKey(url);
   for (const [name, images] of termImagesByName) {
-    if (images?.some((image) => image?.url === url)) return name;
+    if (images?.some((image) => termImageUrlKey(image?.url) === key)) return name;
   }
   return null;
 }
 
 /** Apply the per-term `object-position` override for any bleed image URL. */
 function applyBleedObjectPositionForUrl(url) {
-  if (!bleedBackdropImgEl) return;
-  const termName = getTermNameForBleedUrl(url);
-  bleedBackdropImgEl.style.objectPosition =
-    (termName && TERM_BLEED_OBJECT_POSITION[termName]) || "";
+  applyBleedObjectPosition(getTermNameForBleedUrl(url));
 }
 
 function updateTermPageBleed(layout) {
@@ -15151,7 +15417,7 @@ function setOverviewSubModeInternal(mode) {
   if (overviewSubMode === "timeline") {
     onTimelineViewEnter();
   } else {
-    clearOverviewTermHover();
+    clearOverviewTermHoverImmediate();
     resetTimelineEnterState();
     hideTimelineEventHint({ immediate: true });
     hideTimelineScrollHint();
@@ -15184,7 +15450,7 @@ function setOverviewTarget(value) {
     hideTimelineEventHint({ immediate: true });
     hideTimelineScrollHint();
     if (overviewSubMode === "timeline") {
-      clearOverviewTermHover();
+      clearOverviewTermHoverImmediate();
       resetTimelineEnterState();
     }
   } else if (overviewSubMode === "timeline") {
@@ -15277,7 +15543,7 @@ function bindOverviewHover() {
     lastPointer.known = false;
     if (isFocusActive()) return;
     if (isOverviewTimelineMode() || overviewProgress <= 0.02) {
-      clearOverviewTermHover();
+      clearOverviewTermHoverImmediate();
     }
   });
 }
@@ -15404,7 +15670,7 @@ function bindTimelineDrag() {
     if (!timelineDragState.dragging && Math.abs(deltaX) < 2) return;
     timelineDragState.dragging = true;
     viewport.classList.add("is-timeline-scrubbing");
-    clearOverviewTermHover();
+    clearOverviewTermHoverImmediate();
     event.preventDefault();
     const pixelsPerYear = getTimelineDragPixelsPerYear();
     yearScroll.applyDragDeltaYears(deltaX / pixelsPerYear);
@@ -16304,6 +16570,7 @@ function syncTimelineHoverFromPointer(previousTermId = null) {
 }
 
 function setTermHover(ray, wrap, { scramble = true } = {}) {
+  cancelCensorUncensorSequence();
   if (hoveredRay === ray && hoveredWrap === wrap) return;
   clearTermHover();
   hoveredRay = ray;
@@ -16619,7 +16886,7 @@ function activateMapTerm(wrap, ray) {
   clearTimeout(snapDebounceTimer);
   setOverviewTarget(0);
   if (hoveredTitleRowTermId) {
-    clearOverviewTermHover();
+    clearOverviewTermHoverImmediate();
   } else {
     const termId = wrap.dataset.termId;
     if (termId) notifyTitleRowTermEngagementEnd(termId);

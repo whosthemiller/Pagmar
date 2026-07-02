@@ -501,6 +501,17 @@ body,
   }
 }
 
+@keyframes sun-censor-write-out {
+  from {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  to {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+}
+
 @keyframes sun-censor-scramble-in {
   0% {
     transform: scaleX(0.02) translateY(0) skewX(0deg);
@@ -528,18 +539,37 @@ body,
   }
 }
 
-.sun-ray.is-active.is-term-hover .sun-term-wrap:not(.is-hovered):not(.is-newly-censored) .sun-term-censor,
+.sun-term-censor.is-censor-uncensoring,
+.sun-page-censor-line.is-censor-uncensoring,
+.sun-terms-index__term.is-censor-uncensoring::after {
+  opacity: 1;
+  transform: scaleX(1);
+  animation: sun-censor-write-out var(--sun-censor-write-duration, 0.14s) ease-in forwards;
+}
+
+.sun-term-censor.is-censor-write-in-return {
+  opacity: 1;
+  transform: scaleX(0);
+  animation: sun-censor-write-in var(--sun-censor-write-duration, 0.14s) ease-out forwards;
+}
+
+.sun-viewport.is-page-censor-exiting .sun-term-censor.is-censor-write-in-return {
+  opacity: 1;
+  transform: scaleX(0);
+  animation: sun-censor-write-in var(--sun-censor-write-duration, 0.14s) ease-out forwards;
+}
+
+.sun-ray.is-active.is-term-hover .sun-term-wrap:not(.is-hovered):not(.is-newly-censored):not(.is-censor-uncensoring):not(.is-censor-write-in-return) .sun-term-censor,
 .sun-svg.sun-is-overview-timeline
   .sun-ray.is-term-hover
-  .sun-term-wrap:not(.is-hovered):not(.is-newly-censored)
-  .sun-term-censor,
-.sun-ray.is-locked .sun-term-wrap:not(.is-selected):not(.is-newly-censored) .sun-term-censor,
+  .sun-term-wrap:not(.is-hovered):not(.is-newly-censored):not(.is-censor-uncensoring):not(.is-censor-write-in-return) .sun-term-censor,
+.sun-ray.is-locked .sun-term-wrap:not(.is-selected):not(.is-newly-censored):not(.is-censor-uncensoring):not(.is-censor-write-in-return):not(.is-mention-revealed) .sun-term-censor,
 .sun-svg.sun-is-focused:not(.sun-is-unfocusing)
   .sun-ray.is-active
-  .sun-term-wrap:not(.is-selected):not(.is-newly-censored)
+  .sun-term-wrap:not(.is-selected):not(.is-newly-censored):not(.is-censor-uncensoring):not(.is-censor-write-in-return):not(.is-mention-revealed)
   .sun-term-censor,
-.sun-svg.sun-is-page-censored .sun-ray.is-active .sun-term-wrap:not(.is-newly-censored) .sun-term-censor,
-.sun-svg.sun-is-page-censored.sun-is-focused .sun-ray.is-active .sun-term-wrap:not(.is-newly-censored) .sun-term-censor {
+.sun-svg.sun-is-page-censored .sun-ray.is-active .sun-term-wrap:not(.is-selected):not(.is-newly-censored):not(.is-censor-uncensoring):not(.is-censor-write-in-return):not(.is-mention-revealed) .sun-term-censor,
+.sun-svg.sun-is-page-censored.sun-is-focused .sun-ray.is-active .sun-term-wrap:not(.is-selected):not(.is-newly-censored):not(.is-censor-uncensoring):not(.is-censor-write-in-return):not(.is-mention-revealed) .sun-term-censor {
   opacity: 1;
   animation: sun-censor-scramble-in var(--sun-censor-write-duration, 0.24s)
     steps(var(--sun-censor-write-steps, 12), end) forwards;
@@ -1249,7 +1279,8 @@ body,
 }
 
 .sun-viewport.is-same-object-mention-hover > .sun-page-censor-layer,
-.sun-viewport.is-term-switch-censor > .sun-page-censor-layer {
+.sun-viewport.is-term-switch-censor > .sun-page-censor-layer,
+.sun-viewport.is-page-censor-exiting > .sun-page-censor-layer {
   z-index: 12;
 }
 
@@ -1259,6 +1290,11 @@ body,
   pointer-events: none;
   transform-origin: 100% 50%;
   transform: scaleX(0);
+  animation: none;
+}
+
+.sun-viewport.is-same-object-mention-hover .sun-page-censor-line:not(.is-instant):not(.is-censor-uncensoring),
+.sun-viewport.is-term-switch-censor .sun-page-censor-line:not(.is-instant):not(.is-censor-uncensoring) {
   animation: sun-censor-scramble-in var(--sun-censor-write-duration, 0.24s)
     steps(var(--sun-censor-write-steps, 12), end) forwards;
 }
@@ -1311,12 +1347,47 @@ body,
   cursor: pointer;
 }
 
-.sun-viewport.is-same-object-mention-hover
+.sun-viewport.is-page-censor-exiting
+  .sun-ray.is-locked
+  .sun-term-wrap.is-mention-revealed:not(.is-selected)
+  .sun-term-censor,
+.sun-viewport.is-page-censor-exiting
   .sun-svg.sun-is-page-censored
   .sun-ray.is-active
   .sun-term-wrap.is-mention-revealed
   .sun-term-censor {
   opacity: 0;
+  transform: scaleX(0);
+  animation: none;
+}
+
+.sun-viewport.is-page-censor-exiting
+  .sun-ray.is-locked
+  .sun-term-wrap:not(.is-selected):not(.is-mention-revealed)
+  .sun-term-censor:not(.is-censor-uncensoring):not(.is-censor-write-in-return),
+.sun-viewport.is-page-censor-exiting
+  .sun-svg.sun-is-page-censored
+  .sun-ray.is-active
+  .sun-term-wrap:not(.is-mention-revealed)
+  .sun-term-censor:not(.is-censor-uncensoring):not(.is-censor-write-in-return) {
+  opacity: 1;
+  transform: scaleX(1);
+  animation: none;
+}
+
+.sun-viewport.is-same-object-mention-hover
+  .sun-svg.sun-is-page-censored
+  .sun-ray.is-active
+  .sun-term-wrap.is-mention-revealed
+  .sun-term-censor,
+.sun-viewport.is-same-object-mention-hover
+  .sun-svg.sun-is-page-censored
+  .sun-ray.is-locked
+  .sun-term-wrap.is-mention-revealed
+  .sun-term-censor {
+  opacity: 0;
+  transform: scaleX(0);
+  animation: none;
 }
 
 /* During same-object hover, censor the selected page title too; the hovered
@@ -2533,6 +2604,20 @@ line.letter-shuffle-underline {
     background: var(--ink);
   }
 
+  .sun-term-censor.is-censor-uncensoring,
+  .sun-page-censor-line.is-censor-uncensoring,
+  .sun-terms-index__term.is-censor-uncensoring::after {
+    animation: none;
+    transform: scaleX(0);
+    opacity: 0;
+  }
+
+  .sun-term-censor.is-censor-write-in-return {
+    animation: none;
+    transform: scaleX(1);
+    opacity: 1;
+  }
+
   span.letter-shuffle-underline.is-written {
     transition: none;
     transform: scaleX(1);
@@ -2548,8 +2633,8 @@ line.letter-shuffle-underline {
     .sun-ray.is-active
     .sun-term-wrap:not(.is-selected)
     .sun-term-censor,
-  .sun-svg.sun-is-page-censored .sun-ray.is-active .sun-term-wrap .sun-term-censor,
-  .sun-svg.sun-is-page-censored.sun-is-focused .sun-ray.is-active .sun-term-wrap .sun-term-censor,
+  .sun-svg.sun-is-page-censored .sun-ray.is-active .sun-term-wrap:not(.is-selected):not(.is-mention-revealed) .sun-term-censor,
+  .sun-svg.sun-is-page-censored.sun-is-focused .sun-ray.is-active .sun-term-wrap:not(.is-selected):not(.is-mention-revealed) .sun-term-censor,
   .sun-svg.sun-is-in-overview .sun-term-wrap.is-filter-censored .sun-term-censor {
     animation: none;
     transform: scaleX(1);

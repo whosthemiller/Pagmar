@@ -1,6 +1,6 @@
 /**
  * Shared pixelation / glitch reveal utilities.
- * Used by splash.js and social-studio.
+ * Used by splash.js.
  */
 
 /** @type {HTMLCanvasElement | null} */

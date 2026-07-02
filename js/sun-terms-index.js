@@ -1,6 +1,7 @@
 import { syncGridCssVars } from "./grid-metrics.js";
 import { getMapTypographyScale } from "./viewport-layout.js";
 import { packColumnsBalanced } from "./terms-column-packer.js";
+import { beginCensorUncensor, finishCensorUncensor } from "./censor-scramble-rgb.js";
 
 const LINE_HEIGHT = 23;
 const FONT_SIZE = 14;
@@ -52,6 +53,8 @@ const indexScrambleStates = new WeakMap();
 let activeHoverTermId = null;
 /** @type {string | null} */
 let activeHoverObjectId = null;
+/** @type {number | null} */
+let hoverUncensorTimer = null;
 /** @type {number | null} */
 let hoverClearTimer = null;
 let pointerRafId = 0;
@@ -160,11 +163,26 @@ function applyCensorWriteTiming(el, widthPx) {
   el.style.setProperty("--sun-censor-write-steps", String(steps));
 }
 
-function cancelHoverClear() {
+function cancelHoverUncensor() {
+  if (hoverUncensorTimer != null) {
+    clearTimeout(hoverUncensorTimer);
+    hoverUncensorTimer = null;
+  }
+  rootEl?.querySelectorAll(".sun-terms-index__term.is-censor-uncensoring").forEach((el) => {
+    finishCensorUncensor(el);
+  });
+}
+
+function cancelHoverClearTimer() {
   if (hoverClearTimer != null) {
     clearTimeout(hoverClearTimer);
     hoverClearTimer = null;
   }
+}
+
+function cancelHoverClear() {
+  cancelHoverUncensor();
+  cancelHoverClearTimer();
 }
 
 function cancelPointerTracking() {
@@ -178,7 +196,8 @@ function cancelPointerTracking() {
 }
 
 function scheduleHoverClear() {
-  cancelHoverClear();
+  if (hoverUncensorTimer != null) return;
+  cancelHoverClearTimer();
   hoverClearTimer = window.setTimeout(() => {
     hoverClearTimer = null;
     rootEl?.querySelectorAll(".sun-terms-index__term-label").forEach((label) => {
@@ -190,14 +209,44 @@ function scheduleHoverClear() {
 
 function clearTermHoverState() {
   if (!rootEl) return;
+  if (hoverUncensorTimer != null) return;
+
+  const uncensoring = [...rootEl.querySelectorAll(".sun-terms-index__term.is-sibling-censored")];
+  rootEl.querySelectorAll(".sun-terms-index__term-label").forEach((label) => {
+    if (label instanceof HTMLElement) stopIndexTermScramble(label);
+  });
+
   activeHoverTermId = null;
   activeHoverObjectId = null;
-  rootEl.classList.remove("is-object-hover", "is-fast-scan");
-  rootEl.querySelectorAll(".sun-terms-index__term").forEach((el) => {
-    el.classList.remove("is-hovered", "is-sibling-censored", "is-instant");
-    el.style.removeProperty("--sun-censor-write-duration");
-    el.style.removeProperty("--sun-censor-write-steps");
+  rootEl.querySelectorAll(".sun-terms-index__term.is-hovered").forEach((el) => {
+    el.classList.remove("is-hovered");
   });
+
+  if (!uncensoring.length) {
+    rootEl.classList.remove("is-object-hover", "is-fast-scan");
+    rootEl.querySelectorAll(".sun-terms-index__term").forEach((el) => {
+      el.classList.remove("is-sibling-censored", "is-instant", "is-censor-uncensoring");
+      el.style.removeProperty("--sun-censor-write-duration");
+      el.style.removeProperty("--sun-censor-write-steps");
+    });
+    return;
+  }
+
+  let maxDurationMs = 0;
+  for (const el of uncensoring) {
+    if (!(el instanceof HTMLElement)) continue;
+    const { durationS, steps } = getCensorWriteTiming(el.offsetWidth);
+    el.classList.remove("is-sibling-censored", "is-instant");
+    maxDurationMs = Math.max(maxDurationMs, beginCensorUncensor(el, durationS, steps));
+  }
+  rootEl.classList.remove("is-object-hover", "is-fast-scan");
+
+  hoverUncensorTimer = window.setTimeout(() => {
+    hoverUncensorTimer = null;
+    for (const el of uncensoring) {
+      if (el instanceof HTMLElement) finishCensorUncensor(el);
+    }
+  }, maxDurationMs + 20);
 }
 
 /**
