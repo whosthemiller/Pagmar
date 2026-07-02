@@ -3,6 +3,7 @@ import {
   collectTermImageUrls,
   enqueueTermImagePreload,
   boostTermImagePreloadPriority,
+  preloadTermImages,
   preloadTermImagesNow,
   getPreloadedTermImage,
   groupTermsByObject,
@@ -6925,6 +6926,33 @@ function getTermBleedFullUrl(termName) {
 }
 
 /**
+ * Display + full-bleed URLs for the active arc group — must be cached before the
+ * loading bar completes so bleed pools and fixed thumbnails are never empty or stale.
+ */
+function collectInitialViewImageUrls(centerGroupIndex = getDisplayActiveIndex()) {
+  const seen = new Set();
+  const urls = [];
+
+  const push = (url) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    urls.push(url);
+  };
+
+  const rings = buildSmartPreloadRings(centerGroupIndex);
+  for (const url of rings[0] || []) push(url);
+
+  const group = groups[centerGroupIndex];
+  if (group?.terms?.length) {
+    for (const term of group.terms) {
+      push(getTermBleedFullUrl(term.name));
+    }
+  }
+
+  return urls;
+}
+
+/**
  * Display URLs grouped by ring distance from the active arc group.
  * Within each ring: group order, then term order, then image 1→3 per term.
  */
@@ -7949,9 +7977,9 @@ function getTermBleedEligibleImages(termName, viewportWidth, viewportHeight) {
 
 /**
  * The single full-bleed image chosen for a term in the bleed lab.
- * That pick is stored as the primary (first) image in data/term-images.json,
- * so prefer it; only fall back to another eligible image when the primary
- * itself cannot fill the viewport without stretching a low-quality source.
+ * That pick is stored as the primary (first) image in data/term-images.json —
+ * always use it. Bleed suitability is validated in the lab / build pipeline,
+ * not swapped at runtime (which could show a different image mid-session).
  */
 function getTermChosenBleedImage(termName, viewportWidth, viewportHeight) {
   const preview = getBleedTextLabPreviewForTerm(termName);
@@ -7959,20 +7987,9 @@ function getTermChosenBleedImage(termName, viewportWidth, viewportHeight) {
     return findTermImageByUrl(termName, preview.imageUrl);
   }
   const primary = getTermPrimaryImage(termName);
-  if (!primary?.url) {
-    const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
-    return eligible[0] ?? null;
-  }
-  const size = getTermImagePixelSize(primary.url);
-  if (
-    size &&
-    !isTermImageBleedQuality(primary.url, viewportWidth, viewportHeight)
-  ) {
-    const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
-    const alternative = eligible.find((image) => image.url !== primary.url);
-    if (alternative) return alternative;
-  }
-  return primary;
+  if (primary?.url) return primary;
+  const eligible = getTermBleedEligibleImages(termName, viewportWidth, viewportHeight);
+  return eligible[0] ?? null;
 }
 
 /** Term-page full bleed — the single lab-chosen image, never a hover cycle. */
@@ -18521,12 +18538,22 @@ async function init() {
     flushPendingSplashWheelDelta();
 
     if (currentLayout) {
+      await runLoadingSegmentAsync("מכין תצוגה…", LOADING_WORK_WEIGHT.warmImage, 800, async () => {
+        const initialImageUrls = collectInitialViewImageUrls(activeIndex);
+        if (initialImageUrls.length) {
+          await preloadTermImages(initialImageUrls, null, {
+            decode: false,
+            concurrency: getTermImagePreloadConcurrency(),
+            retries: 2,
+            maxRounds: 3,
+          });
+        }
+        await warmInitialViewImages(currentLayout);
+      });
       runLoadingSegment("מכין תצוגה…", LOADING_WORK_WEIGHT.titleRow, 500, () => {
         updateTitleRowImage(currentLayout);
+        syncRayFixedImages(currentLayout);
       });
-      await runLoadingSegmentAsync("מכין תצוגה…", LOADING_WORK_WEIGHT.warmImage, 800, () =>
-        warmInitialViewImages(currentLayout)
-      );
     } else {
       advanceLoadingWork(LOADING_WORK_WEIGHT.titleRow + LOADING_WORK_WEIGHT.warmImage, "מכין תצוגה…");
     }

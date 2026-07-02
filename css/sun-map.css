@@ -2987,9 +2987,7 @@ line.letter-shuffle-underline {
   line-height: inherit;
   cursor: default;
   pointer-events: auto;
-  text-decoration: underline;
-  text-decoration-thickness: 0.08em;
-  text-underline-offset: 0.12em;
+  text-decoration: none;
 }
 
 .sun-about__brand-space {

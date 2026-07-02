@@ -9,6 +9,11 @@ import {
   initLetterShuffle,
   startContinuousScramble,
 } from "./letter-shuffle.js";
+import {
+  drawPixelatedCover,
+  getGlitchOpenProgress,
+  getPixelFactor,
+} from "./pixel-glitch.js";
 
 const CONFIG = {
   dataUrl: "data/splash-images.json",
@@ -22,9 +27,6 @@ const CONFIG = {
   /** Fallback wheel delta when dismiss is triggered without a wheel event. */
   dismissScrollDelta: 100,
 };
-
-/** @type {HTMLCanvasElement | null} */
-let sharedOffscreen = null;
 
 /** @type {number | null} */
 let animFrame = null;
@@ -57,73 +59,6 @@ function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function getOffscreen() {
-  if (!sharedOffscreen) {
-    sharedOffscreen = document.createElement("canvas");
-  }
-  return sharedOffscreen;
-}
-
-/** @param {HTMLImageElement} img @param {number} boxWidth @param {number} boxHeight */
-function getCoverSourceRect(img, boxWidth, boxHeight) {
-  const imgRatio = img.naturalWidth / img.naturalHeight;
-  const boxRatio = boxWidth / boxHeight;
-  if (imgRatio > boxRatio) {
-    const sHeight = img.naturalHeight;
-    const sWidth = img.naturalHeight * boxRatio;
-    return {
-      sx: (img.naturalWidth - sWidth) / 2,
-      sy: 0,
-      sWidth,
-      sHeight,
-    };
-  }
-  const sWidth = img.naturalWidth;
-  const sHeight = img.naturalWidth / boxRatio;
-  return { sx: 0, sy: 0, sWidth, sHeight };
-}
-
-/**
- * @param {CanvasRenderingContext2D} ctx
- * @param {HTMLImageElement} img
- * @param {number} destWidth
- * @param {number} destHeight
- * @param {number} pixelFactor
- */
-function drawPixelatedCover(ctx, img, destWidth, destHeight, pixelFactor) {
-  const factor = Math.max(1, pixelFactor);
-  const lowW = Math.max(1, Math.round(destWidth / factor));
-  const lowH = Math.max(1, Math.round(destHeight / factor));
-  const { sx, sy, sWidth, sHeight } = getCoverSourceRect(img, lowW, lowH);
-  const offscreen = getOffscreen();
-
-  offscreen.width = lowW;
-  offscreen.height = lowH;
-  const offCtx = offscreen.getContext("2d");
-  if (!offCtx) return;
-  offCtx.imageSmoothingEnabled = false;
-  offCtx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, lowW, lowH);
-
-  ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, destWidth, destHeight);
-  ctx.drawImage(offscreen, 0, 0, lowW, lowH, 0, 0, destWidth, destHeight);
-}
-
-/** @param {number} openProgress @param {number} maxFactor */
-function getPixelFactor(openProgress, maxFactor = CONFIG.maxFactor) {
-  const minFactor = CONFIG.restPixelFactor;
-  if (openProgress >= 1) return minFactor;
-  if (openProgress <= 0) {
-    const extra = Math.abs(openProgress);
-    return Math.max(minFactor, Math.round(maxFactor + (maxFactor - minFactor) * extra));
-  }
-  const eased = Math.max(0, Math.min(1, openProgress));
-  return Math.max(
-    minFactor,
-    Math.round(minFactor + (maxFactor - minFactor) * (1 - eased))
-  );
-}
-
 function clearPixelation() {
   if (canvasEl) {
     canvasEl.hidden = true;
@@ -154,7 +89,10 @@ function applyRestingPixelation(sourceImg) {
 /** @param {number} openProgress @param {{ maxFactor?: number, sourceImg?: HTMLImageElement | null }} [options] */
 function applyPixelation(openProgress, options = {}) {
   const maxFactor = options.maxFactor ?? CONFIG.maxFactor;
-  const factor = getPixelFactor(openProgress, maxFactor);
+  const factor = getPixelFactor(openProgress, {
+    maxFactor,
+    restFactor: CONFIG.restPixelFactor,
+  });
   const img = options.sourceImg ?? imageEl;
   const { width, height } = getImageDimensions();
 
@@ -172,14 +110,6 @@ function applyPixelation(openProgress, options = {}) {
   const ctx = canvasEl.getContext("2d");
   if (!ctx) return;
   drawPixelatedCover(ctx, img, width, height, factor);
-}
-
-/** @param {number} t @param {number} [hold] */
-function getGlitchOpenProgress(t, hold = CONFIG.glitchHold) {
-  const clamped = Math.max(0, Math.min(1, t));
-  if (clamped <= hold) return 0;
-  const revealT = (clamped - hold) / Math.max(1e-6, 1 - hold);
-  return revealT * (2 - revealT);
 }
 
 /**
@@ -218,7 +148,7 @@ function runPixelGlitchAnimation(options = {}) {
       options.onHold?.();
     }
     if (t < 1) {
-      const openProgress = getGlitchOpenProgress(t);
+      const openProgress = getGlitchOpenProgress(t, CONFIG.glitchHold);
       const sourceImg = holdFired ? toImg ?? fromImg : fromImg ?? toImg;
       applyPixelation(openProgress, { maxFactor, sourceImg });
       animFrame = requestAnimationFrame(frame);
