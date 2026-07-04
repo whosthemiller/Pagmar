@@ -3,6 +3,7 @@
 import {
   getLargeDesktopTypographyTrim,
   getMapTypographyScale,
+  getMyMacBookHomeTypographyTrimPx,
   getResponsiveGridLayout,
   getViewportHeightScale,
 } from "./viewport-layout.js";
@@ -171,6 +172,10 @@ export function syncGridCssVars(containerEl = getGridContainer()) {
   root.style.setProperty("--grid-column-width", `${metrics.colWidth}px`);
   root.style.setProperty("--grid-content-offset", `${metrics.gridLeft - containerLeft}px`);
   root.style.setProperty("--map-typography-scale", String(getMapTypographyScale(metrics.viewportWidth)));
+  root.style.setProperty(
+    "--macbook-home-typography-trim",
+    `${getMyMacBookHomeTypographyTrimPx(metrics.viewportWidth, viewportHeight)}px`
+  );
   root.style.setProperty(
     "--large-desktop-typography-trim",
     String(getLargeDesktopTypographyTrim(metrics.viewportWidth))

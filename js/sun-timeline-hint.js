@@ -13,11 +13,11 @@ import { applyBlockTypography, applyTypographyRules } from "./typography.js";
 
 const TIMELINE_HINT_COLUMNS = 10;
 const TIMELINE_SCROLL_HINT_COLUMNS = 5;
-const TIMELINE_SCROLL_HINT_ALIGN_FROM_RIGHT = 2;
+const TIMELINE_SCROLL_HINT_ALIGN_FROM_RIGHT = 1;
 const TIMELINE_HINT_LINE_HEIGHT = 80;
 const TIMELINE_HINT_COLLISION_PAD = 8;
 const TIMELINE_HINT_HIDE_MS = 120;
-const TIMELINE_SCROLL_HINT_TEXT = "גללו לאורך ציר הזמן וצפו במונחים המשתנים עם השנים";
+const TIMELINE_SCROLL_HINT_TEXT = "גללו לאורך ציר הזמן וצפו כיצד השימוש במונחים בשיח הציבורי והתקשורתי בישראל משתנה לאורך השנים";
 const TIMELINE_SCROLL_HINT_DISMISS_MS = 350;
 /** Set to true to restore letter-scramble on show/hide. */
 const TIMELINE_HINT_SCRAMBLE_ENABLED = false;

@@ -7,6 +7,11 @@
  *   2. swap at pixels → ביביסטים reveal to full
  *   3. ביביסטים full → pixels
  *   4. swap at pixels → ימנים reveal to full
+ *
+ * Presets:
+ *   default     — 2048×1152 (submission computer)
+ *   1920x1080   — 1080p landscape
+ *   1080x1920   — 1080p vertical (story)
  */
 
 import { chromium } from "playwright";
@@ -23,14 +28,58 @@ const IMAGES = {
   bibistim: path.join(ROOT, "assets/img/ביביסטים/חולצת I Love BIBIZIM.webp"),
 };
 
-const OUT_GIF = path.join(ROOT, "assets/gif/yemanim-bibistim-loop.gif");
-const FRAMES_DIR = path.join(ROOT, "scripts/.gif-frames-yemanim-bibistim");
+/** Per-preset crop: x/y = object-position; focal + zoom center the shirt text in frame. */
+const OBJECT_POSITION_BY_PRESET = {
+  default: {
+    yemanim: { x: 0.5, y: 0 },
+    bibistim: { x: 0.5, y: 0.55 },
+  },
+  "1920x1080": {
+    yemanim: { x: 0.5, y: 0 },
+    bibistim: { x: 0.5, y: 0.55 },
+  },
+  "1080x1920": {
+    yemanim: { x: 0.5, y: 0 },
+    bibistim: { x: 0.63, y: 0 },
+  },
+};
 
-const WIDTH = 2048;
-const HEIGHT = 1152;
+const PRESETS = {
+  default: {
+    width: 2048,
+    height: 1152,
+    maxFactor: 72,
+    outGif: path.join(ROOT, "assets/gif/yemanim-bibistim-loop.gif"),
+    framesDir: path.join(ROOT, "scripts/.gif-frames-yemanim-bibistim"),
+  },
+  "1920x1080": {
+    width: 1920,
+    height: 1080,
+    maxFactor: 68,
+    outGif: path.join(ROOT, "assets/gif/yemanim-bibistim-loop-1920x1080.gif"),
+    framesDir: path.join(ROOT, "scripts/.gif-frames-yemanim-bibistim-1920x1080"),
+  },
+  "1080x1920": {
+    width: 1080,
+    height: 1920,
+    maxFactor: 38,
+    outGif: path.join(ROOT, "assets/gif/yemanim-bibistim-loop-1080x1920.gif"),
+    framesDir: path.join(ROOT, "scripts/.gif-frames-yemanim-bibistim-1080x1920"),
+  },
+};
+
+const arg = process.argv[2];
+const presetName =
+  arg === "1080x1920" || arg === "story" || arg === "vertical"
+    ? "1080x1920"
+    : arg === "1920x1080" || arg === "1080p" || arg === "landscape"
+      ? "1920x1080"
+      : "default";
+const CFG = PRESETS[presetName];
+const OBJECT_POSITION = OBJECT_POSITION_BY_PRESET[presetName];
+
 const DURATION_MS = 3000;
 const FPS = 30;
-const MAX_FACTOR = 72;
 const SWAP_MS = 150;
 
 const FRAME_COUNT = Math.round((DURATION_MS / 1000) * FPS);
@@ -41,28 +90,12 @@ function easeOut(t) {
   return t * (2 - t);
 }
 
-function clamp01(t) {
-  return Math.max(0, Math.min(1, t));
-}
-
-/** Matches sun-map.js getBleedPixelFactor — openProgress 1 = sharp, 0 = max blocks. */
-function getBleedPixelFactor(openProgress, maxFactor = MAX_FACTOR) {
-  if (openProgress >= 1) return 1;
-  if (openProgress <= 0) {
-    const extra = Math.abs(openProgress);
-    return Math.max(1, Math.round(maxFactor + (maxFactor - 1) * extra));
-  }
-  const eased = clamp01(openProgress);
-  return Math.max(1, Math.round(1 + (maxFactor - 1) * (1 - eased)));
-}
-
 function getFrameState(frameIndex) {
   const t = frameIndex * FRAME_MS;
   const phase = Math.floor(t / PHASE_MS);
   const phaseT = (t - phase * PHASE_MS) / PHASE_MS;
 
   if (phase === 0) {
-    // ימנים full → pixels
     const openProgress = 1 - easeOut(phaseT);
     return { image: "yemanim", openProgress };
   }
@@ -70,7 +103,6 @@ function getFrameState(frameIndex) {
   if (phase === 1) {
     const swapEnd = SWAP_MS / PHASE_MS;
     if (phaseT < swapEnd) {
-      // Cut from ימנים pixels to ביביסטים pixels
       const swapT = phaseT / swapEnd;
       return {
         image: swapT < 0.5 ? "yemanim" : "bibistim",
@@ -82,12 +114,10 @@ function getFrameState(frameIndex) {
   }
 
   if (phase === 2) {
-    // ביביסטים full → pixels
     const openProgress = 1 - easeOut(phaseT);
     return { image: "bibistim", openProgress };
   }
 
-  // phase 3: swap ביביסטים pixels → ימנים pixels, then reveal ימנים
   const swapEnd = SWAP_MS / PHASE_MS;
   if (phaseT < swapEnd) {
     const swapT = phaseT / swapEnd;
@@ -100,21 +130,45 @@ function getFrameState(frameIndex) {
   return { image: "yemanim", openProgress: easeOut(revealT) };
 }
 
-const HTML = `<!DOCTYPE html>
+function buildHtml() {
+  return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head><body>
 <canvas id="c"></canvas>
 <script>
-const WIDTH = ${WIDTH};
-const HEIGHT = ${HEIGHT};
-const MAX_FACTOR = ${MAX_FACTOR};
+const WIDTH = ${CFG.width};
+const HEIGHT = ${CFG.height};
+const MAX_FACTOR = ${CFG.maxFactor};
 const images = {};
 
-function getCoverSourceRect(img, boxWidth, boxHeight, posX = 0.5, posY = 0) {
+function getCoverSourceRect(img, boxWidth, boxHeight, pos = {}) {
+  const posX = pos.x ?? 0.5;
+  const posY = pos.y ?? 0;
+  const zoom = pos.zoom ?? 1;
+  const focal = pos.focal ?? null;
   const imgRatio = img.naturalWidth / img.naturalHeight;
   const boxRatio = boxWidth / boxHeight;
+
+  let sWidth;
+  let sHeight;
   if (imgRatio > boxRatio) {
-    const sHeight = img.naturalHeight;
-    const sWidth = img.naturalHeight * boxRatio;
+    sHeight = img.naturalHeight * zoom;
+    sWidth = sHeight * boxRatio;
+  } else {
+    sWidth = img.naturalWidth * zoom;
+    sHeight = sWidth / boxRatio;
+  }
+  sWidth = Math.min(sWidth, img.naturalWidth);
+  sHeight = Math.min(sHeight, img.naturalHeight);
+
+  if (focal) {
+    let sx = focal.x * img.naturalWidth - sWidth * posX;
+    let sy = focal.y * img.naturalHeight - sHeight * posY;
+    sx = Math.max(0, Math.min(img.naturalWidth - sWidth, sx));
+    sy = Math.max(0, Math.min(img.naturalHeight - sHeight, sy));
+    return { sx, sy, sWidth, sHeight };
+  }
+
+  if (imgRatio > boxRatio) {
     return {
       sx: (img.naturalWidth - sWidth) * posX,
       sy: 0,
@@ -122,8 +176,6 @@ function getCoverSourceRect(img, boxWidth, boxHeight, posX = 0.5, posY = 0) {
       sHeight,
     };
   }
-  const sWidth = img.naturalWidth;
-  const sHeight = img.naturalWidth / boxRatio;
   return {
     sx: 0,
     sy: (img.naturalHeight - sHeight) * posY,
@@ -132,11 +184,11 @@ function getCoverSourceRect(img, boxWidth, boxHeight, posX = 0.5, posY = 0) {
   };
 }
 
-function drawPixelatedCover(ctx, img, destWidth, destHeight, pixelFactor, posX = 0.5, posY = 0) {
+function drawPixelatedCover(ctx, img, destWidth, destHeight, pixelFactor, pos = {}) {
   const factor = Math.max(1, pixelFactor);
   const lowW = Math.max(1, Math.round(destWidth / factor));
   const lowH = Math.max(1, Math.round(destHeight / factor));
-  const { sx, sy, sWidth, sHeight } = getCoverSourceRect(img, lowW, lowH, posX, posY);
+  const { sx, sy, sWidth, sHeight } = getCoverSourceRect(img, lowW, lowH, pos);
   const offscreen = document.createElement("canvas");
   offscreen.width = lowW;
   offscreen.height = lowH;
@@ -160,6 +212,8 @@ function loadImage(key, src) {
   });
 }
 
+const OBJECT_POSITION = ${JSON.stringify(OBJECT_POSITION)};
+
 window.renderFrame = function renderFrame(imageKey, openProgress) {
   const canvas = document.getElementById("c");
   canvas.width = WIDTH;
@@ -177,7 +231,8 @@ window.renderFrame = function renderFrame(imageKey, openProgress) {
     const eased = Math.max(0, Math.min(1, openProgress));
     factor = Math.max(1, Math.round(1 + (MAX_FACTOR - 1) * (1 - eased)));
   }
-  drawPixelatedCover(ctx, img, WIDTH, HEIGHT, factor, 0.5, 0);
+  const pos = OBJECT_POSITION[imageKey] || { x: 0.5, y: 0 };
+  drawPixelatedCover(ctx, img, WIDTH, HEIGHT, factor, pos);
   return canvas.toDataURL("image/png");
 };
 
@@ -186,18 +241,19 @@ window.boot = async function boot(sources) {
 };
 </script>
 </body></html>`;
+}
 
 async function main() {
-  mkdirSync(path.dirname(OUT_GIF), { recursive: true });
-  rmSync(FRAMES_DIR, { recursive: true, force: true });
-  mkdirSync(FRAMES_DIR, { recursive: true });
+  mkdirSync(path.dirname(CFG.outGif), { recursive: true });
+  rmSync(CFG.framesDir, { recursive: true, force: true });
+  mkdirSync(CFG.framesDir, { recursive: true });
 
-  const htmlPath = path.join(FRAMES_DIR, "render.html");
-  writeFileSync(htmlPath, HTML);
+  const htmlPath = path.join(CFG.framesDir, "render.html");
+  writeFileSync(htmlPath, buildHtml());
 
   const browser = await chromium.launch();
   const page = await browser.newPage({
-    viewport: { width: WIDTH, height: HEIGHT },
+    viewport: { width: CFG.width, height: CFG.height },
   });
 
   await page.goto(`file://${htmlPath}`);
@@ -209,7 +265,9 @@ async function main() {
     await window.boot(src);
   }, sources);
 
-  console.log(`Rendering ${FRAME_COUNT} frames (${FPS} fps, ${DURATION_MS}ms loop)...`);
+  console.log(
+    `[${presetName}] ${CFG.width}×${CFG.height} — ${FRAME_COUNT} frames (${FPS} fps, ${DURATION_MS}ms loop)...`
+  );
 
   for (let i = 0; i < FRAME_COUNT; i++) {
     const { image, openProgress } = getFrameState(i);
@@ -218,13 +276,13 @@ async function main() {
       { image, openProgress }
     );
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-    const framePath = path.join(FRAMES_DIR, `frame-${String(i).padStart(4, "0")}.png`);
+    const framePath = path.join(CFG.framesDir, `frame-${String(i).padStart(4, "0")}.png`);
     writeFileSync(framePath, Buffer.from(base64, "base64"));
     if (i % 10 === 0) process.stdout.write(`  ${i}/${FRAME_COUNT}\r`);
   }
 
   await browser.close();
-  console.log(`\nAssembling GIF → ${OUT_GIF}`);
+  console.log(`\nAssembling GIF → ${CFG.outGif}`);
 
   const delayCs = Math.round((100 / FPS) * 100) / 100;
   execFileSync(
@@ -234,15 +292,15 @@ async function main() {
       String(delayCs),
       "-loop",
       "0",
-      path.join(FRAMES_DIR, "frame-*.png"),
+      path.join(CFG.framesDir, "frame-*.png"),
       "-layers",
       "Optimize",
-      OUT_GIF,
+      CFG.outGif,
     ],
     { stdio: "inherit" }
   );
 
-  rmSync(FRAMES_DIR, { recursive: true, force: true });
+  rmSync(CFG.framesDir, { recursive: true, force: true });
   console.log("Done.");
 }
 

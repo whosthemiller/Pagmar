@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 /**
  * Looping GIF: loading censor bar + default pointer cursor.
- * Cursor enters from outside the top-right corner, hovers to trigger censor,
- * then exits back out — with subtle randomness in path and timing.
+ *
+ * Presets:
+ *   default — 2048×1152, 3s, top-right corner entry, centered text
+ *   story   — 1080×1920, 5s, vertical story, right-midline entry, upper third text
  */
 
 import { chromium } from "playwright";
@@ -13,19 +15,42 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
-
 const FONT_PATH = path.join(ROOT, "assets/fonts/RoobertHebrewCollectionVF-TRIAL.ttf");
-const OUT_GIF = path.join(ROOT, "assets/gif/loading-censor-loop.gif");
-const FRAMES_DIR = path.join(ROOT, "scripts/.gif-frames-loading-censor");
-
-const WIDTH = 2048;
-const HEIGHT = 1152;
-const FPS = 30;
 const LABEL = "טרמינולוגיה פוליטית";
-const FONT_SIZE = 108;
-const DURATION_MS = 3000;
-const FRAME_MS = 30;
-const FRAME_COUNT = DURATION_MS / FRAME_MS;
+const SUBTITLE = "מגישה את הפגמ״ר שלי ביום רביעי בכיתה 128";
+const SUBTITLE_INVITE = "מוזמנות ומוזמנים (:";
+
+const PRESETS = {
+  default: {
+    width: 2048,
+    height: 1152,
+    durationMs: 3000,
+    frameMs: 30,
+    fontSize: 108,
+    cursorSize: 52,
+    layout: "center",
+    entry: "topRight",
+    outGif: path.join(ROOT, "assets/gif/loading-censor-loop.gif"),
+    framesDir: path.join(ROOT, "scripts/.gif-frames-loading-censor"),
+  },
+  story: {
+    width: 1080,
+    height: 1920,
+    durationMs: 5000,
+    frameMs: 20,
+    fontSize: 66,
+    subtitleFontSize: 36,
+    cursorSize: 46,
+    layout: "upperThird",
+    entry: "storyArc",
+    outGif: path.join(ROOT, "assets/gif/loading-censor-loop-1080x1920.gif"),
+    framesDir: path.join(ROOT, "scripts/.gif-frames-loading-censor-story"),
+  },
+};
+
+const arg = process.argv[2];
+const presetName = arg === "story" || arg === "1080p" ? "story" : "default";
+const CFG = PRESETS[presetName];
 
 /** Classic default arrow pointer (hotspot at tip). */
 const CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
@@ -33,7 +58,6 @@ const CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="3
     fill="#fff" stroke="#000" stroke-width="1.25" stroke-linejoin="round"/>
 </svg>`;
 const CURSOR_DATA_URL = `data:image/svg+xml,${encodeURIComponent(CURSOR_SVG)}`;
-const CURSOR_SIZE = 52;
 
 function rand(min, max) {
   return min + Math.random() * (max - min);
@@ -45,10 +69,6 @@ function clamp01(t) {
 
 function easeOut(t) {
   return t * (2 - t);
-}
-
-function easeIn(t) {
-  return t * t;
 }
 
 function easeInOut(t) {
@@ -67,7 +87,6 @@ function cubicPoint(t, p0, p1, p2, p3) {
   };
 }
 
-/** Slight speed wobble along a segment — feels less robotic. */
 function warpedProgress(t, duration, wobble, phase) {
   const base = clamp01(t / duration);
   const w =
@@ -89,7 +108,7 @@ function leaveEase(t) {
 }
 
 function cursorHotspot(pos) {
-  const tip = (1 / 32) * CURSOR_SIZE;
+  const tip = (1 / 32) * CFG.cursorSize;
   return { x: pos.x + tip, y: pos.y + tip };
 }
 
@@ -102,28 +121,67 @@ function isOutsideTerm(hotspot, bounds, pad = 10) {
   );
 }
 
-function createMotionConfig(width, height, baseHover) {
-  const start = {
-    x: width + rand(70, 160),
-    y: rand(-120, -35),
+function createEntryPoints(width, height, hover) {
+  if (CFG.entry === "storyArc") {
+    const midY = height / 2 + rand(-8, 8);
+    return {
+      start: { x: width + rand(85, 145), y: midY },
+      approachCp1: { x: width * rand(0.82, 0.94), y: midY - rand(70, 130) },
+      approachCp2: { x: hover.x + rand(90, 170), y: hover.y + rand(55, 105) },
+      leaveCp1: { x: hover.x + rand(110, 190), y: hover.y + rand(45, 95) },
+      leaveCp2: { x: width * rand(0.84, 0.95), y: midY - rand(50, 110) },
+    };
+  }
+
+  if (CFG.entry === "rightMidline") {
+    const midY = height / 2 + rand(-6, 6);
+    const transit = {
+      x: width * rand(0.58, 0.74),
+      y: midY + rand(-5, 5),
+    };
+    return {
+      start: { x: width + rand(90, 170), y: midY },
+      transit,
+      approachCp1: { x: width * rand(0.9, 0.98), y: midY },
+      approachCp2: { x: transit.x + rand(40, 110), y: midY },
+      approachRiseCp1: { x: transit.x - rand(70, 150), y: midY - rand(30, 70) },
+      approachRiseCp2: { x: hover.x + rand(50, 120), y: hover.y + rand(35, 75) },
+      leaveDropCp1: { x: hover.x + rand(60, 140), y: hover.y + rand(30, 65) },
+      leaveDropCp2: { x: transit.x - rand(60, 130), y: midY - rand(20, 55) },
+      leaveCp2: { x: transit.x + rand(50, 120), y: midY },
+      leaveCp3: { x: width * rand(0.92, 0.99), y: midY },
+    };
+  }
+
+  return {
+    start: { x: width + rand(70, 160), y: rand(-120, -35) },
+    approachCp1: { x: width * rand(0.68, 0.86), y: rand(40, 170) },
+    approachCp2: { x: hover.x + rand(90, 240), y: hover.y - rand(70, 170) },
+    leaveCp1: { x: hover.x + rand(200, 340), y: hover.y - rand(50, 130) },
+    leaveCp2: { x: width * rand(0.78, 0.98), y: rand(60, 200) },
   };
+}
+
+function createMotionConfig(width, height, baseHover) {
   const hover = {
     x: baseHover.x + rand(-22, 22),
     y: baseHover.y + rand(-14, 14),
   };
+  const entry = createEntryPoints(width, height, hover);
 
-  const approachMs = rand(620, 760);
-  const riseMs = rand(400, 520);
-  const holdMs = rand(120, 220);
-  const leaveMs = DURATION_MS - approachMs - riseMs - holdMs;
-  const fallMs = rand(200, 260);
+  const approachMs =
+    CFG.durationMs === 5000 ? rand(1050, 1350) : rand(620, 760);
+  const riseMs = CFG.durationMs === 5000 ? rand(680, 900) : rand(400, 520);
+  const holdMs = CFG.durationMs === 5000 ? rand(220, 360) : rand(120, 220);
+  const leaveMs = CFG.durationMs - approachMs - riseMs - holdMs;
+  const fallMs = CFG.durationMs === 5000 ? rand(220, 300) : rand(200, 260);
 
   const riseStart = approachMs;
   const riseEnd = approachMs + riseMs;
   const leaveStart = riseEnd + holdMs;
 
   return {
-    start,
+    ...entry,
     hover,
     termBounds: baseHover.termBounds,
     approachMs,
@@ -134,12 +192,7 @@ function createMotionConfig(width, height, baseHover) {
     riseStart,
     riseEnd,
     leaveStart,
-    leaveEnd: DURATION_MS,
-    durationMs: DURATION_MS,
-    approachCp1: { x: width * rand(0.68, 0.86), y: rand(40, 170) },
-    approachCp2: { x: hover.x + rand(90, 240), y: hover.y - rand(70, 170) },
-    leaveCp1: { x: hover.x + rand(200, 340), y: hover.y - rand(50, 130) },
-    leaveCp2: { x: width * rand(0.78, 0.98), y: rand(60, 200) },
+    leaveEnd: CFG.durationMs,
     wobbleAmp: rand(4.5, 8),
     speedWobble: rand(0.028, 0.055),
     phaseFreq: rand(2.6, 4.4),
@@ -179,10 +232,31 @@ function getCursorPos(t, m) {
   const phase = { freq: m.phaseFreq, freq2: m.phaseFreq2 };
 
   if (t <= m.approachMs) {
-    const raw = warpedProgress(t, m.approachMs, m.speedWobble, phase);
+    const raw = warpedProgress(
+      t,
+      m.approachMs,
+      m.speedWobble * (CFG.entry === "storyArc" ? 0.35 : 0.65),
+      phase
+    );
+
+    if (CFG.entry === "rightMidline" && m.transit) {
+      let pt;
+      if (raw < 0.58) {
+        const seg = raw / 0.58;
+        pt = cubicPoint(seg, start, m.approachCp1, m.approachCp2, m.transit);
+      } else {
+        const seg = (raw - 0.58) / 0.42;
+        pt = cubicPoint(seg, m.transit, m.approachRiseCp1, m.approachRiseCp2, hover);
+      }
+      const jit = pathJitter(t, m.wobbleAmp * 0.35 * (1 - raw * 0.5), m.jitterSeeds);
+      return { x: pt.x + jit.x, y: pt.y + jit.y * 0.35 };
+    }
+
     const pt = cubicPoint(raw, start, m.approachCp1, m.approachCp2, hover);
-    const jit = pathJitter(t, m.wobbleAmp * (1 - raw * 0.6), m.jitterSeeds);
-    return { x: pt.x + jit.x, y: pt.y + jit.y };
+    const jitAmp = CFG.entry === "storyArc" ? m.wobbleAmp * 0.25 : m.wobbleAmp * (1 - raw * 0.6);
+    const jit = pathJitter(t, jitAmp, m.jitterSeeds);
+    const yScale = CFG.entry === "storyArc" ? 0.5 : 1;
+    return { x: pt.x + jit.x, y: pt.y + jit.y * yScale };
   }
 
   if (t < m.leaveStart) {
@@ -197,17 +271,74 @@ function getCursorPos(t, m) {
   if (t <= m.leaveEnd) {
     const raw = clamp01((t - m.leaveStart) / m.leaveMs);
     const eased = leaveEase(raw);
+
+    if (CFG.entry === "rightMidline" && m.transit) {
+      let pt;
+      if (eased < 0.42) {
+        const seg = eased / 0.42;
+        pt = cubicPoint(seg, hover, m.leaveDropCp1, m.leaveDropCp2, m.transit);
+      } else {
+        const seg = (eased - 0.42) / 0.58;
+        pt = cubicPoint(seg, m.transit, m.leaveCp2, m.leaveCp3, start);
+      }
+      const jit = pathJitter(t, m.wobbleAmp * eased * 0.25, m.jitterSeeds);
+      return { x: pt.x + jit.x, y: pt.y + jit.y * 0.35 };
+    }
+
     const pt = cubicPoint(eased, hover, m.leaveCp1, m.leaveCp2, start);
-    const jit = pathJitter(t, m.wobbleAmp * raw * 0.35, m.jitterSeeds);
-    return { x: pt.x + jit.x, y: pt.y + jit.y };
+    const jitAmp = CFG.entry === "storyArc" ? m.wobbleAmp * eased * 0.18 : m.wobbleAmp * raw * 0.35;
+    const jit = pathJitter(t, jitAmp, m.jitterSeeds);
+    const yScale = CFG.entry === "storyArc" ? 0.5 : 1;
+    return { x: pt.x + jit.x, y: pt.y + jit.y * yScale };
   }
 
   return start;
 }
 
-const fontBase64 = readFileSync(FONT_PATH).toString("base64");
+function buildHtml(fontBase64) {
+  const stageLayout =
+    CFG.layout === "upperThird"
+      ? `
+.stage {
+  position: absolute;
+  left: 50%;
+  top: calc(100% / 3);
+  transform: translate(-50%, -50%);
+  text-align: center;
+}`
+      : `
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.stage {}`;
 
-const HTML = `<!DOCTYPE html>
+  const subtitleBlock =
+    CFG.subtitleFontSize != null
+      ? `
+.sun-loading__subtitle {
+  margin: 2.45em 0 0;
+  font-family: "RoobertVF", sans-serif;
+  font-weight: 400;
+  font-size: ${CFG.subtitleFontSize}px;
+  line-height: 1.25;
+  white-space: nowrap;
+  color: #111111;
+}
+.sun-loading__subtitle--invite {
+  margin-top: 0.4em;
+}
+`
+      : "";
+
+  const subtitleHtml =
+    CFG.subtitleFontSize != null
+      ? `<p class="sun-loading__subtitle" id="subtitle">${SUBTITLE}</p>
+    <p class="sun-loading__subtitle sun-loading__subtitle--invite">${SUBTITLE_INVITE}</p>`
+      : "";
+
+  return `<!DOCTYPE html>
 <html lang="he" dir="rtl"><head><meta charset="utf-8">
 <style>
 @font-face {
@@ -219,14 +350,13 @@ const HTML = `<!DOCTYPE html>
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  width: ${WIDTH}px;
-  height: ${HEIGHT}px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: ${CFG.width}px;
+  height: ${CFG.height}px;
   background: #f9f7f5;
   overflow: hidden;
+  position: relative;
 }
+${stageLayout}
 .sun-loading__censor-wrap {
   position: relative;
   display: inline-block;
@@ -236,12 +366,13 @@ body {
   margin: 0;
   font-family: "RoobertVF", monospace;
   font-variation-settings: "MONO" 100, "slnt" 0;
-  font-weight: 400;
-  font-size: ${FONT_SIZE}px;
+  font-weight: 500;
+  font-size: ${CFG.fontSize}px;
   line-height: 1.2;
   white-space: nowrap;
   color: #111111;
 }
+${subtitleBlock}
 .sun-loading__censor {
   position: absolute;
   top: -0.12em;
@@ -254,17 +385,22 @@ body {
   position: fixed;
   left: 0;
   top: 0;
-  width: ${CURSOR_SIZE}px;
-  height: ${CURSOR_SIZE}px;
+  width: ${CFG.cursorSize}px;
+  height: ${CFG.cursorSize}px;
   pointer-events: none;
   z-index: 10;
   image-rendering: pixelated;
 }
 </style>
 </head><body>
-<div class="sun-loading__censor-wrap">
-  <p class="sun-loading__label" id="label">${LABEL}</p>
-  <div class="sun-loading__censor" id="bar" aria-hidden="true"></div>
+<div class="stage">
+  <div class="sun-loading__text-block">
+    <div class="sun-loading__censor-wrap">
+      <p class="sun-loading__label" id="label">${LABEL}</p>
+      <div class="sun-loading__censor" id="bar" aria-hidden="true"></div>
+    </div>
+    ${subtitleHtml}
+  </div>
 </div>
 <img id="cursor" src="${CURSOR_DATA_URL}" alt="" aria-hidden="true" />
 <script>
@@ -286,23 +422,25 @@ window.measureHover = function measureHover() {
     },
   };
 };
-document.fonts.ready.then(() => {
-  window.fontsReady = true;
-});
+document.fonts.ready.then(() => { window.fontsReady = true; });
 </script>
 </body></html>`;
+}
 
 async function main() {
-  mkdirSync(path.dirname(OUT_GIF), { recursive: true });
-  rmSync(FRAMES_DIR, { recursive: true, force: true });
-  mkdirSync(FRAMES_DIR, { recursive: true });
+  const fontBase64 = readFileSync(FONT_PATH).toString("base64");
+  const frameCount = CFG.durationMs / CFG.frameMs;
 
-  const htmlPath = path.join(FRAMES_DIR, "render.html");
-  writeFileSync(htmlPath, HTML);
+  mkdirSync(path.dirname(CFG.outGif), { recursive: true });
+  rmSync(CFG.framesDir, { recursive: true, force: true });
+  mkdirSync(CFG.framesDir, { recursive: true });
+
+  const htmlPath = path.join(CFG.framesDir, "render.html");
+  writeFileSync(htmlPath, buildHtml(fontBase64));
 
   const browser = await chromium.launch();
   const page = await browser.newPage({
-    viewport: { width: WIDTH, height: HEIGHT },
+    viewport: { width: CFG.width, height: CFG.height },
     deviceScaleFactor: 1,
   });
 
@@ -310,49 +448,45 @@ async function main() {
   await page.waitForFunction(() => window.fontsReady === true);
 
   const baseHover = await page.evaluate(() => window.measureHover());
-  const motion = createMotionConfig(WIDTH, HEIGHT, baseHover);
-
-  const frameCount = FRAME_COUNT;
-  const frameMs = FRAME_MS;
-  const fallTriggerTime = findFallTriggerTime(motion, frameMs, frameCount);
+  const motion = createMotionConfig(CFG.width, CFG.height, baseHover);
+  const fallTriggerTime = findFallTriggerTime(motion, CFG.frameMs, frameCount);
 
   console.log(
-    `Rendering ${frameCount} frames (${FPS} fps, ${DURATION_MS}ms loop, fall @${Math.round(fallTriggerTime)}ms)...`
+    `[${presetName}] ${CFG.width}×${CFG.height} — ${frameCount} frames, ${CFG.durationMs}ms, fall @${Math.round(fallTriggerTime)}ms`
   );
 
   for (let i = 0; i < frameCount; i++) {
-    const t = i * frameMs;
+    const t = i * CFG.frameMs;
     const pos = getCursorPos(t, motion);
     const barPct = getBarWidthPct(t, motion, fallTriggerTime);
     await page.evaluate(
       ({ barPct, x, y }) => window.setFrame(barPct, x, y),
       { barPct, x: pos.x, y: pos.y }
     );
-    const framePath = path.join(FRAMES_DIR, `frame-${String(i).padStart(4, "0")}.png`);
+    const framePath = path.join(CFG.framesDir, `frame-${String(i).padStart(4, "0")}.png`);
     await page.screenshot({ path: framePath, type: "png" });
-    if (i % 10 === 0) process.stdout.write(`  ${i}/${frameCount}\r`);
+    if (i % 20 === 0) process.stdout.write(`  ${i}/${frameCount}\r`);
   }
 
   await browser.close();
-  console.log(`\nAssembling GIF → ${OUT_GIF}`);
+  console.log(`\nAssembling GIF → ${CFG.outGif}`);
 
-  const delayCs = String(FRAME_MS / 10);
   execFileSync(
     "magick",
     [
       "-delay",
-      delayCs,
+      String(CFG.frameMs / 10),
       "-loop",
       "0",
-      path.join(FRAMES_DIR, "frame-*.png"),
+      path.join(CFG.framesDir, "frame-*.png"),
       "-layers",
       "Optimize",
-      OUT_GIF,
+      CFG.outGif,
     ],
     { stdio: "inherit" }
   );
 
-  rmSync(FRAMES_DIR, { recursive: true, force: true });
+  rmSync(CFG.framesDir, { recursive: true, force: true });
   console.log("Done.");
 }
 

@@ -34,9 +34,9 @@
   --map-typography-scale: 1;
   /* Nav bar height tracks its (scaling) text so big screens keep the same bar
      proportions — and the gap below it stays proportional — as the reference. */
-  --site-nav-height: calc(42px * var(--map-typography-scale));
-  --site-nav-font-size: calc(18px * var(--map-typography-scale));
-  --site-nav-line-box: calc(27px * var(--map-typography-scale));
+  --site-nav-height: calc((42px - var(--macbook-home-typography-trim, 0px)) * var(--map-typography-scale));
+  --site-nav-font-size: calc((18px - var(--macbook-home-typography-trim, 0px)) * var(--map-typography-scale));
+  --site-nav-line-box: calc((27px - var(--macbook-home-typography-trim, 0px)) * var(--map-typography-scale));
   --terms-index-font-size: calc(14px * var(--map-typography-scale));
   --terms-index-line-height: calc(20px * var(--map-typography-scale));
   --terms-index-margin-top: calc(120px * var(--map-typography-scale));
@@ -59,11 +59,12 @@
   --term-page-caption-line-height: calc(16px * var(--map-typography-scale));
   --term-page-side-font-size: calc(18px * var(--map-typography-scale));
   --term-page-similar-label-font-size: calc(18px * var(--map-typography-scale));
+  --term-similar-block-row-gap: calc(5px * var(--map-typography-scale));
   --term-page-side-line-height: calc(26px * var(--map-typography-scale));
   --term-page-selected-font-size: calc(144px * var(--map-typography-scale));
   --sun-overview-label-font-size: calc(32px * var(--map-typography-scale));
   --sun-loading-font-size: calc(24px * var(--map-typography-scale));
-  --sun-term-font-size: calc(30px * var(--map-typography-scale));
+  --sun-term-font-size: calc((30px - var(--macbook-home-typography-trim, 0px)) * var(--map-typography-scale));
   --sun-filter-dim-hint-font-size: calc(18px * var(--map-typography-scale));
   --sun-filter-dim-hint-line-height: calc(26px * var(--map-typography-scale));
   --sun-timeline-event-hint-font-size: calc(82px * var(--map-typography-scale));
@@ -71,8 +72,11 @@
   --sun-timeline-scroll-hint-font-size: calc(18px * var(--map-typography-scale));
   --sun-timeline-scroll-hint-line-height: calc(26px * var(--map-typography-scale));
   --sun-home-scroll-hint-font-size: calc(14px * var(--map-typography-scale));
-  --sun-timeline-tick-font-size: calc(24px * var(--map-typography-scale));
-  --sun-timeline-tick-line-height: calc(30px * var(--map-typography-scale));
+  --sun-timeline-tick-year-font-size: calc(24px * var(--map-typography-scale));
+  --sun-timeline-tick-year-line-height: calc(30px * var(--map-typography-scale));
+  --sun-timeline-tick-title-font-size: calc(18px * var(--map-typography-scale));
+  --sun-timeline-tick-title-line-height: calc(22px * var(--map-typography-scale));
+  --sun-timeline-tick-active-len: calc(108px * var(--map-typography-scale));
   --sun-filter-font-size: calc(14px * var(--map-typography-scale));
   --sun-filter-line-height: calc(20px * var(--map-typography-scale));
   --sun-filter-clear-font-size: calc(20px * var(--map-typography-scale));
@@ -650,6 +654,15 @@ body,
   white-space: nowrap;
 }
 
+.sun-viewport.is-term-similar-block-wrapped .sun-term-similar-label {
+  /* Label sits at the head of the multi-row similar block. */
+  line-height: 1.15;
+}
+
+.sun-term-wrap.is-switch-prev-hidden {
+  visibility: hidden;
+}
+
 .sun-term-bleed-caption {
   position: fixed;
   z-index: 11;
@@ -920,13 +933,6 @@ body,
   object-position: center top;
 }
 
-.sun-term-page.is-scroll-content .sun-term-page__caption {
-  margin: 6px 0 0;
-  font-size: var(--term-page-caption-font-size);
-  line-height: var(--term-page-caption-line-height);
-  text-align: left;
-}
-
 .sun-term-page.is-scroll-content .sun-term-page__details {
   position: absolute;
   left: 0;
@@ -961,10 +967,6 @@ body,
 .sun-term-page__details-image {
   position: absolute;
   pointer-events: auto;
-}
-
-.sun-term-page.is-scroll-content .sun-term-page__details-image .sun-term-page__caption {
-  text-align: left;
 }
 
 .sun-term-page__label-nav {
@@ -1648,6 +1650,9 @@ body,
   min-width: 0;
   overflow: visible;
   position: relative;
+  /* Pin captions to the physical left of the image (RTL would otherwise
+     place a narrower / inline-block caption on the right). */
+  text-align: left;
 }
 
 img.sun-term-page__image.is-pixelation-hidden {
@@ -1890,11 +1895,13 @@ img.sun-title-row-image__img.is-loaded {
 }
 
 .sun-term-page__caption {
-  margin: 6px 0 0;
+  /* margin-right: auto pins the box to the physical left under the image
+     (RTL would otherwise place a narrower caption on the right). */
+  margin: 6px auto 0 0;
   font-size: var(--term-page-caption-font-size);
   line-height: var(--term-page-caption-line-height);
   color: var(--ink);
-  text-align: right;
+  text-align: left;
   text-wrap: pretty;
   hyphens: none;
 }
@@ -2169,7 +2176,7 @@ body:has(.sun-viewport.is-term-switch-censor) .sun-home-scroll-hint__text {
   left: 0;
   right: 0;
   bottom: 0;
-  height: calc(96px + 30px + var(--sun-timeline-tick-line-height) + 16px);
+  height: calc(var(--sun-timeline-tick-active-len) + 16px);
   z-index: 14;
   cursor: ew-resize;
   touch-action: none;
@@ -2200,16 +2207,23 @@ body:has(.sun-viewport.is-term-switch-censor) .sun-home-scroll-hint__text {
 .sun-timeline-tick-title {
   font-family: var(--sun-prose-font);
   font-variation-settings: var(--sun-prose-variation, normal);
-  font-size: var(--sun-timeline-tick-font-size);
   font-weight: 500;
-  line-height: var(--sun-timeline-tick-line-height);
   fill: var(--ink);
-  /* Page is dir="rtl"; force LTR so text-anchor start/end map predictably to
-     the visual left/right edge for tick-label side placement. */
-  direction: ltr;
+  direction: rtl;
+  text-anchor: end;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.sun-timeline-tick-year {
+  font-size: var(--sun-timeline-tick-year-font-size);
+  line-height: var(--sun-timeline-tick-year-line-height);
+}
+
+.sun-timeline-tick-title {
+  font-size: var(--sun-timeline-tick-title-font-size);
+  line-height: var(--sun-timeline-tick-title-line-height);
 }
 
 .sun-timeline-tick-labels {
@@ -2227,15 +2241,30 @@ body:has(.sun-viewport.is-term-switch-censor) .sun-home-scroll-hint__text {
   padding: 0;
   font-family: var(--sun-prose-font);
   font-variation-settings: var(--sun-prose-variation, normal);
-  font-size: var(--sun-timeline-tick-font-size);
   font-weight: 500;
-  line-height: var(--sun-timeline-tick-line-height);
   color: var(--ink);
-  direction: ltr;
-  white-space: nowrap;
+  direction: rtl;
+  text-align: right;
+  unicode-bidi: plaintext;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.sun-timeline-tick-labels__year {
+  font-size: var(--sun-timeline-tick-year-font-size);
+  line-height: var(--sun-timeline-tick-year-line-height);
+  white-space: nowrap;
+}
+
+.sun-timeline-tick-labels__title {
+  display: block;
+  font-size: var(--sun-timeline-tick-title-font-size);
+  line-height: var(--sun-timeline-tick-title-line-height);
+  white-space: pre-line;
+  overflow: visible;
+  overflow-wrap: normal;
+  word-break: keep-all;
 }
 
 .sun-timeline-tick-labels__year[hidden],

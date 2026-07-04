@@ -76,6 +76,13 @@ const VIEW_SELECTORS = {
 
 let pageNavTransitionActive = false;
 let indexEnterScrambleActive = false;
+/** @type {(() => void) | null} */
+let viewSwitchNavSyncHandler = null;
+
+/** @param {(() => void) | null} handler */
+export function setPageNavViewSwitchSync(handler) {
+  viewSwitchNavSyncHandler = handler;
+}
 /** @type {number | null} */
 let exitTimerId = null;
 /** @type {number | null} */
@@ -347,6 +354,7 @@ export function runPageNavScrambleTransition(
     exitView,
     () => {
       performSwitch();
+      viewSwitchNavSyncHandler?.();
       if (enterView === "index") {
         // Index enter scrambles 100+ labels — unblock navigation as soon as the view switches.
         scrambleIndexContentEnter(undefined, enterMs);

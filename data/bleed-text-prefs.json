@@ -29,11 +29,6 @@
       "titleRowText": "auto",
       "imageUrl": "assets/img/אסירים/חייל שומר על עצורים פלסטינים המיועדים לשחרור במסגרת הסכם החזרת החטופים בכלא קציעות בדרום הארץ.webp"
     },
-    "אספקה לאויב": {
-      "navText": "dark",
-      "titleRowText": "auto",
-      "imageUrl": "assets/img/אספקה לאויב/משאית אספקה נכנסת לעזה.webp"
-    },
     "אפרטהייד": {
       "navText": "auto",
       "titleRowText": "auto",
@@ -58,16 +53,6 @@
       "navText": "auto",
       "titleRowText": "auto",
       "imageUrl": "assets/img/בני ערובה/בני הערובה מאנטבה נוחתים בישראל.webp"
-    },
-    "ג׳יהאד": {
-      "navText": "auto",
-      "titleRowText": "auto",
-      "imageUrl": "assets/img/ג׳יהאד/פעילי חמאס.webp"
-    },
-    "גבול שביתת הנשק": {
-      "navText": "auto",
-      "titleRowText": "auto",
-      "imageUrl": "assets/img/גבול שביתת הנשק/ועדת שביתת הנשק ישראל־מצרים נפגשת בשטח לקביעת תוואי הגבול.webp"
     },
     "גבולות אושוויץ": {
       "navText": "auto",
@@ -103,6 +88,11 @@
       "navText": "auto",
       "titleRowText": "auto",
       "imageUrl": "assets/img/הגדה המערבית/חיילים בגדה המערבית.webp"
+    },
+    "הגירה מרצון": {
+      "navText": "auto",
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/הגירה מרצון/הקהל בכנס הטרנספר .webp"
     },
     "ההפיכה המשטרית": {
       "navText": "auto",
@@ -154,10 +144,10 @@
       "titleRowText": "auto",
       "imageUrl": "assets/img/הפגנות/מפגינים למען השבת החטופים ונגד הממשלה בצומת עזריאלי בתל אביב.webp"
     },
-    "הפרעות סדר": {
+    "הפרעה לסדר הציבורי": {
       "navText": "auto",
       "titleRowText": "auto",
-      "imageUrl": "assets/img/הפרעות סדר/מדורה שמפגינים הדליקו.webp"
+      "imageUrl": "assets/img/הפרעה לסדר הציבורי/מדורה שמפגינים הדליקו.webp"
     },
     "הקו הירוק": {
       "navText": "auto",
@@ -179,15 +169,15 @@
       "titleRowText": "light",
       "imageUrl": "assets/img/הרתעה/הפצצות צה״ל בעיר עזה.webp"
     },
-    "השטחים הכבושים": {
-      "navText": "auto",
-      "titleRowText": "dark",
-      "imageUrl": "assets/img/השטחים הכבושים/בית הרוס בכפר זנותא.webp"
-    },
-    "התיישבויות": {
+    "השטחים": {
       "navText": "auto",
       "titleRowText": "auto",
-      "imageUrl": "assets/img/התיישבויות/חוות צאן של מתנחלים ישראלים בגדה המערבית.webp"
+      "imageUrl": "assets/img/השטחים/פעילות חקלאית יהודית.webp"
+    },
+    "השטחים הכבושים": {
+      "navText": "auto",
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/השטחים הכבושים/הפגנה נגד פעילות צה\"ל במחנה הפליטים ג'נין.webp"
     },
     "התנחלויות": {
       "navText": "auto",
@@ -229,11 +219,6 @@
       "titleRowText": "auto",
       "imageUrl": "assets/img/חיסול/המכתש אחרי תקיפת הבונקר של נסראללה וחיסולו.webp"
     },
-    "חסם הומניטרי": {
-      "navText": "auto",
-      "titleRowText": "dark",
-      "imageUrl": "assets/img/חסם הומניטרי/חמושים בעזה על משאיות סיוע הומניטרי.webp"
-    },
     "טבח": {
       "navText": "auto",
       "titleRowText": "auto",
@@ -264,11 +249,6 @@
       "titleRowText": "auto",
       "imageUrl": "assets/img/טרנספר/פליטים פלסטינים נמלטים מרפיח, רצועת עזה.webp"
     },
-    "טרנספר מרצון": {
-      "navText": "auto",
-      "titleRowText": "auto",
-      "imageUrl": "assets/img/טרנספר מרצון/הקהל בכנס הטרנספר .webp"
-    },
     "יהודה ושומרון": {
       "navText": "auto",
       "titleRowText": "auto",
@@ -278,6 +258,11 @@
       "navText": "auto",
       "titleRowText": "auto",
       "imageUrl": "assets/img/יודונאצים/שלט יודנאצים החוצה בהפגנה.webp"
+    },
+    "יישובים": {
+      "navText": "auto",
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/יישובים/חוות צאן של מתנחלים ישראלים בגדה המערבית.webp"
     },
     "ימנים": {
       "navText": "auto",
@@ -324,11 +309,6 @@
       "titleRowText": "auto",
       "imageUrl": "assets/img/מאחזים/מאחז בצומת טייבה.webp"
     },
-    "מאחזים בלתי חוקיים": {
-      "navText": "light",
-      "titleRowText": "light",
-      "imageUrl": "assets/img/מאחזים בלתי חוקיים/בניית חווה יהודית בשטחים.webp"
-    },
     "מבצע": {
       "navText": "auto",
       "titleRowText": "auto",
@@ -348,6 +328,11 @@
       "navText": "light",
       "titleRowText": "auto",
       "imageUrl": "assets/img/מחאות/עמותים במחאות נגד נתיחת גופות פעוטות בירושלים.webp"
+    },
+    "מחדל ה־7 באוקטובר": {
+      "navText": "auto",
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/מחדל ה־7 באוקטובר/בית בו הוחזקו בני ערובה ישראליים ב־7 באוקטובר.webp"
     },
     "מחסום": {
       "navText": "light",
@@ -464,6 +449,11 @@
       "titleRowText": "auto",
       "imageUrl": "assets/img/סיוע הומניטרי/חלוקת סיוע הומניטרי בעזה.webp"
     },
+    "סיוע לאויב": {
+      "navText": "dark",
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/סיוע לאויב/משאית אספקה נכנסת לעזה.webp"
+    },
     "סיכול ממוקד": {
       "navText": "auto",
       "titleRowText": "auto",
@@ -483,11 +473,6 @@
       "navText": "auto",
       "titleRowText": "auto",
       "imageUrl": "assets/img/עיירות פיתוח/בית מקורי מימי ראשית עיירת הפיתוח בשדרות.webp"
-    },
-    "עיירות פריפריה": {
-      "navText": "auto",
-      "titleRowText": "auto",
-      "imageUrl": "assets/img/עיירות פריפריה/מבנה שעבר “שיקום שכונות” באופקים, ועליו שלט “למכירה”.webp"
     },
     "עיר דוד": {
       "navText": "light",
@@ -509,10 +494,15 @@
       "titleRowText": "auto",
       "imageUrl": "assets/img/עקירה/ילד פלסטיני ישן בחורבות ביתו ההרוס בשכונת שג׳עייה שבעיר עזה.webp"
     },
-    "ערבים ישראליים": {
+    "ערביי ישראל": {
       "navText": "auto",
       "titleRowText": "auto",
-      "imageUrl": "assets/img/ערבים ישראליים/צעירים ערבים בישראל.webp"
+      "imageUrl": "assets/img/ערביי ישראל/צעירים ערבים בישראל.webp"
+    },
+    "ערי פריפריה": {
+      "navText": "auto",
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/ערי פריפריה/מבנה שעבר “שיקום שכונות” באופקים, ועליו שלט “למכירה”.webp"
     },
     "פגיעה בבלתי מעורבים": {
       "navText": "auto",
@@ -538,11 +528,6 @@
       "navText": "auto",
       "titleRowText": "auto",
       "imageUrl": "assets/img/פלישה/כוח רדואן.webp"
-    },
-    "פלסטין": {
-      "navText": "auto",
-      "titleRowText": "auto",
-      "imageUrl": "assets/img/פלסטין/מיעאר.webp"
     },
     "פלסטינים אזרחי ישראל": {
       "navText": "auto",
@@ -588,6 +573,11 @@
       "navText": "dark",
       "titleRowText": "light",
       "imageUrl": "assets/img/קו העימות/טנקים של צה\"ל בגבול לבנון.webp"
+    },
+    "קו שביתת הנשק": {
+      "navText": "auto",
+      "titleRowText": "auto",
+      "imageUrl": "assets/img/קו שביתת הנשק/ועדת שביתת הנשק ישראל־מצרים נפגשת בשטח לקביעת תוואי הגבול.webp"
     },
     "קפלניסטים": {
       "navText": "auto",

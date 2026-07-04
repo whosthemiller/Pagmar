@@ -4,6 +4,46 @@ export const VIEWPORT_DESIGN = {
   height: 982,
 };
 
+/** "המחשב שלי" — MacBook 14" browser viewport (chrome reduces height below screen). */
+export const MY_MACBOOK_VIEWPORT = {
+  width: 1512,
+  height: 949,
+};
+
+const MY_MACBOOK_VIEWPORT_TOLERANCE = 2;
+/** Home wheel + nav bar font trim on the personal MacBook only (px). */
+export const MY_MACBOOK_HOME_TYPOGRAPHY_TRIM_PX = 2;
+
+export function isMyMacBookViewport(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : MY_MACBOOK_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : MY_MACBOOK_VIEWPORT.height
+) {
+  return (
+    Math.abs(viewportWidth - MY_MACBOOK_VIEWPORT.width) <= MY_MACBOOK_VIEWPORT_TOLERANCE &&
+    Math.abs(viewportHeight - MY_MACBOOK_VIEWPORT.height) <= MY_MACBOOK_VIEWPORT_TOLERANCE
+  );
+}
+
+export function getMyMacBookHomeTypographyTrimPx(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : MY_MACBOOK_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : MY_MACBOOK_VIEWPORT.height
+) {
+  return isMyMacBookViewport(viewportWidth, viewportHeight)
+    ? MY_MACBOOK_HOME_TYPOGRAPHY_TRIM_PX
+    : 0;
+}
+
+/** Scaled home-wheel term size with the MacBook-only trim applied. */
+export function getHomeSunTermFontSizePx(
+  basePx,
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : MY_MACBOOK_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : MY_MACBOOK_VIEWPORT.height,
+  typographyScale = getMapTypographyScale(viewportWidth)
+) {
+  const trim = getMyMacBookHomeTypographyTrimPx(viewportWidth, viewportHeight);
+  return Math.max(1, basePx * typographyScale - trim);
+}
+
 const WIDE_SCREEN_START_WIDTH = 2560;
 /**
  * Large-desktop typography easing. Past the MacBook reference width the unified

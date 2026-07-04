@@ -712,6 +712,16 @@ async function runMode(state, mode) {
           state.timerId = window.setTimeout(r, TIMING.charStepMs);
         });
       }
+      if (!isActiveState(state)) return;
+      // Swap to Secolo while every cell is still hidden so clearing the Roobert
+      // overlay lift never coincides with visible ink on screen.
+      state.chars.forEach(({ glyph, cell, final }, index) => {
+        applyCharForFont(glyph, state.toFont, state.widthSets, index);
+        glyph.textContent = final;
+        cell.style.opacity = "0";
+      });
+      syncTermLockWidth(state.root, state.chars);
+      state.onWritePhaseStart?.();
       for (let step = 0; step <= n; step++) {
         if (!isActiveState(state)) return;
         state.chars.forEach(({ glyph, cell, final }, index) => {
@@ -1005,6 +1015,7 @@ export function playFontScrambleTransition(root, options = {}) {
     fromFont = "roobert",
     toFont = "secolo",
     onComplete,
+    onWritePhaseStart,
   } = options;
 
   if (!text.trim()) {
@@ -1022,6 +1033,7 @@ export function playFontScrambleTransition(root, options = {}) {
 
   const state = prepareState(root, text, fromFont, toFont);
   state.onComplete = onComplete ?? null;
+  state.onWritePhaseStart = onWritePhaseStart ?? null;
   root.dataset.fontScrambleActive = "1";
   activeStates.set(root, state);
 

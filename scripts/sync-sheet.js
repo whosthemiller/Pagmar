@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
- * מושך את גיליונות "אובייקטים" ו"מונחים" מ-Google Sheets וכותב sheet-data.json.
+ * מושך מ-Google Sheets:
+ *   אובייקטים + מונחים - מתוקן → data/sheet-data.json
+ *   מונחים ציר זמן → data/term-years-new.csv
+ *   אירועים מרכזיים → data/pagmar_timeline_events.csv
+ *
  * הרצה: node scripts/sync-sheet.js
  * הגיליון חייב להיות נגיש לייצוא CSV (ציבורי או קישור לכל מי שיש לו).
  */
@@ -9,11 +13,19 @@ const fs = require("fs");
 const path = require("path");
 
 const SPREADSHEET_ID = "1QS5G0Q0a5kDT9xd3LSTBppMV6juoveS-P5lEG89moSU";
+const DATA_DIR = path.join(__dirname, "..", "data");
+
 const TABS = {
   objects: { gid: "971020560", description: "אובייקטים" },
-  terms: { gid: "618101576", description: "מונחים" },
+  // "מונחים - מתוקן" (not the broken "מונחים" tab with #REF! ids)
+  terms: { gid: "199861948", description: "מונחים - מתוקן" },
+  termYears: { gid: "67862864", description: "מונחים ציר זמן" },
+  timelineEvents: { gid: "502351555", description: "אירועים מרכזיים" },
 };
-const OUT_PATH = path.join(__dirname, "..", "data", "sheet-data.json");
+
+const OUT_SHEET = path.join(DATA_DIR, "sheet-data.json");
+const OUT_YEARS = path.join(DATA_DIR, "term-years-new.csv");
+const OUT_EVENTS = path.join(DATA_DIR, "pagmar_timeline_events.csv");
 
 function buildCsvUrl(sheetId, gid) {
   return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${gid}`;
@@ -72,6 +84,16 @@ function rowsToObjects(rows) {
   });
 }
 
+function toCsvLine(cols) {
+  return cols
+    .map((c) => {
+      const s = String(c ?? "");
+      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    })
+    .join(",");
+}
+
 function buildConcepts(objectsRows, termsRows) {
   const objectIdKey = "מזהה אובייקט";
   const objectNameKey = "שם אובייקט נייטרלי";
@@ -101,24 +123,64 @@ function buildConcepts(objectsRows, termsRows) {
     .filter(Boolean);
 }
 
-async function main() {
-  const [objectsRes, termsRes] = await Promise.all([
-    fetch(buildCsvUrl(SPREADSHEET_ID, TABS.objects.gid)),
-    fetch(buildCsvUrl(SPREADSHEET_ID, TABS.terms.gid)),
-  ]);
-
-  if (!objectsRes.ok || !termsRes.ok) {
-    console.error("Fetch failed:", objectsRes.status, termsRes.status);
-    process.exit(1);
+/** Sheet headers use spaces; app CSV uses underscores + פרסור_שנים. */
+function writeTermYearsCsv(rows) {
+  const lines = [
+    "מזהה_קבוצה,שם_קבוצה,מזהה_מונח,שם_מונח,שנת_התחלה,שנת_סיום,פרסור_שנים",
+  ];
+  for (const row of rows) {
+    const id = (row["מזהה מונח"] || "").trim();
+    const start = (row["שנת התחלה"] || "").trim();
+    const end = (row["שנת סיום"] || "").trim();
+    if (!id || !start || !end) continue;
+    lines.push(
+      toCsvLine([
+        (row["מזהה קבוצה"] || "").trim(),
+        (row["שם קבוצה"] || "").trim(),
+        id,
+        (row["שם מונח"] || "").trim(),
+        start,
+        end,
+        "כן",
+      ])
+    );
   }
+  fs.writeFileSync(OUT_YEARS, lines.join("\n") + "\n", "utf8");
+  return lines.length - 1;
+}
 
-  const [objectsCsv, termsCsv] = await Promise.all([
-    objectsRes.text(),
-    termsRes.text(),
+function writeTimelineEventsCsv(rows) {
+  const lines = ["תאריך,שם אירוע"];
+  for (const row of rows) {
+    const date = (row["תאריך"] || "").trim();
+    const title = (row["שם אירוע"] || "").trim();
+    if (!date || !title) continue;
+    lines.push(toCsvLine([date, title]));
+  }
+  fs.writeFileSync(OUT_EVENTS, lines.join("\n") + "\n", "utf8");
+  return lines.length - 1;
+}
+
+async function fetchTab(tab) {
+  const res = await fetch(buildCsvUrl(SPREADSHEET_ID, tab.gid));
+  if (!res.ok) {
+    throw new Error(`Fetch failed for ${tab.description} (gid ${tab.gid}): ${res.status}`);
+  }
+  return res.text();
+}
+
+async function main() {
+  const [objectsCsv, termsCsv, yearsCsv, eventsCsv] = await Promise.all([
+    fetchTab(TABS.objects),
+    fetchTab(TABS.terms),
+    fetchTab(TABS.termYears),
+    fetchTab(TABS.timelineEvents),
   ]);
 
   const objectsRows = rowsToObjects(parseCsv(objectsCsv));
   const termsRows = rowsToObjects(parseCsv(termsCsv));
+  const yearRows = rowsToObjects(parseCsv(yearsCsv));
+  const eventRows = rowsToObjects(parseCsv(eventsCsv));
   const concepts = buildConcepts(objectsRows, termsRows);
 
   const output = {
@@ -127,7 +189,7 @@ async function main() {
       spreadsheetId: SPREADSHEET_ID,
       tabs: TABS,
       notes:
-        "עדכן קובץ זה כשהגיליונות משתנים, או הרץ: node sync-sheet.js",
+        "עדכן קבצים אלה כשהגיליונות משתנים, או הרץ: node scripts/sync-sheet.js",
     },
     concepts,
     sheets: {
@@ -136,10 +198,14 @@ async function main() {
     },
   };
 
-  fs.writeFileSync(OUT_PATH, JSON.stringify(output, null, 2) + "\n", "utf8");
+  fs.writeFileSync(OUT_SHEET, JSON.stringify(output, null, 2) + "\n", "utf8");
+  const yearCount = writeTermYearsCsv(yearRows);
+  const eventCount = writeTimelineEventsCsv(eventRows);
 
   const termCount = concepts.reduce((n, c) => n + c.terms.length, 0);
-  console.log(`Synced ${concepts.length} objects, ${termCount} terms -> ${OUT_PATH}`);
+  console.log(`Synced ${concepts.length} objects, ${termCount} terms -> ${OUT_SHEET}`);
+  console.log(`Synced ${yearCount} term-year ranges -> ${OUT_YEARS}`);
+  console.log(`Synced ${eventCount} timeline events -> ${OUT_EVENTS}`);
 }
 
 main().catch((err) => {

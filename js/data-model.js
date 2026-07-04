@@ -389,10 +389,26 @@ const TERM_EXTRA_DEFINITION_PHRASES = {
 /**
  * When a multi-word catalog term inherits a shorter keyword row (e.g. הרג אזרחים ← row הרג),
  * keep only phrases that carry the full compound — not the bare prefix alone.
+ * Bare שטח/בשטח/… are generic “area”, not the political term השטחים.
  */
 function filterKeywordPhrasesForTerm(term, keywordRow, phrases) {
   const termName = (term.name || "").trim();
   const rowKeyword = (keywordRow["מילת_מפתח"] || "").trim();
+
+  if (termName === "השטחים") {
+    phrases = phrases.filter((phrase) => (phrase || "").includes("שטחים"));
+  }
+
+  if (termName === "יישובים") {
+    const territoryRe =
+      /(?:יהודה\s+ו(?:ש(?:ומרון|מרון))|גדה(?:\s+המערבית)?|שטח(?:י)?ם|(?:מ)?עבר\s+ל(?:קו\s+)?(?:ה)?ירוק|יו"ש|התנחל(?:ות|ויות))/;
+    phrases = phrases.filter((phrase) => {
+      const p = (phrase || "").trim();
+      if (p === termName || !p.includes(" ")) return false;
+      return territoryRe.test(p);
+    });
+  }
+
   if (!termName.includes(" ") || rowKeyword === termName) return phrases;
 
   const suffix = termName.slice(rowKeyword.length).trim();

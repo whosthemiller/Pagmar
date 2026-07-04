@@ -217,6 +217,49 @@ function isSegrBlockadeContext(text, start, end) {
   return !isSegrFramingVerbWord(word);
 }
 
+/** Bare יישוב/יישובים/… — homograph; only West Bank / occupied-territory senses link as the term. */
+const YISHUV_HOMOGRAPH_PHRASES = new Set([
+  "יישוב",
+  "היישוב",
+  "היישובים",
+  "יישובים",
+  "ביישוב",
+  "ביישובים",
+  "ויישוב",
+  "ויישובים",
+  "וביישובים",
+  "ליישובים",
+  "מיישוב",
+  "מיישובים",
+  "כיישוב",
+]);
+
+const YISHUVIM_SETTLEMENT_TERRITORY_RE =
+  /(?:יהודה\s+ו(?:ש(?:ומרון|מרון))|(?:^|[\s,.״"«»])-?(?:ב|בה|וב|מ|מן|ל)?(?:ה)?(?:גדה(?:\s+המערבית)?|שטח(?:י)?ם)|(?:מ)?עבר\s+ל(?:קו\s+)?(?:ה)?ירוק|יו"ש|(?:^|[\s])קו\s+(?:ה)?ירוק|(?:^|[\s])(?:ה)?התנחל(?:ות|ויות))/;
+
+function isYishuvHomographPhrase(phrase) {
+  return YISHUV_HOMOGRAPH_PHRASES.has((phrase || "").trim());
+}
+
+function isYishuvimSettlementContext(text, start, end) {
+  const word = text.slice(start, end);
+  const after = text.slice(end).trimStart();
+
+  if (/^ה(?:יהודי|ערבי)\b/.test(after)) return false;
+  if (/^אזרח(?:יים|י)?\b/.test(after)) return false;
+  if (/^ה(?:צפון|דרום|ערבי(?:ים|י)?|נגב)\b/.test(after)) return false;
+  if (/^וב(?:קהילות|בתים)\b/.test(after)) return false;
+  if (word === "היישוב" && /^ה(?:יהודי|ערבי)\b/.test(after)) return false;
+
+  const windowBefore = 100;
+  const windowAfter = 60;
+  const context = text.slice(
+    Math.max(0, start - windowBefore),
+    Math.min(text.length, end + windowAfter)
+  );
+  return YISHUVIM_SETTLEMENT_TERRITORY_RE.test(context);
+}
+
 function findOccurrences(text, phrase) {
   if (!phrase || phrase.length < 1) return [];
   const positions = [];
@@ -233,7 +276,8 @@ function findOccurrences(text, phrase) {
       !isMilhamaConstructBeforeTerm(text, idx, end) &&
       (!isMaavarHomographPhrase(phrase) || isMaavarPassagewayContext(text, idx, end)) &&
       (!isSegrHomographPhrase(phrase) || isSegrBlockadeContext(text, idx, end)) &&
-      (!isHargHomographPhrase(phrase) || !isHargCivilianCompoundContext(text, idx, end))
+      (!isHargHomographPhrase(phrase) || !isHargCivilianCompoundContext(text, idx, end)) &&
+      (!isYishuvHomographPhrase(phrase) || isYishuvimSettlementContext(text, idx, end))
     ) {
       positions.push({ start: peelHebrewPrefixes(text, idx), end });
     }

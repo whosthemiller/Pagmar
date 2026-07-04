@@ -82,9 +82,9 @@ function buildNav() {
     <div class="site-nav__grid">
       <a class="site-nav__brand" href="index.html" data-nav="home"><span class="site-nav__label">טרמינולוגיה פוליטית</span></a>
       <div class="site-nav__modes">
-        <a class="site-nav__link site-nav__link--timeline" data-nav="timeline" href="index.html"><span class="site-nav__label">ציר זמן</span><span class="site-nav__sep" aria-hidden="true">, </span></a>
+        <a class="site-nav__link site-nav__link--index" data-nav="index" href="index.html"><span class="site-nav__label">א־ב</span><span class="site-nav__sep" aria-hidden="true">, </span></a>
         <a class="site-nav__link site-nav__link--tags" data-nav="tags" href="index.html"><span class="site-nav__label">תגיות</span><span class="site-nav__sep" aria-hidden="true">, </span></a>
-        <a class="site-nav__link site-nav__link--index" data-nav="index" href="index.html"><span class="site-nav__label">א־ב</span></a>
+        <a class="site-nav__link site-nav__link--timeline" data-nav="timeline" href="index.html"><span class="site-nav__label">ציר זמן</span></a>
       </div>
       <a class="site-nav__link site-nav__about" data-nav="about" href="index.html"><span class="site-nav__label" data-letter-shuffle-underline="off">אודות</span></a>
     </div>

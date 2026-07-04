@@ -453,9 +453,33 @@ function isMilhamaOccurrenceContext(text, start, end) {
   return !isMilhamaConstructBeforeTerm(text, start, end);
 }
 
+const YISHUVIM_SETTLEMENT_TERRITORY_RE =
+  /(?:יהודה\s+ו(?:ש(?:ומרון|מרון))|(?:^|[\s,.״"«»])-?(?:ב|בה|וב|מ|מן|ל)?(?:ה)?(?:גדה(?:\s+המערבית)?|שטח(?:י)?ם)|(?:מ)?עבר\s+ל(?:קו\s+)?(?:ה)?ירוק|יו"ש|(?:^|[\s])קו\s+(?:ה)?ירוק|(?:^|[\s])(?:ה)?התנחל(?:ות|ויות))/;
+
+/** Bare יישוב/יישובים — only West Bank / occupied-territory senses count as the term. */
+function isYishuvimOccurrenceContext(text, start, end) {
+  const word = text.slice(start, end);
+  const after = text.slice(end).trimStart();
+
+  if (/^ה(?:יהודי|ערבי)\b/.test(after)) return false;
+  if (/^אזרח(?:יים|י)?\b/.test(after)) return false;
+  if (/^ה(?:צפון|דרום|ערבי(?:ים|י)?|נגב)\b/.test(after)) return false;
+  if (/^וב(?:קהילות|בתים)\b/.test(after)) return false;
+  if (word === "היישוב" && /^ה(?:יהודי|ערבי)\b/.test(after)) return false;
+
+  const windowBefore = 100;
+  const windowAfter = 60;
+  const context = text.slice(
+    Math.max(0, start - windowBefore),
+    Math.min(text.length, end + windowAfter)
+  );
+  return YISHUVIM_SETTLEMENT_TERRITORY_RE.test(context);
+}
+
 const TERM_OCCURRENCE_FILTERS = new Map([
   ["מעבר", isMaavarPassagewayContext],
   ["מלחמה", isMilhamaOccurrenceContext],
+  ["יישוב", isYishuvimOccurrenceContext],
 ]);
 
 function getTermOccurrenceFilter(keyword) {
