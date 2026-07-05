@@ -254,11 +254,12 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     return true;
   }
 
-  function handleFastWheel(deltaY) {
+  function handleFastWheel(deltaY, { skipCooldown = false } = {}) {
     const now = performance.now();
     const direction = Math.sign(deltaY) || 1;
 
     if (
+      !skipCooldown &&
       now - lastFastWheelAt < cfg.yearFastScrollCooldownMs &&
       direction === lastFastDirection
     ) {
@@ -273,6 +274,34 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     lastFastWheelAt = now;
     lastFastDirection = direction;
     lastWheelAt = now;
+  }
+
+  /**
+   * Physical mouse wheel — macOS can emit tiny pixel `deltaY` while keeping
+   * legacy `wheelDeltaY` in 120-step notches. Use the legacy signal so each
+   * notch advances discretely instead of falling into sluggish fine scroll.
+   */
+  function handleMouseWheel(wheelLegacyDeltaY) {
+    const absLegacy = Math.abs(wheelLegacyDeltaY);
+    if (absLegacy <= 0) return false;
+
+    const direction = Math.sign(wheelLegacyDeltaY) || 1;
+    const notches = Math.max(1, Math.round(absLegacy / 120));
+
+    cancelYearSnapAnimation();
+    clearTimeout(yearSnapDebounceTimer);
+
+    if (notches === 1) {
+      handleFastWheel(direction * 120, { skipCooldown: true });
+      return true;
+    }
+
+    yearScrollOffset -= notches * direction;
+    applyYearBounds();
+    lastWheelAt = performance.now();
+    notifyChange();
+    scheduleYearSnap();
+    return true;
   }
 
   function handleFineWheel(deltaY) {
@@ -327,8 +356,15 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     yearMomentumFrame = requestAnimationFrame(tick);
   }
 
-  function handleWheel(deltaY) {
+  function handleWheel(
+    deltaY,
+    { isMouseWheel = false, wheelLegacyDeltaY = null } = {}
+  ) {
     pushWheelHistory(deltaY);
+
+    if (isMouseWheel && handleMouseWheel(wheelLegacyDeltaY ?? deltaY)) {
+      return;
+    }
 
     const mode = classifyWheelMode(deltaY, wheelHistory, peakMarker, cfg);
     if (mode === "fast") {

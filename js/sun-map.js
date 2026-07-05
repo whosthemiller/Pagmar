@@ -19376,7 +19376,7 @@ function applyArcWheelDelta(
   if (!currentLayout || isFocusActive() || isTermNavigating()) return false;
 
   if (isOverviewTimelineMode() && yearScroll) {
-    yearScroll.handleWheel(deltaY);
+    yearScroll.handleWheel(deltaY, { isMouseWheel, wheelLegacyDeltaY });
     return true;
   }
 
