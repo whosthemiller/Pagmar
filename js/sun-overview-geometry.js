@@ -531,6 +531,7 @@ export function createOverviewGeometry({
         angleBottom: Math.PI - alpha,
         angleCenter: Math.PI,
       },
+    };
     return endpoints;
   }
 
