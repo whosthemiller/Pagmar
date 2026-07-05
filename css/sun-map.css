@@ -3135,6 +3135,7 @@ line.letter-shuffle-underline {
   width: calc(7 * var(--grid-column-width) + 6 * var(--grid-gutter));
   max-width: 100%;
   height: auto;
+  aspect-ratio: 1701.08 / 258.42398;
   align-self: flex-start;
 }
 

@@ -270,7 +270,9 @@ function buildDom() {
   logo.src = "assets/Bezalel_academy_of_arts_and_design_new_logo.svg";
   logo.alt = "בצלאל אקדמיה לאמנות ועיצוב, ירושלים";
   logo.decoding = "async";
-  logo.addEventListener("load", alignAboutLogo);
+  logo.addEventListener("load", () => {
+    if (isVisible) alignAboutLogo();
+  });
   sideWrap.appendChild(logo);
 
   grid.appendChild(sideWrap);
@@ -372,6 +374,26 @@ function drawPixelatedLogo(ctx, img, destW, destH, factor) {
   ctx.drawImage(off, 0, 0, lowW, lowH, 0, 0, destW, destH);
 }
 
+function positionLogoCanvas(logo, canvas, parent) {
+  const parentRect = parent.getBoundingClientRect();
+  const logoRect = logo.getBoundingClientRect();
+  if (logoRect.width < 1 || logoRect.height < 1) return false;
+
+  canvas.style.left = `${logoRect.left - parentRect.left}px`;
+  canvas.style.top = `${logoRect.top - parentRect.top}px`;
+  canvas.style.width = `${logoRect.width}px`;
+  canvas.style.height = `${logoRect.height}px`;
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const nextWidth = Math.round(logoRect.width * dpr);
+  const nextHeight = Math.round(logoRect.height * dpr);
+  if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+  }
+  return true;
+}
+
 function clearLogoReveal() {
   logoRevealPending = false;
   if (logoRevealFrame) {
@@ -392,23 +414,14 @@ function startLogoReveal(logo) {
   const parent = logo.parentElement;
   if (!(parent instanceof HTMLElement)) return;
 
-  const parentRect = parent.getBoundingClientRect();
-  const logoRect = logo.getBoundingClientRect();
-  if (logoRect.width < 1 || logoRect.height < 1) return;
   if (!logo.complete || logo.naturalWidth < 1) return;
 
   clearLogoReveal();
 
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const canvas = document.createElement("canvas");
   canvas.className = "sun-about__logo-canvas";
   canvas.setAttribute("aria-hidden", "true");
-  canvas.width = Math.round(logoRect.width * dpr);
-  canvas.height = Math.round(logoRect.height * dpr);
-  canvas.style.left = `${logoRect.left - parentRect.left}px`;
-  canvas.style.top = `${logoRect.top - parentRect.top}px`;
-  canvas.style.width = `${logoRect.width}px`;
-  canvas.style.height = `${logoRect.height}px`;
+  if (!positionLogoCanvas(logo, canvas, parent)) return;
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -420,6 +433,9 @@ function startLogoReveal(logo) {
   const start = performance.now();
   const frame = (now) => {
     if (!isVisible || logoCanvas !== canvas) return;
+    alignAboutLogo();
+    if (!positionLogoCanvas(logo, canvas, parent)) return;
+
     const t = Math.min(1, (now - start) / LOGO_REVEAL.durationMs);
     const eased = t * (2 - t);
     const factor = Math.max(1, Math.round(1 + (LOGO_REVEAL.maxFactor - 1) * (1 - eased)));
@@ -427,6 +443,8 @@ function startLogoReveal(logo) {
     if (t < 1) {
       logoRevealFrame = requestAnimationFrame(frame);
     } else {
+      alignAboutLogo();
+      positionLogoCanvas(logo, canvas, parent);
       logoRevealFrame = 0;
       clearLogoReveal();
     }
@@ -448,7 +466,7 @@ function playLogoPixelReveal() {
   const begin = () => {
     if (!isVisible || !logoRevealPending) return;
     logoRevealPending = false;
-    requestAnimationFrame(() => startLogoReveal(logo));
+    startLogoReveal(logo);
   };
 
   if (logo.complete && logo.naturalWidth > 0) {
@@ -470,10 +488,20 @@ function alignAboutLogo() {
   }
 
   logo.style.marginTop = "0px";
-  const logoTop = logo.getBoundingClientRect().top;
+  const naturalLogoTop = logo.getBoundingClientRect().top;
   const lastParagraphTop = lastParagraph.getBoundingClientRect().top;
-  const delta = lastParagraphTop - logoTop;
-  logo.style.marginTop = `${Math.max(0, Math.round(delta))}px`;
+  const targetMargin = Math.max(0, Math.round(lastParagraphTop - naturalLogoTop));
+  const nextMargin = `${targetMargin}px`;
+  if (logo.style.marginTop !== nextMargin) {
+    logo.style.marginTop = nextMargin;
+  }
+
+  if (logoCanvas instanceof HTMLCanvasElement) {
+    const parent = logo.parentElement;
+    if (parent instanceof HTMLElement) {
+      positionLogoCanvas(logo, logoCanvas, parent);
+    }
+  }
 }
 
 function setVisibleState(visible) {
@@ -481,8 +509,6 @@ function setVisibleState(visible) {
     isVisible = false;
     return;
   }
-
-  rootEl.hidden = !visible;
 
   if (viewportEl) {
     viewportEl.classList.toggle("is-about-active", visible);
@@ -494,12 +520,20 @@ function setVisibleState(visible) {
   if (visible) {
     syncGridCssVars(viewportEl);
     rootEl.scrollTop = 0;
+    rootEl.hidden = false;
+    rootEl.style.visibility = "hidden";
+
     playAboutEnterScramble();
+    alignAboutLogo();
+
     requestAnimationFrame(() => {
       alignAboutLogo();
       playLogoPixelReveal();
+      rootEl.style.visibility = "";
     });
   } else {
+    rootEl.hidden = true;
+    rootEl.style.visibility = "";
     isSelectingCensor = false;
     clearCensor();
     clearLogoReveal();
