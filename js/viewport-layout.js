@@ -13,6 +13,20 @@ export const MY_MACBOOK_VIEWPORT = {
 const MY_MACBOOK_VIEWPORT_TOLERANCE = 2;
 /** Home wheel + nav bar font trim on the personal MacBook only (px). */
 export const MY_MACBOOK_HOME_TYPOGRAPHY_TRIM_PX = 2;
+/** Timeline ring radius multiplier on the personal MacBook only (1 = unchanged). */
+export const MY_MACBOOK_TIMELINE_RADIUS_SCALE = 0.98;
+
+/** "מחשב ההגשה" — submission / presentation viewport. */
+export const SUBMISSION_VIEWPORT = {
+  width: 2048,
+  height: 1152,
+};
+
+const SUBMISSION_VIEWPORT_TOLERANCE = 2;
+/** Timeline ring radius multiplier on the submission computer only (1 = unchanged). */
+export const SUBMISSION_TIMELINE_RADIUS_SCALE = 1.03;
+/** Timeline ring label scale on the submission computer only (1 = unchanged). */
+export const SUBMISSION_TIMELINE_TYPOGRAPHY_SCALE = 1.03;
 
 export function isMyMacBookViewport(
   viewportWidth = typeof window !== "undefined" ? window.innerWidth : MY_MACBOOK_VIEWPORT.width,
@@ -31,6 +45,48 @@ export function getMyMacBookHomeTypographyTrimPx(
   return isMyMacBookViewport(viewportWidth, viewportHeight)
     ? MY_MACBOOK_HOME_TYPOGRAPHY_TRIM_PX
     : 0;
+}
+
+export function getMyMacBookTimelineRadiusScale(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : MY_MACBOOK_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : MY_MACBOOK_VIEWPORT.height
+) {
+  return isMyMacBookViewport(viewportWidth, viewportHeight)
+    ? MY_MACBOOK_TIMELINE_RADIUS_SCALE
+    : 1;
+}
+
+export function isSubmissionViewport(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : SUBMISSION_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : SUBMISSION_VIEWPORT.height
+) {
+  return (
+    Math.abs(viewportWidth - SUBMISSION_VIEWPORT.width) <= SUBMISSION_VIEWPORT_TOLERANCE &&
+    Math.abs(viewportHeight - SUBMISSION_VIEWPORT.height) <= SUBMISSION_VIEWPORT_TOLERANCE
+  );
+}
+
+/** Per-target timeline ring radius — MacBook slightly smaller, submission slightly larger. */
+export function getTimelineRadiusViewportScale(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : VIEWPORT_DESIGN.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : VIEWPORT_DESIGN.height
+) {
+  if (isMyMacBookViewport(viewportWidth, viewportHeight)) {
+    return MY_MACBOOK_TIMELINE_RADIUS_SCALE;
+  }
+  if (isSubmissionViewport(viewportWidth, viewportHeight)) {
+    return SUBMISSION_TIMELINE_RADIUS_SCALE;
+  }
+  return 1;
+}
+
+export function getSubmissionTimelineTypographyScale(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : SUBMISSION_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : SUBMISSION_VIEWPORT.height
+) {
+  return isSubmissionViewport(viewportWidth, viewportHeight)
+    ? SUBMISSION_TIMELINE_TYPOGRAPHY_SCALE
+    : 1;
 }
 
 /** Scaled home-wheel term size with the MacBook-only trim applied. */

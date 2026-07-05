@@ -161,6 +161,8 @@ import {
   getHomeSunTermFontSizePx,
   getMapTypographyScale,
   getMyMacBookHomeTypographyTrimPx,
+  getSubmissionTimelineTypographyScale,
+  getTimelineRadiusViewportScale,
   getOverviewTypographyScale,
   getResponsiveGridLayout,
   scaleLayoutPx,
@@ -1108,10 +1110,20 @@ const overviewGeo = createOverviewGeometry({
         : LAYOUT.overviewCyOffset;
     return getOverviewOffsetPx(base, viewportHeight);
   },
-  getOverviewRadiusScale: () =>
-    overviewSubMode === "timeline"
-      ? LAYOUT.timelineRadiusScale
-      : LAYOUT.overviewRadiusScale,
+  getOverviewRadiusScale: () => {
+    const base =
+      overviewSubMode === "timeline"
+        ? LAYOUT.timelineRadiusScale
+        : LAYOUT.overviewRadiusScale;
+    if (overviewSubMode !== "timeline") return base;
+    return (
+      base *
+      getTimelineRadiusViewportScale(
+        getLiveViewportWidth(),
+        getLiveViewportHeight()
+      )
+    );
+  },
   getOverviewRotationLocked: () => overviewSubMode === "timeline",
   // The timeline ring is sized once against the full term set (the densest
   // possible layout) so the font/radius stays uniform across years. If the fit
@@ -1120,8 +1132,14 @@ const overviewGeo = createOverviewGeometry({
   getOverviewFitKey: () => overviewSubMode,
   getOverviewTermVisible: () => true,
   getTypographyScale: (viewportWidth) => getMapTypographyScale(viewportWidth),
-  getOverviewTypographyScale: (viewportWidth, viewportHeight) =>
-    getOverviewTypographyScale(viewportWidth, viewportHeight),
+  getOverviewTypographyScale: (viewportWidth, viewportHeight) => {
+    const base = getOverviewTypographyScale(viewportWidth, viewportHeight);
+    if (overviewSubMode !== "timeline") return base;
+    return (
+      base *
+      getSubmissionTimelineTypographyScale(viewportWidth, viewportHeight)
+    );
+  },
 });
 
 const {
@@ -19376,7 +19394,11 @@ function applyArcWheelDelta(
   if (!currentLayout || isFocusActive() || isTermNavigating()) return false;
 
   if (isOverviewTimelineMode() && yearScroll) {
-    yearScroll.handleWheel(deltaY, { isMouseWheel, wheelLegacyDeltaY });
+    yearScroll.handleWheel(deltaY, {
+      isMouseWheel,
+      wheelLegacyDeltaY,
+      discreteWheel: true,
+    });
     return true;
   }
 
