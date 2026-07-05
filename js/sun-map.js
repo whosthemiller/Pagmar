@@ -4956,9 +4956,8 @@ let termPageScrollRevealQueue = [];
 /** Headings and image captions — always fully censored as one block. */
 const PAGE_CENSOR_BLOCK_SELECTORS = [
   ".sun-term-meta__heading",
-  ".sun-term-page__side-heading",
-  ".sun-term-page__label-row-heading",
-  ".sun-term-page__label-nav-trigger",
+  ".sun-term-page__side-heading:not(.sun-term-page__label-row-heading)",
+  ".sun-term-page__label-nav-glyph",
   ".sun-term-page__caption",
   ".sun-term-bleed-caption",
 ];
@@ -4968,7 +4967,9 @@ const PAGE_CENSOR_LINE_SELECTORS = [
   ".sun-term-meta__value",
   ".sun-term-page__definition",
   ".sun-term-page__side-text",
+  ".sun-term-page__label-row-heading",
   ".sun-term-page__label-row-text",
+  ".sun-term-page__label-nav-text",
   ".sun-term-page__label-nav-panel-text",
 ];
 
@@ -5007,8 +5008,10 @@ const CAPTION_CENSOR_LINE_HEIGHT = 16;
 const CAPTION_CENSOR_BAR_HEIGHT = 14;
 const CAPTION_CENSOR_TOP_OFFSET = -1;
 const CENSOR_BAR_TOP_OFFSET = -3;
-/** Label-nav headings (משתמשים / נפוץ / בשימוש + ↙) — sit slightly lower than default block censor. */
+/** Label-nav headings (משתמשים / נפוץ / תקופת שימוש) + panel copy — shared line censor. */
 const LABEL_NAV_CENSOR_TOP_OFFSET = 2;
+/** Label-row heading + value on the same baseline (scroll-content משתמשים / נפוץ / תקופת שימוש). */
+const LABEL_ROW_CENSOR_TOP_OFFSET = CENSOR_BAR_TOP_OFFSET;
 /** Word censor on definition: 40px bar on 32px text — shared by arc terms + inline mentions. */
 const MENTION_CENSOR_HEIGHT_RATIO = 40 / LAYOUT.fontSize;
 const TERM_CENSOR_BAR_HEIGHT = LAYOUT.fontSize * MENTION_CENSOR_HEIGHT_RATIO;
@@ -5212,13 +5215,24 @@ function isDefinitionCensorElement(el) {
 }
 
 function isSideTextCensorElement(el) {
-  return el?.classList.contains("sun-term-page__side-text");
+  return (
+    el?.classList.contains("sun-term-page__side-text") &&
+    !el?.classList.contains("sun-term-page__label-row-text")
+  );
+}
+
+function isLabelRowCensorElement(el) {
+  return (
+    el?.classList.contains("sun-term-page__label-row-heading") ||
+    el?.classList.contains("sun-term-page__label-row-text")
+  );
 }
 
 function isLabelNavCensorElement(el) {
   return (
-    el?.classList.contains("sun-term-page__label-nav-trigger") ||
-    el?.classList.contains("sun-term-page__label-nav-panel-text")
+    el?.classList.contains("sun-term-page__label-nav-text") ||
+    el?.classList.contains("sun-term-page__label-nav-panel-text") ||
+    el?.classList.contains("sun-term-page__label-nav-glyph")
   );
 }
 
@@ -5228,6 +5242,9 @@ function getCensorBarTopOffset(el) {
   }
   if (isDefinitionCensorElement(el)) {
     return DEFINITION_CENSOR_TOP_OFFSET;
+  }
+  if (isLabelRowCensorElement(el)) {
+    return LABEL_ROW_CENSOR_TOP_OFFSET;
   }
   if (isSideTextCensorElement(el)) {
     return SIDE_TEXT_CENSOR_TOP_OFFSET;
@@ -5310,7 +5327,9 @@ function getUniformCensorLineSpan(group, firstAnchorTop, baseBarTop, pitch, barH
 }
 
 function isTextNodeRevealedForTerm(node, termId) {
-  if (!termId || !node) return false;
+  if (!node) return false;
+  if (node.parentElement?.closest?.(".sun-def-mention--external")) return true;
+  if (!termId) return false;
   const mention = node.parentElement?.closest?.(".sun-def-mention--same-object");
   return mention?.dataset.termId === termId;
 }
@@ -11383,6 +11402,11 @@ function updateTermPageScrollDetailRow(
 
   if (!layoutOnly) {
     setAnnotatedTermText(textEl, trimmed, term);
+  } else {
+    const annotated = renderAnnotatedTermText(trimmed, term);
+    if (annotated.includes("sun-def-mention") && !textEl.querySelector(".sun-def-mention")) {
+      setAnnotatedTermText(textEl, trimmed, term);
+    }
   }
 
   headingEl.style.left = `${headingSpan.left}px`;
