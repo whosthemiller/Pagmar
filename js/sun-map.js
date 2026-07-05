@@ -162,6 +162,8 @@ import {
   getMapTypographyScale,
   getMyMacBookHomeTypographyTrimPx,
   getSubmissionTimelineTypographyScale,
+  getSubmissionTimelineRadiusMinFrac,
+  getSubmissionTimelineRadiusFinalScale,
   getTimelineRadiusViewportScale,
   getOverviewTypographyScale,
   getResponsiveGridLayout,
@@ -1110,20 +1112,32 @@ const overviewGeo = createOverviewGeometry({
         : LAYOUT.overviewCyOffset;
     return getOverviewOffsetPx(base, viewportHeight);
   },
-  getOverviewRadiusScale: () => {
-    const base =
-      overviewSubMode === "timeline"
-        ? LAYOUT.timelineRadiusScale
-        : LAYOUT.overviewRadiusScale;
-    if (overviewSubMode !== "timeline") return base;
-    return (
-      base *
-      getTimelineRadiusViewportScale(
-        getLiveViewportWidth(),
-        getLiveViewportHeight()
-      )
-    );
-  },
+  getOverviewRadiusScale: () =>
+    overviewSubMode === "timeline"
+      ? LAYOUT.timelineRadiusScale
+      : LAYOUT.overviewRadiusScale,
+  // Applied after label-fit so the per-target knob always moves the drawn ring.
+  getOverviewRadiusPostFitScale: () =>
+    overviewSubMode === "timeline"
+      ? getTimelineRadiusViewportScale(
+          getLiveViewportWidth(),
+          getLiveViewportHeight()
+        )
+      : 1,
+  getSubmissionTimelineRadiusMinFrac: () =>
+    overviewSubMode === "timeline"
+      ? getSubmissionTimelineRadiusMinFrac(
+          getLiveViewportWidth(),
+          getLiveViewportHeight()
+        )
+      : null,
+  getSubmissionTimelineRadiusFinalScale: () =>
+    overviewSubMode === "timeline"
+      ? getSubmissionTimelineRadiusFinalScale(
+          getLiveViewportWidth(),
+          getLiveViewportHeight()
+        )
+      : 1,
   getOverviewRotationLocked: () => overviewSubMode === "timeline",
   // The timeline ring is sized once against the full term set (the densest
   // possible layout) so the font/radius stays uniform across years. If the fit

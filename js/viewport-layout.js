@@ -22,9 +22,14 @@ export const SUBMISSION_VIEWPORT = {
   height: 1152,
 };
 
-const SUBMISSION_VIEWPORT_TOLERANCE = 2;
+const SUBMISSION_VIEWPORT_TOLERANCE = { width: 48, height: 96 };
 /** Timeline ring radius multiplier on the submission computer only (1 = unchanged). */
-export const SUBMISSION_TIMELINE_RADIUS_SCALE = 1.03;
+export const SUBMISSION_TIMELINE_RADIUS_SCALE = 0.84;
+/**
+ * On the submission rig, never draw the timeline smaller than this fraction of
+ * the theoretical max radius — the label-fit pass over-shrinks on large screens.
+ */
+export const SUBMISSION_TIMELINE_RADIUS_MIN_FRAC = 0.55;
 /** Timeline ring label scale on the submission computer only (1 = unchanged). */
 export const SUBMISSION_TIMELINE_TYPOGRAPHY_SCALE = 1.03;
 
@@ -60,10 +65,25 @@ export function isSubmissionViewport(
   viewportWidth = typeof window !== "undefined" ? window.innerWidth : SUBMISSION_VIEWPORT.width,
   viewportHeight = typeof window !== "undefined" ? window.innerHeight : SUBMISSION_VIEWPORT.height
 ) {
-  return (
-    Math.abs(viewportWidth - SUBMISSION_VIEWPORT.width) <= SUBMISSION_VIEWPORT_TOLERANCE &&
-    Math.abs(viewportHeight - SUBMISSION_VIEWPORT.height) <= SUBMISSION_VIEWPORT_TOLERANCE
-  );
+  const widthDelta = Math.abs(viewportWidth - SUBMISSION_VIEWPORT.width);
+  const heightDelta = Math.abs(viewportHeight - SUBMISSION_VIEWPORT.height);
+  const exactish =
+    widthDelta <= SUBMISSION_VIEWPORT_TOLERANCE.width &&
+    heightDelta <= SUBMISSION_VIEWPORT_TOLERANCE.height;
+  const targetAspect = SUBMISSION_VIEWPORT.width / SUBMISSION_VIEWPORT.height;
+  const aspect = viewportWidth / Math.max(1, viewportHeight);
+  const aspectMatch = Math.abs(aspect - targetAspect) < 0.04;
+  const presentationRig =
+    viewportWidth >= 1900 &&
+    viewportWidth <= 2100 &&
+    viewportHeight >= 1000 &&
+    viewportHeight <= 1250 &&
+    aspectMatch;
+  const screenRig =
+    typeof screen !== "undefined" &&
+    Math.abs(screen.width - SUBMISSION_VIEWPORT.width) <= 64 &&
+    Math.abs(screen.height - SUBMISSION_VIEWPORT.height) <= 96;
+  return exactish || presentationRig || screenRig;
 }
 
 /** Per-target timeline ring radius — MacBook slightly smaller, submission slightly larger. */
@@ -75,9 +95,18 @@ export function getTimelineRadiusViewportScale(
     return MY_MACBOOK_TIMELINE_RADIUS_SCALE;
   }
   if (isSubmissionViewport(viewportWidth, viewportHeight)) {
-    return SUBMISSION_TIMELINE_RADIUS_SCALE;
+    return 1;
   }
   return 1;
+}
+
+export function getSubmissionTimelineRadiusFinalScale(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : SUBMISSION_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : SUBMISSION_VIEWPORT.height
+) {
+  return isSubmissionViewport(viewportWidth, viewportHeight)
+    ? SUBMISSION_TIMELINE_RADIUS_SCALE
+    : 1;
 }
 
 export function getSubmissionTimelineTypographyScale(
@@ -87,6 +116,15 @@ export function getSubmissionTimelineTypographyScale(
   return isSubmissionViewport(viewportWidth, viewportHeight)
     ? SUBMISSION_TIMELINE_TYPOGRAPHY_SCALE
     : 1;
+}
+
+export function getSubmissionTimelineRadiusMinFrac(
+  viewportWidth = typeof window !== "undefined" ? window.innerWidth : SUBMISSION_VIEWPORT.width,
+  viewportHeight = typeof window !== "undefined" ? window.innerHeight : SUBMISSION_VIEWPORT.height
+) {
+  return isSubmissionViewport(viewportWidth, viewportHeight)
+    ? SUBMISSION_TIMELINE_RADIUS_MIN_FRAC
+    : null;
 }
 
 /** Scaled home-wheel term size with the MacBook-only trim applied. */

@@ -95,6 +95,9 @@ export function createOverviewGeometry({
   getOverviewCxOffset,
   getOverviewCyOffset,
   getOverviewRadiusScale,
+  getOverviewRadiusPostFitScale,
+  getSubmissionTimelineRadiusMinFrac,
+  getSubmissionTimelineRadiusFinalScale,
   getOverviewRotationLocked,
   getOverviewFitKey,
   getOverviewTermVisible,
@@ -107,6 +110,12 @@ export function createOverviewGeometry({
     getOverviewCyOffset?.() ?? layout.overviewCyOffset ?? 0;
   const resolveOverviewRadiusScale = () =>
     getOverviewRadiusScale?.() ?? layout.overviewRadiusScale ?? 1;
+  const resolveOverviewRadiusPostFitScale = () =>
+    getOverviewRadiusPostFitScale?.() ?? 1;
+  const resolveSubmissionTimelineRadiusMinFrac = () =>
+    getSubmissionTimelineRadiusMinFrac?.() ?? null;
+  const resolveSubmissionTimelineRadiusFinalScale = () =>
+    getSubmissionTimelineRadiusFinalScale?.() ?? 1;
   // When the overview can't be spun freely (e.g. the timeline, where scrolling
   // changes the year instead of rotating the ring), the fit only needs to
   // clear the single rotation that's actually shown — not every possible one.
@@ -461,7 +470,49 @@ export function createOverviewGeometry({
           ? 0
           : Math.acos(Math.max(-1, Math.min(1, cosRight)));
 
-    return {
+    const overviewFit = computeOverviewFit(viewportWidth, viewportHeight);
+    const postFitScale = resolveOverviewRadiusPostFitScale();
+    let overviewRadius = overviewFit.radius * postFitScale;
+    const submissionMinFrac = resolveSubmissionTimelineRadiusMinFrac();
+    if (submissionMinFrac != null) {
+      const minDim = Math.min(viewportWidth, viewportHeight);
+      const lockedRadiusScale = resolveOverviewRotationLocked()
+        ? clampScalar(
+            1 + (minDim / DESIGN_MIN_DIM - 1) * LOCKED_RING_RADIUS_SCALE_GAIN,
+            1,
+            LOCKED_RING_RADIUS_SCALE_MAX
+          )
+        : 1;
+      const theoreticalMax =
+        minDim *
+        layout.overviewRadiusFactor *
+        resolveOverviewRadiusScale() *
+        lockedRadiusScale;
+      overviewRadius = Math.max(overviewRadius, theoreticalMax * submissionMinFrac);
+      const submissionFinalScale = resolveSubmissionTimelineRadiusFinalScale();
+      if (submissionFinalScale !== 1) {
+        overviewRadius *= submissionFinalScale;
+      }
+    }
+
+    let contentScale = overviewFit.contentScale;
+    if (
+      submissionMinFrac != null &&
+      overviewRadius > overviewFit.radius + 0.5
+    ) {
+      for (
+        let cs = 1;
+        cs >= layout.overviewMinContentScale;
+        cs = Math.round((cs - 0.03) * 100) / 100
+      ) {
+        if (overviewContentFits(viewportWidth, viewportHeight, overviewRadius, cs)) {
+          contentScale = cs;
+          break;
+        }
+      }
+    }
+
+    const endpoints = {
       normal: {
         cx: normalCx,
         cy,
@@ -473,12 +524,14 @@ export function createOverviewGeometry({
       overview: {
         cx: viewportWidth / 2 + resolveOverviewCxOffset(),
         cy: cy + resolveOverviewCyOffset(),
-        ...computeOverviewFit(viewportWidth, viewportHeight),
+        ...overviewFit,
+        radius: overviewRadius,
+        contentScale,
         angleTop: Math.PI + alpha,
         angleBottom: Math.PI - alpha,
         angleCenter: Math.PI,
       },
-    };
+    return endpoints;
   }
 
   /** Arc segment visible along the right edge; lerps to centered full circle in overview. */
