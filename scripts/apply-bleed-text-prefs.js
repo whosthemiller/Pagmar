@@ -31,14 +31,27 @@ function imageStem(url) {
   return base.replace(/\.[^.]+$/, "").trim();
 }
 
+function imageUrlKey(url) {
+  if (!url) return "";
+  const decoded = decodeURIComponent(url);
+  const assetsIdx = decoded.indexOf("assets/");
+  return assetsIdx >= 0 ? decoded.slice(assetsIdx) : decoded;
+}
+
+function imageUrlKeyWithoutExt(url) {
+  return imageUrlKey(url).replace(/\.(jpe?g|png|gif|webp)$/i, "");
+}
+
 function findTermImageIndex(images, imageUrl) {
-  const stem = imageStem(imageUrl);
-  const webpUrl = imageUrl.replace(/\.(jpe?g|png|gif)$/i, ".webp");
-  return images.findIndex((image) => {
-    if (!image?.url) return false;
-    if (image.url === imageUrl || image.url === webpUrl) return true;
-    return imageStem(image.url) === stem;
-  });
+  const targetKey = imageUrlKey(imageUrl);
+  const targetKeyNoExt = imageUrlKeyWithoutExt(imageUrl);
+  const exact = images.findIndex(
+    (image) => image?.url && imageUrlKey(image.url) === targetKey
+  );
+  if (exact >= 0) return exact;
+  return images.findIndex(
+    (image) => image?.url && imageUrlKeyWithoutExt(image.url) === targetKeyNoExt
+  );
 }
 
 function reorderTermImages(termImages, termName, imageUrl) {

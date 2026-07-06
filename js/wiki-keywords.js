@@ -260,6 +260,16 @@ function isYishuvimSettlementContext(text, start, end) {
   return YISHUVIM_SETTLEMENT_TERRITORY_RE.test(context);
 }
 
+/** Bare הכיבוש — homograph; דיני הכיבוש/דיני כיבוש → מונח כיבוש (משפטי), לא הכיבוש. */
+function isHaKibushHomographPhrase(phrase) {
+  return (phrase || "").trim() === "הכיבוש";
+}
+
+function isHaKibushLegalContext(text, start) {
+  const before = text.slice(Math.max(0, start - 6), start);
+  return /דיני\s+$/.test(before);
+}
+
 function findOccurrences(text, phrase) {
   if (!phrase || phrase.length < 1) return [];
   const positions = [];
@@ -277,7 +287,8 @@ function findOccurrences(text, phrase) {
       (!isMaavarHomographPhrase(phrase) || isMaavarPassagewayContext(text, idx, end)) &&
       (!isSegrHomographPhrase(phrase) || isSegrBlockadeContext(text, idx, end)) &&
       (!isHargHomographPhrase(phrase) || !isHargCivilianCompoundContext(text, idx, end)) &&
-      (!isYishuvHomographPhrase(phrase) || isYishuvimSettlementContext(text, idx, end))
+      (!isYishuvHomographPhrase(phrase) || isYishuvimSettlementContext(text, idx, end)) &&
+      (!isHaKibushHomographPhrase(phrase) || !isHaKibushLegalContext(text, idx))
     ) {
       positions.push({ start: peelHebrewPrefixes(text, idx), end });
     }

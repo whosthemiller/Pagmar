@@ -381,23 +381,36 @@ export function buildTermLinks(terms) {
   return buildDiscourseLinks(terms);
 }
 
+/** Catalog terms that never receive in-text auto-links (too ambiguous). */
+const TERM_NAMES_WITHOUT_TEXT_LINKS = new Set(["השטחים"]);
+
+/** Stable IDs for {@link TERM_NAMES_WITHOUT_TEXT_LINKS} (sheet-data). */
+const TERM_IDS_WITHOUT_TEXT_LINKS = new Set(["TERM-007"]);
+
+export function isTermNavigationTargetBlocked(termNameOrId) {
+  const key = (termNameOrId || "").trim();
+  return TERM_NAMES_WITHOUT_TEXT_LINKS.has(key) || TERM_IDS_WITHOUT_TEXT_LINKS.has(key);
+}
+
+function isPhraseWithoutTextLinks(phrase) {
+  return isTermNavigationTargetBlocked(phrase);
+}
+
 /** Bare הרג/ההרג/… → מונח נהרג; הרג אזרחים נשאר ביטוי נפרד. */
 const TERM_EXTRA_DEFINITION_PHRASES = {
   נהרג: ["הרג", "ההרג", "בהרג", "והרג"],
+  "השטחים הכבושים": ["שטחים כבושים", "שטחים הכבושים"],
+  הכיבוש: ["שטחים שנכבשו", "שטחים שנכבש"],
 };
 
 /**
  * When a multi-word catalog term inherits a shorter keyword row (e.g. הרג אזרחים ← row הרג),
  * keep only phrases that carry the full compound — not the bare prefix alone.
- * Bare שטח/בשטח/… are generic “area”, not the political term השטחים.
+ * Bare שטח/בשטח/… are generic “area”, not a political catalog term.
  */
 function filterKeywordPhrasesForTerm(term, keywordRow, phrases) {
   const termName = (term.name || "").trim();
   const rowKeyword = (keywordRow["מילת_מפתח"] || "").trim();
-
-  if (termName === "השטחים") {
-    phrases = phrases.filter((phrase) => (phrase || "").includes("שטחים"));
-  }
 
   if (termName === "יישובים") {
     const territoryRe =
@@ -453,14 +466,18 @@ export function buildWikiTermLinkPatterns(terms) {
   const byPhrase = new Map();
 
   for (const term of terms) {
+    if (TERM_NAMES_WITHOUT_TEXT_LINKS.has((term.name || "").trim())) continue;
+
     const phrases = new Set([(term.name || "").trim()]);
     for (const related of term.relatedNames || []) {
       const name = (related || "").trim();
-      if (name && catalogNames.has(name)) phrases.add(name);
+      if (name && catalogNames.has(name) && !isPhraseWithoutTextLinks(name)) {
+        phrases.add(name);
+      }
     }
 
     for (const phrase of phrases) {
-      if (phrase.length < 2) continue;
+      if (phrase.length < 2 || isPhraseWithoutTextLinks(phrase)) continue;
       const existing = byPhrase.get(phrase);
       if (!existing || term.name === phrase) {
         byPhrase.set(phrase, { phrase, termId: term.id, objectId: term.objectId });
@@ -485,7 +502,7 @@ export function buildDefinitionMentionPatterns(terms, keywordRows = []) {
 
   const addPhrase = (phrase, term) => {
     const p = (phrase || "").trim();
-    if (p.length < 2) return;
+    if (p.length < 2 || isPhraseWithoutTextLinks(p)) return;
     const existing = byPhrase.get(p);
     if (!existing || term.name === p) {
       byPhrase.set(p, { phrase: p, termId: term.id, objectId: term.objectId });
@@ -493,10 +510,14 @@ export function buildDefinitionMentionPatterns(terms, keywordRows = []) {
   };
 
   for (const term of terms) {
+    if (TERM_NAMES_WITHOUT_TEXT_LINKS.has((term.name || "").trim())) continue;
+
     const phrases = new Set([(term.name || "").trim()]);
     for (const related of term.relatedNames || []) {
       const name = (related || "").trim();
-      if (name && catalogNames.has(name)) phrases.add(name);
+      if (name && catalogNames.has(name) && !isPhraseWithoutTextLinks(name)) {
+        phrases.add(name);
+      }
     }
 
     const keywordRow = resolveKeywordRowForTerm(term, keywordRows);
@@ -775,6 +796,11 @@ export function registerPreloadedTermImage(url, img) {
   if (preloadedImageCache.has(url)) return true;
   preloadedImageCache.set(url, img);
   return true;
+}
+
+/** Drop in-memory bitmaps after the image manifest changes (e.g. new build on submission PC). */
+export function clearPreloadedTermImageCache() {
+  preloadedImageCache.clear();
 }
 
 /** Unique image URLs from a term-images map. */

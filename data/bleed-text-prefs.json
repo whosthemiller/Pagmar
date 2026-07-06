@@ -7,7 +7,7 @@
     "0מאלנים": {
       "navText": "auto",
       "titleRowText": "auto",
-      "imageUrl": "assets/img/0שמלאנים/איתמר בם גביר ויואב אליסי ״הצל״ במטה מפלגת עוצמה יהודית .webp"
+      "imageUrl": "assets/img/0שמלאנים/איתמר בן גביר ויואב אליסי ״הצל״ במטה מפלגת עוצמה יהודית .webp"
     },
     "אזור חיץ": {
       "navText": "auto",
@@ -299,7 +299,7 @@
       "titleRowText": "light",
       "imageUrl": "assets/img/מאורעות תרפ״ט/חייל בריטי בחזית מרפאת הדסה, חברון.webp"
     },
-    "מאורעות תרצ״ו–תרצ”ט": {
+    "מאורעות תרצ״ו—תרצ”ט": {
       "navText": "dark",
       "titleRowText": "light",
       "imageUrl": "assets/img/מאורעות תרצ״ו - תרצ״ט/הנודדת של אורד וינגייט.webp"
@@ -337,7 +337,7 @@
     "מחסום": {
       "navText": "light",
       "titleRowText": "auto",
-      "imageUrl": "assets/img/מחסום/חיילים בודקים רכבים באזור שכם.webp"
+      "imageUrl": "assets/img/מחסום/מחסום חיזמא.webp"
     },
     "מלחמה": {
       "navText": "auto",

@@ -1256,12 +1256,12 @@ body,
      positioned ::before). With box-decoration-break: clone every wrapped line
      fragment gets its own band, so a mention that breaks across lines stays
      fully covered. The band height tracks the page-censor line bands
-     (~0.87 * line-height) so a scattered censored word matches the censor bars
+     (~0.95 * line-height) so a scattered censored word matches the censor bars
      painted over the surrounding text instead of standing taller than them. */
   background-image: linear-gradient(var(--ink), var(--ink));
   background-repeat: no-repeat;
   background-position: center;
-  background-size: 100% calc(1lh * 34 / 38 + 1px);
+  background-size: 100% calc(1lh * 36 / 38 + 1px);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
   padding-inline: 1px;

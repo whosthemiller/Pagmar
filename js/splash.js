@@ -14,6 +14,7 @@ import {
   getGlitchOpenProgress,
   getPixelFactor,
 } from "./pixel-glitch.js";
+import { loadImageCacheVersions, resolveAssetImageUrl } from "./asset-url.js";
 
 const CONFIG = {
   dataUrl: "data/splash-images.json",
@@ -163,41 +164,47 @@ function runPixelGlitchAnimation(options = {}) {
 }
 
 /** @param {string} url */
+function resolveSplashImageUrl(url) {
+  return resolveAssetImageUrl(url);
+}
+
+/** @param {string} url */
 function preloadImage(url) {
-  if (preloaded.has(url)) {
-    return Promise.resolve(preloaded.get(url));
+  const src = resolveSplashImageUrl(url);
+  if (preloaded.has(src)) {
+    return Promise.resolve(preloaded.get(src));
   }
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.decoding = "async";
     img.referrerPolicy = "no-referrer";
     img.onload = () => {
-      preloaded.set(url, img);
+      preloaded.set(src, img);
       if (typeof img.decode === "function") {
         img.decode().then(() => resolve(img)).catch(() => resolve(img));
       } else {
         resolve(img);
       }
     };
-    img.onerror = () => reject(new Error(`Failed to load splash image: ${url}`));
-    img.src = url;
+    img.onerror = () => reject(new Error(`Failed to load splash image: ${src}`));
+    img.src = src;
   });
 }
 
 function getCurrentSlideImage() {
   const slide = splashSlides[currentIndex];
   if (!slide) return imageEl;
-  return preloaded.get(slide.url) ?? imageEl;
+  return preloaded.get(resolveSplashImageUrl(slide.url)) ?? imageEl;
 }
 
 function runInitialReveal() {
   if (!splashSlides.length || !imageEl) return;
   const slide = splashSlides[0];
-  imageEl.src = slide.url;
+  imageEl.src = resolveSplashImageUrl(slide.url);
 
   const start = () => {
     if (!active) return;
-    const img = preloaded.get(slide.url) ?? imageEl;
+    const img = preloaded.get(resolveSplashImageUrl(slide.url)) ?? imageEl;
     runPixelGlitchAnimation({
       durationMs: 600,
       fromImg: img,
@@ -242,13 +249,13 @@ async function advanceGallery() {
     return;
   }
 
-  const fromImg = preloaded.get(currentSlide.url) ?? null;
+  const fromImg = preloaded.get(resolveSplashImageUrl(currentSlide.url)) ?? null;
 
   runPixelGlitchAnimation({
     fromImg,
     toImg,
     onHold: () => {
-      if (imageEl) imageEl.src = nextSlide.url;
+      if (imageEl) imageEl.src = resolveSplashImageUrl(nextSlide.url);
     },
     onComplete: () => {
       currentIndex = nextIndex;
@@ -439,6 +446,7 @@ async function initSplash() {
   syncGridCssVars();
   initLetterShuffle();
   addScrollListeners();
+  await loadImageCacheVersions();
 
   try {
     const config = await loadSplashConfig();

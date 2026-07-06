@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * מכווץ תמונות bleed כבדות (>800KB או >3072px) בלי לפגוע באיכות נראית.
- * 3072px מספיק ל-full bleed במחשב ההגשה (2048×1152 @2x).
+ * מכווץ תמונות bleed כבדות (>800KB או >4096px) בלי לפגוע באיכות נראית.
+ * 4096px מספיק ל-full bleed במחשב ההגשה (2048×1152 @2x).
  *
  *   node scripts/optimize-heavy-bleed-images.js --dry-run
  *   node scripts/optimize-heavy-bleed-images.js
@@ -13,7 +13,7 @@ const { execSync } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
 const IMG_ROOT = path.join(ROOT, "assets", "img");
-const BLEED_MAX_EDGE = 3072;
+const BLEED_MAX_EDGE = 4096;
 const QUALITY = 84;
 const MIN_BYTES = 800 * 1024;
 

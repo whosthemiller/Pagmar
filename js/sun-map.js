@@ -11,7 +11,16 @@ import {
   loadSemanticData,
   loadTermImages,
   registerPreloadedTermImage,
+  clearPreloadedTermImageCache,
+  isTermNavigationTargetBlocked,
 } from "./data-model.js";
+import {
+  assetPathKey,
+  getImageCacheVersion,
+  hasImageCacheManifest,
+  loadImageCacheVersions,
+  resolveAssetImageUrl,
+} from "./asset-url.js";
 import {
   getTermTextPrefs,
   loadBleedTextPrefs,
@@ -160,6 +169,8 @@ import {
   VIEWPORT_DESIGN,
   getHomeSunTermFontSizePx,
   getMapTypographyScale,
+  isMyMacBookViewport,
+  isSubmissionViewport,
   getMyMacBookHomeTypographyTrimPx,
   getSubmissionTimelineTypographyScale,
   getSubmissionTimelineRadiusMinFrac,
@@ -563,9 +574,8 @@ const LAYOUT = {
   termPageLabelHeadingColumns: 1,
   termPageLabelContentColumnFromRight: 11,
   termPageLabelContentColumns: 9,
-  /** Term-page bleed caption — CSS cols 19–24 (6 columns). */
+  /** Term-page bleed caption — CSS cols 17–24 (8 columns, tied to termPageImageCaptionColumns). */
   termPageBleedCaptionStartCssColumn: 24,
-  termPageBleedCaptionEndCssColumn: 19,
   /** Extra width slack so glyph edges are not clipped by overflow rounding. */
   termHoverCaptionWidthSlack: 2,
   termPageImagesColumnFromRight: 4,
@@ -1661,6 +1671,8 @@ function collectOverviewHoverCensorEls(ray, hoveredWrap) {
 }
 
 function clearOverviewTermHover() {
+  if (!hoveredWrap && !hoveredRay && !hoveredTitleRowTermId && !hoveredTimelineTermId) return;
+
   const ray = hoveredRay?.isConnected ? hoveredRay : null;
   const hovered = hoveredWrap?.isConnected ? hoveredWrap : null;
   const censorEls = ray && hovered ? collectOverviewHoverCensorEls(ray, hovered) : [];
@@ -1729,6 +1741,29 @@ function findOverviewHoverTargetAtPointer(clientX, clientY) {
   return null;
 }
 
+const HOVER_HIT_TOLERANCE_PX = 6;
+
+function getHoveredTermHitElement() {
+  if (!hoveredTitleRowTermId || !svgEl) return null;
+  const rayGroup = svgEl.querySelector(`[data-group="${getDisplayActiveIndex()}"]`);
+  if (!rayGroup) return null;
+  const wrap = getHoveredTermWrap(rayGroup, hoveredTitleRowTermId);
+  return wrap?.querySelector(".sun-term-hit") ?? null;
+}
+
+function isPointerNearHoveredTermHit(clientX, clientY) {
+  const hit = getHoveredTermHitElement();
+  if (!hit) return false;
+  const pad = HOVER_HIT_TOLERANCE_PX;
+  const r = hit.getBoundingClientRect();
+  return (
+    clientX >= r.left - pad &&
+    clientX <= r.right + pad &&
+    clientY >= r.top - pad &&
+    clientY <= r.bottom + pad
+  );
+}
+
 function findTimelineHoverTargetAtPointer(clientX, clientY) {
   const elements = elementsAtPointer(clientX, clientY);
 
@@ -1764,8 +1799,6 @@ function applyOverviewHoverAtPointer(clientX, clientY, { maintainOnMiss = false 
   }
 
   if (overviewProgress > 0.02) return;
-
-  snapActiveRowToCenterIfNeeded();
   if (isArcScrollMotionActive()) return;
 
   const target = findOverviewHoverTargetAtPointer(clientX, clientY);
@@ -1775,9 +1808,16 @@ function applyOverviewHoverAtPointer(clientX, clientY, { maintainOnMiss = false 
     return;
   }
 
-  if (maintainOnMiss && hoveredTitleRowTermId) {
-    restoreOverviewTermHoverFromState();
-    refreshTitleRowTermHoverVisuals();
+  // Snap only when the pointer is not on a term — running snap before hover
+  // establishment calls animateSnapTo → clearTitleRowTermHover and re-triggers bleed.
+  if (!hoveredTitleRowTermId) {
+    snapActiveRowToCenterIfNeeded();
+  }
+
+  if (hoveredTitleRowTermId && isPointerNearHoveredTermHit(clientX, clientY)) {
+    if (!hoveredWrap?.classList.contains("is-hovered")) {
+      restoreOverviewTermHoverFromState();
+    }
     return;
   }
 
@@ -1785,7 +1825,7 @@ function applyOverviewHoverAtPointer(clientX, clientY, { maintainOnMiss = false 
 }
 
 function syncTitleRowHoverAtPointer(clientX, clientY) {
-  applyOverviewHoverAtPointer(clientX, clientY, { maintainOnMiss: true });
+  applyOverviewHoverAtPointer(clientX, clientY);
 }
 
 function onArcScrollSettled() {
@@ -4434,6 +4474,10 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   const layout = currentLayout;
   if (!layout) return;
 
+  // #region agent log
+  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:applyInstantSameGroupTermSwitch:entry',message:'same-group switch start',data:{prevIndex:focusState.clickedIndex,newIndex:newTermIndex,prevTerm:group.terms[focusState.clickedIndex]?.name,newTerm:group.terms[newTermIndex]?.name,fontSettled:termPageSelectedFontSettled,layoutAnim:termPageLayoutAnimActive,wrapped:isTermPageSimilarBlockWrapped(),hasWrapAnchor:hasTermPageWrappedGroupScreenAnchor(),scrollTop:viewport?.scrollTop??0},timestamp:Date.now(),hypothesisId:'A,B,E'})}).catch(()=>{});
+  // #endregion
+
   const preserveScrollTop = viewport?.scrollTop ?? 0;
   const resumeWithFontScramble =
     !termPageSelectedFontSettled ||
@@ -4546,6 +4590,11 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   focusState.termWidths = measureTermWidths(focusState.activeIndex);
   termPageSiblingRepackedForSwitch = group.terms.length > 1;
   repackTermPageSiblingsForSwitch(newTermIndex, prevTermIndex);
+  const switchLayoutEndXs = focusState.termEndXs.slice();
+
+  // #region agent log
+  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:applyInstantSameGroupTermSwitch:afterRepack',message:'after repack',data:{preserveWrapped:termPagePreserveWrappedBlockSwitch,endXs:focusState.termEndXs?.slice(),frozenXs:termPageSiblingFrozenXs?.slice(),siblingLayoutApplied:termPageSiblingLayoutApplied,fontSettled:termPageSelectedFontSettled},timestamp:Date.now(),hypothesisId:'A,C,D'})}).catch(()=>{});
+  // #endregion
 
   if (termPagePreserveWrappedBlockSwitch && isTermPageSimilarBlockWrapped()) {
     const selectedText = getSelectedTermTextEl();
@@ -4634,7 +4683,7 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   }
 
   const scrambleToken = termPageFontScrambleToken;
-  runInstantSameGroupSettle();
+  termPageSelectedFontSettled = false;
   refreshSwitchContent();
   const keepWrappedPreserve =
     termPagePreserveWrappedBlockSwitch && isTermPageSimilarBlockWrapped();
@@ -4642,6 +4691,17 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   const overlayShown = showTermFontScrambleOverlay();
 
   if (!overlayShown) {
+    focusState.termEndXs = switchLayoutEndXs.slice();
+    applyFocusTermPositionsToDom();
+    termPageInlineTermSwitch = true;
+    try {
+      instantSettleSelectedTermAfterCut(layout);
+      if (!termPagePreserveWrappedBlockSwitch) {
+        restoreCensoredBarScreenBottoms(getFocusRayGroup(), preservedBarBottoms);
+      }
+    } finally {
+      termPageInlineTermSwitch = false;
+    }
     const settleToken = termPageFontScrambleToken;
     requestAnimationFrame(() => {
       if (settleToken !== termPageFontScrambleToken) return;
@@ -4652,6 +4712,84 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
     });
     return;
   }
+
+  const textSwitchDurationMs =
+    estimateFontScrambleDuration("typewriter-erase", oldText) +
+    estimateFontScrambleDuration("typewriter-erase", newText);
+  const textSwitchSecoloStartMs = estimateFontScrambleDuration(
+    "typewriter-erase",
+    oldText
+  );
+  const pushXs = switchLayoutEndXs.slice();
+  focusState.termEndXs = pushXs.slice();
+  applyFocusTermPositionsToDom();
+  freezeTermPageSiblingLayout();
+  refreshTermPageSiblingCensorBars();
+
+  let textSwitchOverlayDone = false;
+  let textSwitchPushDone = false;
+  let textSwitchHandoffStarted = false;
+
+  const tryCompleteTextSwitch = () => {
+    if (textSwitchHandoffStarted || !textSwitchOverlayDone || !textSwitchPushDone) {
+      return;
+    }
+    if (scrambleToken !== termPageFontScrambleToken) return;
+    textSwitchHandoffStarted = true;
+
+    stopTermPageLayoutAnimation();
+    if (focusState) {
+      focusState.termEndXs = switchLayoutEndXs.slice();
+      applyFocusTermPositionsToDom();
+    }
+    termPageCensoredPushProgress = 1;
+    termPageCensoredFrozenScreenAlign = null;
+    if (termPageCensoredPushTarget) {
+      applyTermPageCensoredPushFromTarget(termPageCensoredPushTarget, 1);
+    }
+    clearTermFontScrambleOverlay();
+
+    const finalZ = handoffSettledTermPageCensoredRow();
+    if (currentLayout) {
+      settleTermPageAfterFontScramble(currentLayout, finalZ ?? termPageScreenZ);
+    } else {
+      termPageSelectedFontSettled = true;
+    }
+    // #region agent log
+    const _dbgRay = getFocusRayGroup();
+    fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:textSwitchHandoff',message:'text switch handoff complete',data:{fontSettled:termPageSelectedFontSettled,endXs:focusState?.termEndXs?.slice(),frozenAlign:termPageCensoredFrozenScreenAlign,domXs:_dbgRay?[..._dbgRay.querySelectorAll('.sun-term')].map((el,i)=>({i,x:el.getAttribute('x'),transform:el.closest('.sun-term-wrap')?.getAttribute('transform'),font:el.style.fontFamily||'default',selected:el.closest('.sun-term-wrap')?.classList.contains('is-selected')})):null},timestamp:Date.now(),hypothesisId:'G',runId:'post-fix-4'})}).catch(()=>{});
+    // #endregion
+    if (
+      focusState?.phase === "locked" &&
+      currentLayout &&
+      termPageSelectedFontSettled
+    ) {
+      resyncTermPageScrollHeaderAfterSwitch(currentLayout);
+      syncTermHeaderPinState(currentLayout);
+    }
+    clearTermPagePreservedWrapAnchor();
+  };
+
+  termPageCensoredPushProgress = 0;
+  termPageCensoredPushTarget = null;
+  captureTermPageCensoredPushTarget(newText);
+  startTermPageLayoutAnimation(
+    scrambleToken,
+    pushXs,
+    pushXs,
+    textSwitchDurationMs,
+    textSwitchSecoloStartMs,
+    {
+      censorOnly: true,
+      onComplete: () => {
+        textSwitchPushDone = true;
+        tryCompleteTextSwitch();
+      },
+    }
+  );
+  // #region agent log
+  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:textSwitchLayoutAnim',message:'censor-only push anim',data:{pushXs,selectedIndex:newTermIndex,durationMs:textSwitchDurationMs,pushTarget:termPageCensoredPushTarget},timestamp:Date.now(),hypothesisId:'G',runId:'post-fix-4'})}).catch(()=>{});
+  // #endregion
 
   // Freeze the overlay's vertical anchor against the FINAL Secolo content so the
   // handoff to the real SVG title at the end lands with no baseline jump. The
@@ -4674,19 +4812,8 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
     onComplete: () => {
       if (scrambleToken !== termPageFontScrambleToken) return;
       clearTermFontScrambleOverlay();
-      // The earlier rAF resync ran while `is-term-font-scrambling` was set, so it
-      // nulled the header rest anchor without being able to recapture it. Now that
-      // the overlay (and scramble class) is cleared and the page is still at scroll
-      // origin, recapture so later scrolling pins the group at the correct spot.
-      if (
-        focusState?.phase === "locked" &&
-        currentLayout &&
-        termPageSelectedFontSettled
-      ) {
-        resyncTermPageScrollHeaderAfterSwitch(currentLayout);
-        syncTermHeaderPinState(currentLayout);
-      }
-      clearTermPagePreservedWrapAnchor();
+      textSwitchOverlayDone = true;
+      tryCompleteTextSwitch();
     },
   });
 
@@ -4722,6 +4849,7 @@ function navigateToTerm(termId) {
   if (isTermNavigating()) return;
   if (focusState?.phase !== "locked") return;
   if (isTermPageFontScrambleInteractionBlocked()) return;
+  if (isTermNavigationTargetBlocked(termId)) return;
 
   const location = findTermLocation(termId);
   if (!location) return;
@@ -5000,6 +5128,9 @@ const DEFINITION_CENSOR_BAR_HEIGHT = 33;
  *  height and bias it slightly downward. */
 const DEFINITION_CENSOR_BAR_EXTRA = 3;
 const DEFINITION_CENSOR_TOP_OFFSET = 3;
+/** Metadata rows (סוג / מסגור / קונוטציה) — slightly taller band on 14px/18px lines. */
+const META_CENSOR_BAR_EXTRA = 2;
+const META_CENSOR_TOP_OFFSET = -1;
 /** מדגיש / מטשטש side body: block censor sits high (top offset -3); bias the bar
  *  down so it reaches the bottom of the line without changing bar height. */
 const SIDE_TEXT_CENSOR_TOP_OFFSET = 2;
@@ -5178,6 +5309,9 @@ function getCensorBarHeight(el) {
   if (isDefinitionCensorElement(el)) {
     return base + DEFINITION_CENSOR_BAR_EXTRA;
   }
+  if (isMetaCensorElement(el)) {
+    return base + META_CENSOR_BAR_EXTRA;
+  }
   return base;
 }
 
@@ -5201,10 +5335,13 @@ function getCensorBarLayout(el) {
     };
   }
   const pitch = Math.round(lineHeight);
-  const minGap = Math.max(
-    CENSOR_MIN_INTERLINE_GAP,
-    Math.round(lineHeight * CENSOR_MIN_INTERLINE_GAP_RATIO)
-  );
+  const minGap =
+    pitch <= 24
+      ? 1
+      : Math.max(
+          CENSOR_MIN_INTERLINE_GAP,
+          Math.round(lineHeight * CENSOR_MIN_INTERLINE_GAP_RATIO)
+        );
   const barHeight = Math.max(1, Math.min(rawBarHeight, pitch - minGap));
   const interLineGap = Math.max(pitch - barHeight, 0);
   return { lineHeight, barHeight, interLineGap };
@@ -5212,6 +5349,22 @@ function getCensorBarLayout(el) {
 
 function isDefinitionCensorElement(el) {
   return el?.classList.contains("sun-term-page__definition");
+}
+
+function isMetaCensorElement(el) {
+  return (
+    el?.classList.contains("sun-term-meta__heading") ||
+    el?.classList.contains("sun-term-meta__value")
+  );
+}
+
+/** Positive offsets were tuned on 38px definition lines; on compact 18px/22px copy they
+ *  shove the bar down and leave ascenders peeking above the band. */
+function scaleCensorTopOffset(offset, lineHeight) {
+  if (!offset || lineHeight >= DEFINITION_CENSOR_LINE_HEIGHT) return offset;
+  if (offset > 0 && lineHeight <= 26) return 0;
+  const scale = lineHeight / DEFINITION_CENSOR_LINE_HEIGHT;
+  return offset > 0 ? Math.max(0, Math.round(offset * scale)) : Math.round(offset * scale);
 }
 
 function isSideTextCensorElement(el) {
@@ -5237,22 +5390,26 @@ function isLabelNavCensorElement(el) {
 }
 
 function getCensorBarTopOffset(el) {
+  const lineHeight = getBlockLineHeight(el);
   if (isCaptionCensorElement(el)) {
-    return CAPTION_CENSOR_TOP_OFFSET;
+    return scaleCensorTopOffset(CAPTION_CENSOR_TOP_OFFSET, lineHeight);
   }
   if (isDefinitionCensorElement(el)) {
-    return DEFINITION_CENSOR_TOP_OFFSET;
+    return scaleCensorTopOffset(DEFINITION_CENSOR_TOP_OFFSET, lineHeight);
+  }
+  if (isMetaCensorElement(el)) {
+    return scaleCensorTopOffset(META_CENSOR_TOP_OFFSET, lineHeight);
   }
   if (isLabelRowCensorElement(el)) {
-    return LABEL_ROW_CENSOR_TOP_OFFSET;
+    return scaleCensorTopOffset(LABEL_ROW_CENSOR_TOP_OFFSET, lineHeight);
   }
   if (isSideTextCensorElement(el)) {
-    return SIDE_TEXT_CENSOR_TOP_OFFSET;
+    return scaleCensorTopOffset(SIDE_TEXT_CENSOR_TOP_OFFSET, lineHeight);
   }
   if (isLabelNavCensorElement(el)) {
-    return LABEL_NAV_CENSOR_TOP_OFFSET;
+    return scaleCensorTopOffset(LABEL_NAV_CENSOR_TOP_OFFSET, lineHeight);
   }
-  return CENSOR_BAR_TOP_OFFSET;
+  return scaleCensorTopOffset(CENSOR_BAR_TOP_OFFSET, lineHeight);
 }
 
 function getCaptionCensorLineSpan(group, topOffset = CAPTION_CENSOR_TOP_OFFSET) {
@@ -7211,17 +7368,15 @@ function updateTermPageLabelRow(rowEl, text, viewportWidth, pageSpan, term) {
 }
 
 function getTermPageBleedCaptionSpan() {
-  const {
-    termPageBleedCaptionStartCssColumn: startCol,
-    termPageBleedCaptionEndCssColumn: endCol,
-  } = LAYOUT;
+  const startCol = LAYOUT.termPageBleedCaptionStartCssColumn;
+  const endCol = startCol - LAYOUT.termPageImageCaptionColumns + 1;
 
   const measured = measureGridCssColumnSpan(startCol, endCol, viewport);
   if (measured && measured.width > 0) return measured;
 
   const metrics = getGridMetrics();
   const containerLeft = viewport?.getBoundingClientRect().left ?? 0;
-  const columnCount = startCol - endCol + 1;
+  const columnCount = LAYOUT.termPageImageCaptionColumns;
   return {
     left: metrics.gridLeft - containerLeft,
     width: columnCount * metrics.colWidth + (columnCount - 1) * metrics.gutter,
@@ -7449,13 +7604,7 @@ function escapeAttr(text) {
 }
 
 function resolveTermImageUrl(url) {
-  if (!url) return "";
-  if (/^https?:\/\//i.test(url)) return url;
-  try {
-    return new URL(url, APP_ROOT).href;
-  } catch {
-    return url;
-  }
+  return resolveAssetImageUrl(url, APP_ROOT);
 }
 
 /** Lightweight variant for inline slots and thumbnails (not full bleed). */
@@ -7623,7 +7772,7 @@ function startBleedDripForActiveGroup(centerGroupIndex = getDisplayActiveIndex()
   const seen = new Set();
   for (const term of group.terms) {
     const url = getTermBleedFullUrl(term.name);
-    if (!url || seen.has(url) || getPreloadedTermImage(url)) continue;
+    if (!url || seen.has(url) || lookupPreloadedTermImage(url)) continue;
     seen.add(url);
     bleedUrls.push(url);
   }
@@ -7722,7 +7871,40 @@ function startBackgroundTermImagePreload(urls, centerGroupIndex = 0) {
 function termImageSrcMatches(imgEl, url) {
   if (!(imgEl instanceof HTMLImageElement) || !url) return false;
   const resolved = resolveTermImageUrl(url);
-  return Boolean(resolved && imgEl.src === resolved);
+  const current = imgEl.currentSrc || imgEl.src;
+  if (resolved && current === resolved) return true;
+  if (hasImageCacheManifest()) return false;
+  const shownKey = termImageUrlKey(current);
+  const targetKey = termImageUrlKey(url);
+  return Boolean(shownKey && targetKey && shownKey === targetKey);
+}
+
+function lookupPreloadedTermImage(url) {
+  if (!url) return null;
+  const resolved = resolveTermImageUrl(url);
+  const candidates = [resolved, url].filter(Boolean);
+  for (const key of candidates) {
+    const img = getPreloadedTermImage(key);
+    if (!img || img.naturalWidth <= 0) continue;
+    const current = img.currentSrc || img.src;
+    if (resolved && current === resolved) return img;
+  }
+  return null;
+}
+
+function registerTermImageInCache(url, img) {
+  if (!url || !(img instanceof HTMLImageElement) || img.naturalWidth <= 0) return;
+  const resolved = resolveTermImageUrl(url);
+  if (resolved) registerPreloadedTermImage(resolved, img);
+  if (url && url !== resolved) registerPreloadedTermImage(url, img);
+}
+
+function resetTermImageElement(img) {
+  if (!(img instanceof HTMLImageElement)) return;
+  cancelTermImageLoad(img);
+  img.removeAttribute("src");
+  img.removeAttribute("data-src");
+  img.classList.remove("is-loaded");
 }
 
 
@@ -7762,15 +7944,20 @@ function assignPreloadedTermImage(img, url, options = {}) {
     }
   };
 
-  if (getPreloadedTermImage(src)) {
+  const skipPreloadReuse = hasImageCacheManifest();
+  if (!skipPreloadReuse && lookupPreloadedTermImage(url)) {
     cancelTermImageLoad(img);
     img.src = src;
     img.classList.add("is-loaded");
     return finish();
   }
 
-  if (img.src === src && img.complete && img.naturalWidth > 0) {
-    registerPreloadedTermImage(src, img);
+  if (img.src && !termImageSrcMatches(img, url)) {
+    resetTermImageElement(img);
+  }
+
+  if (termImageSrcMatches(img, url) && img.complete && img.naturalWidth > 0) {
+    registerTermImageInCache(url, img);
     img.classList.add("is-loaded");
     img.removeAttribute("data-pending-src");
     return finish();
@@ -7793,7 +7980,7 @@ function assignPreloadedTermImage(img, url, options = {}) {
       if (termImageLoadToken.get(img) !== token) return;
       img.removeAttribute("data-pending-src");
       if (loader.naturalWidth > 0) {
-        registerPreloadedTermImage(src, loader);
+        registerTermImageInCache(url, loader);
       }
       img.src = src;
       img.classList.add("is-loaded");
@@ -8023,7 +8210,7 @@ function resetTermPageDetailsImage() {
 
 const TERM_PAGE_LABEL_NAV_ITEMS = [
   { key: "users", label: "משתמשים" },
-  { key: "contexts", label: "נפוץ" },
+  { key: "contexts", label: "נפוץ בהקשר" },
   { key: "period", label: "תקופת שימוש" },
 ];
 
@@ -8441,20 +8628,16 @@ function getTermImagePixelSize(url) {
   if (!url) return null;
   const src = resolveTermImageUrl(url);
   const preloaded =
-    getPreloadedTermImage(src) ||
-    getPreloadedTermImage(url) ||
-    getPreloadedTermImage(decodeURI(src));
+    lookupPreloadedTermImage(url) ||
+    lookupPreloadedTermImage(src);
   if (preloaded && preloaded.naturalWidth > 0 && preloaded.naturalHeight > 0) {
     return { width: preloaded.naturalWidth, height: preloaded.naturalHeight };
   }
   if (titleRowImageImgEl && titleRowImageImgEl.naturalWidth > 0) {
     const imgSrc = titleRowImageImgEl.currentSrc || titleRowImageImgEl.src;
-    if (
-      imgSrc === src ||
-      imgSrc === url ||
-      imgSrc.endsWith(url) ||
-      decodeURI(imgSrc) === decodeURI(src)
-    ) {
+    const imgKey = termImageUrlKey(imgSrc);
+    const targetKey = termImageUrlKey(url);
+    if (imgSrc === src || imgKey === targetKey) {
       return {
         width: titleRowImageImgEl.naturalWidth,
         height: titleRowImageImgEl.naturalHeight,
@@ -8537,18 +8720,28 @@ function termImageUrlStem(url) {
   return base.replace(/\.[^.]+$/, "").trim();
 }
 
+/** Hard-pinned bleed assets — full `assets/img/...` path only; never resolved by filename stem. */
+const TERM_PINNED_BLEED_IMAGE_URL = {
+  "דיפ סטייט": "assets/img/דיפ סטייט/בנימין נתניהו.webp",
+};
+
+function getPinnedBleedImage(termName) {
+  const pinnedUrl = TERM_PINNED_BLEED_IMAGE_URL[termName];
+  if (!pinnedUrl) return null;
+  return (
+    findTermImageByUrl(termName, pinnedUrl) ?? {
+      url: pinnedUrl,
+      source: "local",
+      caption: termImageUrlStem(pinnedUrl),
+    }
+  );
+}
+
 function findTermImageByUrl(termName, imageUrl) {
   if (!termName || !imageUrl) return null;
   const images = termImagesByName.get(termName) || [];
-  const exact = images.find((image) => image?.url === imageUrl);
-  if (exact) return exact;
-  const webpUrl = imageUrl.replace(/\.(jpe?g|png|gif)$/i, ".webp");
-  const webpMatch = images.find((image) => image?.url === webpUrl);
-  if (webpMatch) return webpMatch;
-  const stem = termImageUrlStem(imageUrl);
-  const stemMatch = images.find((image) => termImageUrlStem(image?.url) === stem);
-  if (stemMatch) return stemMatch;
-  return null;
+  const targetKey = termImageUrlKey(imageUrl);
+  return images.find((image) => image?.url && termImageUrlKey(image.url) === targetKey) ?? null;
 }
 
 function getTermBleedEligibleImages(termName, viewportWidth, viewportHeight) {
@@ -8568,9 +8761,13 @@ function getTermBleedEligibleImages(termName, viewportWidth, viewportHeight) {
  * not swapped at runtime (which could show a different image mid-session).
  */
 function getTermChosenBleedImage(termName, viewportWidth, viewportHeight) {
+  const pinned = getPinnedBleedImage(termName);
+  if (pinned) return pinned;
+
   const preview = getBleedTextLabPreviewForTerm(termName);
   if (preview?.imageUrl) {
-    return findTermImageByUrl(termName, preview.imageUrl);
+    const fromPreview = findTermImageByUrl(termName, preview.imageUrl);
+    if (fromPreview) return fromPreview;
   }
   const savedBleedUrl = getTermTextPrefs(termName).imageUrl;
   if (savedBleedUrl) {
@@ -8600,9 +8797,13 @@ function getTitleRowSharedImagePool(termName) {
 
 /** Image for the fixed thumbnail and its full-bleed hover reveal — cycles on hover exit. */
 function pickTitleRowSharedImage(termName, viewportWidth, viewportHeight) {
+  const pinned = getPinnedBleedImage(termName);
+  if (pinned) return pinned;
+
   const preview = getBleedTextLabPreviewForTerm(termName);
   if (preview?.imageUrl) {
-    return findTermImageByUrl(termName, preview.imageUrl);
+    const fromPreview = findTermImageByUrl(termName, preview.imageUrl);
+    if (fromPreview) return fromPreview;
   }
   const images = getTitleRowSharedImagePool(termName);
   if (!images.length) return null;
@@ -8692,7 +8893,7 @@ function buildIdleGalleryPool(groupIndex = getDisplayActiveIndex()) {
     const resolved = resolveTermImageUrl(image.url);
     if (seen.has(resolved)) continue;
     seen.add(resolved);
-    urls.push(image.url);
+    urls.push(resolved);
   }
 
   const rng = createPageRng(`idle-gallery-row-${groupIndex}`);
@@ -9085,7 +9286,13 @@ function hideBleedBackdropFully() {
   idleGalleryGroupIndex = -1;
   stopBleedPixelAnimation();
   clearBleedBackdropPixelation();
+  const wasHoverBleed = bleedBackdropEl?.classList.contains("is-hover");
   bleedBackdropEl?.classList.remove("is-visible", "is-idle", "is-hover", "is-term-page");
+  if (wasHoverBleed && bleedBackdropEl) {
+    bleedBackdropEl.style.transition = "none";
+    void bleedBackdropEl.offsetHeight;
+    bleedBackdropEl.style.removeProperty("transition");
+  }
   viewport?.classList.remove("is-term-page-bleed");
   clearTermPageBleedClip();
   if (bleedBackdropEl) {
@@ -10116,10 +10323,85 @@ function ensureBleedPixelCanvas() {
  * @param {string | null | undefined} value
  * @returns {{ x: number, y: number }}
  */
+function splitObjectPositionTokens(value) {
+  const trimmed = (typeof value === "string" ? value : "").trim();
+  if (!trimmed) return ["center", "top"];
+  const parts = trimmed.split(/\s+/);
+  const tokens = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    if (parts[i].toLowerCase().startsWith("calc(")) {
+      let calc = parts[i];
+      while (!calc.endsWith(")") && i + 1 < parts.length) {
+        i += 1;
+        calc += ` ${parts[i]}`;
+      }
+      tokens.push(calc);
+    } else {
+      tokens.push(parts[i]);
+    }
+  }
+  return tokens;
+}
+
+function evalCalcPxExpression(expr) {
+  const compact = expr.replace(/\s+/g, "").toLowerCase();
+  let match = compact.match(/^calc\(-1\*(\d+(?:\.\d+)?)px\)$/);
+  if (match) return -parseFloat(match[1]);
+  match = compact.match(/^calc\(-(\d+(?:\.\d+)?)px\)$/);
+  if (match) return -parseFloat(match[1]);
+  match = compact.match(/^calc\((\d+(?:\.\d+)?)px\)$/);
+  if (match) return parseFloat(match[1]);
+  return null;
+}
+
+function tokenToObjectAlignmentLength(token, axisBoxSize, objectAxisSize) {
+  if (!token) return (axisBoxSize - objectAxisSize) / 2;
+  const lower = token.toLowerCase();
+  if (lower === "left" || lower === "top") return 0;
+  if (lower === "center") return (axisBoxSize - objectAxisSize) / 2;
+  if (lower === "right" || lower === "bottom") return axisBoxSize - objectAxisSize;
+  if (lower.endsWith("%")) {
+    const pct = parseFloat(lower);
+    if (Number.isFinite(pct)) return ((axisBoxSize - objectAxisSize) * pct) / 100;
+  }
+  if (lower.startsWith("calc(")) {
+    const px = evalCalcPxExpression(lower);
+    if (px !== null) return px;
+  }
+  if (lower.endsWith("px")) {
+    const px = parseFloat(lower);
+    if (Number.isFinite(px)) return px;
+  }
+  return (axisBoxSize - objectAxisSize) / 2;
+}
+
+/** Map a CSS `object-position` to crop fractions for `object-fit: cover`. */
+function objectPositionToCoverFractions(objectPosition, boxW, boxH, imgW, imgH) {
+  const tokens = splitObjectPositionTokens(objectPosition);
+  let xToken = tokens[0] || "center";
+  let yToken = tokens[1] ?? null;
+  if (!yToken && ["top", "bottom", "center"].includes(xToken.toLowerCase())) {
+    yToken = xToken;
+    xToken = "center";
+  }
+
+  const scale = Math.max(boxW / imgW, boxH / imgH);
+  const objW = imgW * scale;
+  const objH = imgH * scale;
+  const alignX = tokenToObjectAlignmentLength(xToken, boxW, objW);
+  const alignY = tokenToObjectAlignmentLength(yToken ?? "top", boxH, objH);
+
+  const overflowX = Math.max(0, imgW - boxW / scale);
+  const overflowY = Math.max(0, imgH - boxH / scale);
+  const sx = overflowX > 0 ? clamp(-alignX / scale, 0, overflowX) / overflowX : 0.5;
+  const sy = overflowY > 0 ? clamp(-alignY / scale, 0, overflowY) / overflowY : 0;
+  return { x: sx, y: sy };
+}
+
 function parseObjectPositionFraction(value) {
   const fallback = { x: 0.5, y: 0 };
   if (typeof value !== "string" || !value.trim()) return fallback;
-  const tokens = value.trim().toLowerCase().split(/\s+/);
+  const tokens = splitObjectPositionTokens(value);
   const horizKeywords = { left: 0, center: 0.5, right: 1 };
   const vertKeywords = { top: 0, center: 0.5, bottom: 1 };
   const parsePercent = (token) => {
@@ -10131,19 +10413,24 @@ function parseObjectPositionFraction(value) {
   let x = null;
   let y = null;
   if (tokens.length === 1) {
-    const token = tokens[0];
+    const token = tokens[0].toLowerCase();
     if (token in horizKeywords) x = horizKeywords[token];
     else if (token in vertKeywords) y = vertKeywords[token];
     else x = parsePercent(token);
   } else {
-    const [a, b] = tokens;
+    const a = tokens[0].toLowerCase();
+    const b = tokens[1].toLowerCase();
     const aIsVertOnly = a in vertKeywords && !(a in horizKeywords);
     if (aIsVertOnly) {
       y = vertKeywords[a];
       x = b in horizKeywords ? horizKeywords[b] : parsePercent(b);
     } else {
       x = a in horizKeywords ? horizKeywords[a] : parsePercent(a);
-      y = b in vertKeywords ? vertKeywords[b] : parsePercent(b);
+      if (b in vertKeywords) y = vertKeywords[b];
+      else if (b.startsWith("calc(")) {
+        const px = evalCalcPxExpression(b);
+        if (px !== null && px < 0) y = 0;
+      } else y = parsePercent(b);
     }
   }
 
@@ -10155,14 +10442,32 @@ function parseObjectPositionFraction(value) {
 
 /** Crop fractions matching the bleed `<img>` current `object-position`. */
 function getBleedBackdropObjectPositionFraction() {
-  const inline = bleedBackdropImgEl?.style.objectPosition;
-  if (typeof inline === "string" && inline.trim()) {
-    return parseObjectPositionFraction(inline);
+  const img = bleedBackdropImgEl;
+  const container = bleedBackdropEl;
+  const objectPosition =
+    (typeof img?.style.objectPosition === "string" && img.style.objectPosition.trim()) ||
+    (img ? getComputedStyle(img).objectPosition : "") ||
+    "center top";
+
+  const boxW = container?.clientWidth ?? 0;
+  const boxH = container?.clientHeight ?? 0;
+  if (
+    img &&
+    boxW > 0 &&
+    boxH > 0 &&
+    img.complete &&
+    img.naturalWidth > 0 &&
+    img.naturalHeight > 0
+  ) {
+    return objectPositionToCoverFractions(
+      objectPosition,
+      boxW,
+      boxH,
+      img.naturalWidth,
+      img.naturalHeight
+    );
   }
-  if (bleedBackdropImgEl) {
-    return parseObjectPositionFraction(getComputedStyle(bleedBackdropImgEl).objectPosition);
-  }
-  return parseObjectPositionFraction(null);
+  return parseObjectPositionFraction(objectPosition);
 }
 
 /**
@@ -10252,9 +10557,8 @@ function resolvePixelatedFixedImageHref(url, width, height, factor = LAYOUT.titl
 
   const src = resolveTermImageUrl(url);
   const preloaded =
-    getPreloadedTermImage(src) ||
-    getPreloadedTermImage(url) ||
-    getPreloadedTermImage(decodeURI(src));
+    lookupPreloadedTermImage(url) ||
+    lookupPreloadedTermImage(src);
   if (preloaded?.complete && preloaded.naturalWidth > 0) {
     const canvas = document.createElement("canvas");
     canvas.width = roundedWidth;
@@ -10279,7 +10583,7 @@ function resolvePixelatedFixedImageHref(url, width, height, factor = LAYOUT.titl
     loader.referrerPolicy = "no-referrer";
     const settle = () => {
       pixelatedFixedImagePending.delete(cacheKey);
-      if (loader.naturalWidth > 0) registerPreloadedTermImage(src, loader);
+      if (loader.naturalWidth > 0) registerTermImageInCache(url, loader);
       scheduleFixedRowRelayout();
     };
     loader.addEventListener("load", settle, { once: true });
@@ -10827,6 +11131,17 @@ function hideBleedBackdrop() {
 function showBleedBackdrop(url, shouldAnimate, options = {}) {
   if (!bleedBackdropEl || !bleedBackdropImgEl || !url) return;
 
+  const termName =
+    options.termName ??
+    (hoveredTitleRowTermId ? findTermById(hoveredTitleRowTermId)?.name : null) ??
+    getTermNameForBleedUrl(url);
+  const pinned = termName ? getPinnedBleedImage(termName) : null;
+  if (pinned?.url) url = pinned.url;
+
+  if (!termImageSrcMatches(bleedBackdropImgEl, url)) {
+    resetTermImageElement(bleedBackdropImgEl);
+  }
+
   const mode = options.mode ?? (hoveredTitleRowTermId ? "hover" : "idle");
   applyBleedObjectPositionForUrl(url);
   const seamlessTermPage =
@@ -10939,6 +11254,18 @@ function clearTitleRowImageClasses() {
   syncBleedBackdropDarkInvert();
 }
 
+function prepareTitleRowHoverBleedClasses() {
+  titleRowImageEl?.classList.remove(
+    "is-inline",
+    "is-inline-expand",
+    "is-inline-fixed",
+    "is-inline-animating",
+    "is-expanded",
+    "is-visible"
+  );
+  viewport?.classList.remove("is-title-row-inline");
+}
+
 function hideTitleRowImage({ preserveBleed = false } = {}) {
   stopInlinePushAnimation();
   clearInlinePushTransforms(titleRowInlinePushRay);
@@ -11047,15 +11374,12 @@ function updateTitleRowImage(layout) {
   }
 
   const session = titleRowHoverSessionId;
-  const bleedRevealActive =
-    isTitleRowBleedActive() &&
-    (bleedPixelAnimFrame !== null || bleedBackdropEl?.classList.contains("is-visible"));
-  if (bleedRevealActive && session === lastTitleRowImageSession) {
+  if (session === lastTitleRowImageSession) {
     return;
   }
 
   lastTitleRowImageSession = session;
-  clearTitleRowImageClasses();
+  prepareTitleRowHoverBleedClasses();
 
   const { viewportWidth, viewportHeight } = layout;
   const hoverImage = getTitleRowHoverImage(term, layout);
@@ -11149,10 +11473,7 @@ function findGroupContainingTermId(termId) {
 }
 
 function setTitleRowTermHover(termId) {
-  if (hoveredTitleRowTermId === termId) {
-    refreshTitleRowTermHoverVisuals(termId);
-    return;
-  }
+  if (hoveredTitleRowTermId === termId) return;
   clearInlinePushTransforms(titleRowInlinePushRay);
   titleRowInlinePushRay = null;
   stopInlinePushAnimation();
@@ -11236,7 +11557,8 @@ function renderTermPageImageSlot(image, index, { captionText } = {}) {
   const figcaption = `<figcaption class="sun-term-page__caption">${escapeAttr(caption)}</figcaption>`;
   if (image?.url) {
     const src = resolveTermDisplayImageUrl(image.url);
-    const preloaded = getPreloadedTermImage(src);
+    const preloaded =
+      lookupPreloadedTermImage(src) || lookupPreloadedTermImage(image.url);
     const srcAttr = preloaded
       ? `src="${escapeAttr(src)}"`
       : `data-src="${escapeAttr(src)}"`;
@@ -11258,14 +11580,19 @@ function renderTermPageImageSlot(image, index, { captionText } = {}) {
   );
 }
 
-function applyTermPageImageCaptionWidths(imagesSpan) {
-  if (!termImagesEl) return;
-  const captionSpan = getGridSpanBounds(
+function getTermPageImageCaptionSpan(containerEl = viewport) {
+  return getGridSpanBounds(
     LAYOUT.termPageImageCaptionColumns,
     LAYOUT.termPageImageCaptionColumnFromRight,
-    viewport
+    containerEl
   );
-  termImagesEl.querySelectorAll(".sun-term-page__caption").forEach((captionEl) => {
+}
+
+function applyTermPageImageCaptionWidths(containerEl) {
+  const root = containerEl || termImagesEl;
+  if (!root) return;
+  const captionSpan = getTermPageImageCaptionSpan(viewport);
+  root.querySelectorAll(".sun-term-page__caption").forEach((captionEl) => {
     captionEl.style.width = `${captionSpan.width}px`;
     captionEl.style.maxWidth = "none";
   });
@@ -11464,10 +11791,7 @@ function layoutTermPageDetailsImage(detailsTopInPage, term, rebuild = true) {
   termDetailsImageEl.hidden = false;
   termDetailsImageEl.removeAttribute("aria-hidden");
 
-  termDetailsImageEl.querySelectorAll(".sun-term-page__caption").forEach((captionEl) => {
-    captionEl.style.width = `${span.width}px`;
-    captionEl.style.maxWidth = "none";
-  });
+  applyTermPageImageCaptionWidths(termDetailsImageEl);
 
   return termDetailsImageEl.offsetHeight;
 }
@@ -11668,15 +11992,7 @@ function updateTermPageScrollImages(
   termImagesEl.style.width = `${imagesSpan.width}px`;
   termImagesEl.hidden = false;
 
-  const captionSpan = getGridSpanBounds(
-    LAYOUT.termPageImageCaptionColumns,
-    LAYOUT.termPageImageCaptionColumnFromRight,
-    viewport
-  );
-  termImagesEl.querySelectorAll(".sun-term-page__caption").forEach((captionEl) => {
-    captionEl.style.width = `${captionSpan.width}px`;
-    captionEl.style.maxWidth = "none";
-  });
+  applyTermPageImageCaptionWidths(termImagesEl);
 
   const imagesHeight = termImagesEl.offsetHeight;
   const pageTop = parseFloat(termPageEl?.style.top) || 0;
@@ -11864,7 +12180,7 @@ function updateTermPageImages(term, viewportWidth, pageSpan, detailsTop, rebuild
   termImagesEl.style.top = `${detailsTop}px`;
   termImagesEl.style.left = `${imagesSpan.left - pageSpan.left}px`;
   termImagesEl.style.width = `${imagesSpan.width}px`;
-  applyTermPageImageCaptionWidths(imagesSpan);
+  applyTermPageImageCaptionWidths(termImagesEl);
   termImagesEl.hidden = false;
   return termImagesEl.offsetHeight;
 }
@@ -13262,10 +13578,17 @@ function getTermPageRoobertLayoutWidth(termIndex, widths, selectedIndex) {
     return termPageSiblingFrozenWidths[termIndex];
   }
 
-  // Packing chain uses Roobert width — selected may display as Secolo.
+  // Packing chain uses Roobert width — selected may display as Secolo; the screen
+  // push (applyTermPageCensoredPushFromTarget) clears the wider Secolo ink.
   if (termIndex === selected) {
     const term = groups[focusState?.activeIndex]?.terms[termIndex];
-    return term ? estimateTermWidth(term.name) : widths?.[termIndex] ?? 0;
+    if (!term) return widths?.[termIndex] ?? 0;
+    if (termPageSelectedFontSettled) {
+      const live = widths?.[termIndex] ?? 0;
+      if (live > 0.25) return live;
+      return measureTermDisplayWidth(term.name);
+    }
+    return estimateTermWidth(term.name);
   }
 
   const live = measureTermPageLayoutWidths();
@@ -13476,6 +13799,10 @@ function repackTermPageSiblingsForSwitch(newTermIndex, prevTermIndex = -1) {
     hasTermPageWrappedGroupScreenAnchor() ||
     termPagePreserveWrappedBlockSwitch ||
     isTermPageSimilarBlockWrapped();
+
+  // #region agent log
+  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:repackTermPageSiblingsForSwitch',message:'repack computed',data:{newTermIndex,prevTermIndex,wrapped,endXs,widths,domXs:[...rayGroup.querySelectorAll('.sun-term')].map((el,i)=>({i,x:el.getAttribute('x'),font:el.style.fontFamily||'default',w:el.getBBox?.().width}))},timestamp:Date.now(),hypothesisId:'A,D'})}).catch(()=>{});
+  // #endregion
   const preserveWrappedLayout =
     termPagePreserveWrappedBlockSwitch && Boolean(termPageCensoredWrapOffsets?.size);
   const wraps = [...rayGroup.querySelectorAll(".sun-term-wrap")];
@@ -13568,9 +13895,14 @@ function applyFocusTermPageLayout() {
   const group = groups[focusState.activeIndex];
   if (!group) return;
 
+  if (termPageLayoutAnimActive) return;
+
   const selectedIndex = getFocusSelectedTermIndex();
 
   if (!termPageSelectedFontSettled && !termPageLayoutAnimActive) {
+    // #region agent log
+    fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:applyFocusTermPageLayout:restoreFrozen',message:'restoring frozen sibling xs',data:{frozenXs:termPageSiblingFrozenXs?.slice(),currentEndXs:focusState.termEndXs?.slice(),selectedIndex:getFocusSelectedTermIndex(),siblingLayoutApplied:termPageSiblingLayoutApplied},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     restoreFrozenTermPageSiblingXs();
     return;
   }
@@ -15073,16 +15405,6 @@ function updateTermPageBleedCaption(layout, image) {
  */
 const DEFAULT_BLEED_OBJECT_POSITION = "center top";
 
-function getTermBleedNavClearanceObjectPosition(horizontal = "center", navSubtract = 10) {
-  const navEl = document.getElementById("site-nav");
-  const measuredNav = navEl?.getBoundingClientRect().height;
-  const clearance =
-    Number.isFinite(measuredNav) && measuredNav > 0
-      ? Math.max(0, Math.round(measuredNav - navSubtract))
-      : Math.max(0, getSiteNavHeightPx() - navSubtract);
-  return `${horizontal} ${clearance}px`;
-}
-
 /** Maximum upward bleed framing — negative offset by full nav height. */
 function getTermBleedMaxUpObjectPosition(horizontal = "center") {
   const navEl = document.getElementById("site-nav");
@@ -15094,11 +15416,75 @@ function getTermBleedMaxUpObjectPosition(horizontal = "center") {
   return `${horizontal} calc(-1 * ${navHeight}px)`;
 }
 
+/** Submission-only bleed lift — nav height plus extra px (wider screens need more crop). */
+function getTermBleedSubmissionUpObjectPosition(horizontal = "center", extraPx = 0) {
+  const navEl = document.getElementById("site-nav");
+  const measuredNav = navEl?.getBoundingClientRect().height;
+  const navHeight =
+    Number.isFinite(measuredNav) && measuredNav > 0
+      ? Math.round(measuredNav)
+      : getSiteNavHeightPx();
+  return `${horizontal} calc(-1 * ${navHeight + Math.max(0, extraPx)}px)`;
+}
+
 const TERM_BLEED_OBJECT_POSITION = {
   "ביביסטים": "50% 100%",
-  /** Ink Flag — pole/flag sit at the top edge; offset clears the fixed nav band. */
-  "מלחמת העצמאות": () => getTermBleedNavClearanceObjectPosition("42%", 10),
-  "מלחמת השחרור": () => getTermBleedMaxUpObjectPosition("center"),
+  /** Ink Flag — pole/flag sit slightly right; extra lift on submission only. */
+  "מלחמת העצמאות": () => {
+    const w = getLiveViewportWidth();
+    const h = getLiveViewportHeight();
+    if (isSubmissionViewport(w, h)) return "42% -8%";
+    return "42% 0%";
+  },
+  "מלחמת השחרור": () => {
+    const w = getLiveViewportWidth();
+    const h = getLiveViewportHeight();
+    if (isSubmissionViewport(w, h)) return getTermBleedSubmissionUpObjectPosition("center", 74);
+    return DEFAULT_BLEED_OBJECT_POSITION;
+  },
+  /** Palestinian child at the wall base — bottom anchor shows the subject
+     fully on every viewport (same pattern as ביביסטים). */
+  "חומת ההפרדה": "50% 100%",
+  /** Tractor + field workers sit below center — on the 1512×949 viewport the
+     default top anchor leaves too much sky and crops the subjects. */
+  "השטחים": () =>
+    isMyMacBookViewport(getLiveViewportWidth(), getLiveViewportHeight())
+      ? "43% 15%"
+      : DEFAULT_BLEED_OBJECT_POSITION,
+  /** Yariv Levin portrait — face sits right of center; lift slightly on submission only. */
+  "הרפורמה המשפטית": () => {
+    const w = getLiveViewportWidth();
+    const h = getLiveViewportHeight();
+    if (isMyMacBookViewport(w, h)) return "43% 0%";
+    if (isSubmissionViewport(w, h)) return "43% -5%";
+    return "43% 0%";
+  },
+  /** Gali Baharav-Miara portrait — max lift on submission so the face clears the title band. */
+  "שלטון הפקידים": () => {
+    const w = getLiveViewportWidth();
+    const h = getLiveViewportHeight();
+    if (isSubmissionViewport(w, h)) return getTermBleedMaxUpObjectPosition("center");
+    return DEFAULT_BLEED_OBJECT_POSITION;
+  },
+  /** Ismail Haniyeh portrait — maximum submission lift so the face clears the title band. */
+  "התנקשות": () => {
+    const w = getLiveViewportWidth();
+    const h = getLiveViewportHeight();
+    if (isSubmissionViewport(w, h)) {
+      return getTermBleedSubmissionUpObjectPosition(
+        "center",
+        getBleedImageBandOverlapPx(h) + 50
+      );
+    }
+    return DEFAULT_BLEED_OBJECT_POSITION;
+  },
+  /** Sderot original house — subject sits low in frame; lift on submission to crop empty sky. */
+  "עיירות פיתוח": () => {
+    const w = getLiveViewportWidth();
+    const h = getLiveViewportHeight();
+    if (isSubmissionViewport(w, h)) return getTermBleedSubmissionUpObjectPosition("center", 48);
+    return DEFAULT_BLEED_OBJECT_POSITION;
+  },
 };
 
 function resolveBleedObjectPosition(termName) {
@@ -15117,12 +15503,9 @@ function applyTermPageBleedObjectPosition(termName) {
   applyBleedObjectPosition(termName);
 }
 
-/** Normalized `assets/...` key for bleed image URL lookups. */
+/** Normalized `assets/...` key for bleed image URL lookups (no query or hash). */
 function termImageUrlKey(url) {
-  if (!url) return "";
-  const decoded = decodeURIComponent(url);
-  const assetsIdx = decoded.indexOf("assets/");
-  return assetsIdx >= 0 ? decoded.slice(assetsIdx) : decoded;
+  return assetPathKey(url);
 }
 
 /** Reverse lookup: which term owns this bleed image URL (for the framing override). */
@@ -15189,9 +15572,16 @@ function updateTermPageBleed(layout) {
   } else if (bleedAlreadyVisible) {
     viewport?.classList.add("is-term-page-bleed");
     bleedBackdropEl.classList.add("is-term-page");
+    if (!termImageSrcMatches(bleedBackdropImgEl, url)) {
+      void assignPreloadedTermImage(bleedBackdropImgEl, url, {
+        awaitDecode: false,
+        fetchPriority: "high",
+      });
+    }
   } else {
     showBleedBackdrop(url, termChanged && !bleedSrcMatches, {
       mode: "termPage",
+      termName: term.name,
     });
   }
 
@@ -16517,10 +16907,9 @@ function handleMapNav(target) {
   }
 }
 
-function openTermById(termId) {
+function beginTermFocusById(termId) {
   const location = findTermLocation(termId);
-  if (!location || !currentLayout) return;
-  if (isFocusActive() || isTermNavigating() || isPageNavTransitionActive()) return;
+  if (!location || !currentLayout) return false;
 
   cancelScrollMotion();
   clearTimeout(snapDebounceTimer);
@@ -16533,6 +16922,31 @@ function openTermById(termId) {
   ensureActiveRowSnapped(currentLayout);
   render(currentLayout);
   startFocusAnimation(location.termIndex);
+  return true;
+}
+
+function openTermById(termId) {
+  if (isFocusActive() || isTermNavigating() || isPageNavTransitionActive()) return;
+  beginTermFocusById(termId);
+}
+
+/**
+ * Timeline → term: direct scramble swap (no home-map detour), mirroring
+ * timeline → index and term → tags.
+ * @param {string} termId
+ */
+function openTermFromTimeline(termId) {
+  if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
+  runPageNavScrambleTransition(
+    "overview",
+    () => {
+      beginOverviewClose({ snap: true });
+      beginTermFocusById(termId);
+    },
+    "termFocus",
+    syncNavAfterPageEnter,
+    PAGE_TIMELINE_EXIT_TIMING
+  );
 }
 
 /**
@@ -16547,14 +16961,16 @@ function openTermViaHome(termId) {
     openTermById(termId);
     return;
   }
+  if (isOverviewTimelineMode()) {
+    openTermFromTimeline(termId);
+    return;
+  }
   // Use the scramble route (not the eased overview zoom-out): from the tags
   // page it snaps the overview closed and scrambles the sun ring straight back
   // in, so the home view fills the frame immediately instead of leaving a blank
   // beat between the tags content vanishing and the sun reappearing.
-  // Timeline has no covering grid — snap closed like tags/index so the exit
-  // scramble reads as the animation instead of a zoom-out tween.
   routeViaHomeScramble(() => openTermById(termId), PAGE_ROUTE_TIMING, {
-    snapOverviewClose: isOverviewTimelineMode(),
+    snapOverviewClose: true,
   });
 }
 
@@ -17882,13 +18298,20 @@ function startFocusAnimation(clickedIndex) {
     scheduleTermImagePreloadBoost(preFocusGroupIndex);
   }
   const carryBleedImage = preFocusTerm
-    ? resolveTermPageBleedCarryImage(preFocusTerm)
+    ? getPinnedBleedImage(preFocusTerm.name) ??
+      pickTermBleedImage(
+        preFocusTerm.name,
+        currentLayout?.viewportWidth ?? window.innerWidth,
+        currentLayout?.viewportHeight ?? window.innerHeight
+      )
     : null;
-  termPageBleedCarryImage = carryBleedImage;
-  const preserveBleed =
-    Boolean(carryBleedImage) ||
-    (isBleedBackdropLoaded() &&
-      Boolean(preFocusTerm && hoveredTitleRowTermId === preFocusTerm.id));
+  const expectedBleedUrl = carryBleedImage?.url ?? null;
+  const preserveBleed = Boolean(
+    expectedBleedUrl &&
+      isBleedBackdropLoaded() &&
+      termImageSrcMatches(bleedBackdropImgEl, expectedBleedUrl)
+  );
+  termPageBleedCarryImage = preserveBleed ? carryBleedImage : null;
   resetTitleRowImage({ preserveBleed });
   clearSameObjectMentionHover();
   clearTermFontScrambleAnimation();
@@ -18403,6 +18826,10 @@ function bindTermHover() {
     const related = event.relatedTarget;
     const wrap = hit.closest(".sun-term-wrap");
     if (wrap && (!related || !wrap.contains(related))) {
+      if (lastPointer.known) {
+        const stillOver = findOverviewHoverTargetAtPointer(lastPointer.x, lastPointer.y);
+        if (stillOver?.wrap === wrap) return;
+      }
       clearOverviewTermHover();
     }
   });
@@ -19229,7 +19656,9 @@ function animateSnapTo(targetIndex, arc, options = {}) {
 
   if (snapAnimFrame) cancelAnimationFrame(snapAnimFrame);
 
-  clearTitleRowTermHover();
+  if (!hoveredTitleRowTermId) {
+    clearTitleRowTermHover();
+  }
   isSnapping = true;
   snapAnimTargetIndex = wrappedTarget;
   snapAnimLockHighlight = options.lockHighlight !== false;
@@ -20023,6 +20452,8 @@ async function init() {
     loadingWork.display = 0;
     updateLoadingProgress(0, "טוען נתונים…");
     ensureLoadingDisplayTick();
+    await loadImageCacheVersions();
+    clearPreloadedTermImageCache();
     const [data, termImages, loadedTermYearIndex] = await Promise.all([
       loadSemanticData(),
       loadTermImages(),
