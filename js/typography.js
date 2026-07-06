@@ -1,14 +1,23 @@
 /**
  * Hebrew typography rules for all site text:
  * - No orphan words: the last two words in each line stay together.
- * - No hyphen at line start: hyphens and dashes stay with the preceding word.
+ * - Maqaf (־) and hyphens stay with both adjacent words (never alone at line
+ *   start or end). Em dash (—) may end a wrapped line only when followed by a
+ *   space (spaced usage); tight ranges (e.g. 650—760) keep the dash with both
+ *   sides and must not start a wrapped line.
  */
 
 const NBSP = "\u00A0";
 const NB_HYPHEN = "\u2011";
+const WORD_JOINER = "\u2060";
 const MAQAF = "\u05BE";
+const EM_DASH = "\u2014";
+const EN_DASH = "\u2013";
 const HYPHEN_CHARS = `-${MAQAF}`;
-const SPACED_DASH_CHARS = `${HYPHEN_CHARS}–—`;
+/** Dashes that must not be orphaned at line end (excludes em dash). */
+const SPACED_DASH_KEEP_WITH_NEXT = `${HYPHEN_CHARS}${EN_DASH}`;
+/** Em/en dash glued to both neighbors (year and number ranges). */
+const TIGHT_RANGE_DASH = `${EM_DASH}${EN_DASH}`;
 
 const SENTENCE_END_RE = /[.?!…׃]$/u;
 
@@ -57,17 +66,37 @@ function tieHyphens(line) {
   // ASCII hyphen only → non-breaking hyphen (keep Hebrew maqaf visible in UI fonts)
   result = result.replace(/(?<=[\p{L}\d])-(?=[\p{L}\d])/gu, NB_HYPHEN);
 
-  // Never let a maqaf start a wrapped line: glue it to whatever precedes it
-  // (Hebrew letter, digit, quote, etc.) with a word joiner.
+  // Maqaf must never sit alone at a wrapped line boundary.
   result = result.replace(
     new RegExp(`(?<=\\S)${MAQAF}`, "gu"),
-    `\u2060${MAQAF}`
+    `${WORD_JOINER}${MAQAF}`
+  );
+  result = result.replace(
+    new RegExp(`${MAQAF}(?=\\S)`, "gu"),
+    `${MAQAF}${WORD_JOINER}`
   );
 
-  return result.replace(
-    new RegExp(`(\\S)\\s+([${SPACED_DASH_CHARS}])`, "g"),
-    `$1${NBSP}$2`
+  // Spaced dashes (not em dash) must stay with the word that follows them.
+  result = result.replace(
+    new RegExp(`([${SPACED_DASH_KEEP_WITH_NEXT}])\\s+(?=\\S)`, "g"),
+    `$1${NBSP}`
   );
+
+  // Em dash stays with the preceding word; the regular space after it still
+  // allows a break so the dash may end a wrapped line.
+  result = result.replace(
+    new RegExp(`(\\S)\\s+${EM_DASH}\\s+(?=\\S)`, "gu"),
+    `$1${NBSP}${EM_DASH} `
+  );
+
+  // Tight em/en dash (e.g. 650—760, 1947–1949): glue to both neighbors so the
+  // dash never sits alone at a line end (only spaced em dash may do that).
+  result = result.replace(
+    new RegExp(`(\\S)([${TIGHT_RANGE_DASH}])(?=\\S)`, "gu"),
+    `$1${WORD_JOINER}$2${WORD_JOINER}`
+  );
+
+  return result;
 }
 
 function preventOrphans(line) {
@@ -75,7 +104,11 @@ function preventOrphans(line) {
   if (!trimmed) return line;
 
   const leading = line.slice(0, line.length - trimmed.length);
-  const tied = trimmed.replace(/(\S+)\s(\S+)\s*$/u, `$1${NBSP}$2`);
+  const tied = trimmed.replace(/(\S+)\s(\S+)\s*$/u, (match, w1, w2) => {
+    // Em dash may end a wrapped line; never glue it to the word that follows.
+    if (w1 === EM_DASH) return match;
+    return `${w1}${NBSP}${w2}`;
+  });
   return leading + tied;
 }
 

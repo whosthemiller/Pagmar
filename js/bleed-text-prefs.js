@@ -4,7 +4,7 @@
 
 const DATA_DIR = new URL("../data/", import.meta.url);
 
-export const TEXT_MODES = ["auto", "dark", "light"];
+export const TEXT_MODES = ["auto", "dark", "light", "brand", "about"];
 
 const DEFAULT_TERM_PREFS = {
   navText: "auto",
@@ -94,6 +94,16 @@ export function resolveTextInvert(mode, autoInvert) {
   if (normalized === "light") return true;
   if (normalized === "dark") return false;
   return Boolean(autoInvert);
+}
+
+/** @returns {"none" | "full" | "brand" | "about"} */
+export function resolveNavInvert(mode, autoInvert, navOverlapsBleed = false) {
+  const normalized = normalizeTextMode(mode);
+  if (normalized === "light") return "full";
+  if (normalized === "dark") return "none";
+  if (normalized === "brand") return navOverlapsBleed ? "brand" : "none";
+  if (normalized === "about") return navOverlapsBleed ? "about" : "none";
+  return autoInvert ? "full" : "none";
 }
 
 export function createEmptyExport() {

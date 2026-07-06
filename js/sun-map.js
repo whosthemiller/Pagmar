@@ -24,6 +24,7 @@ import {
 import {
   getTermTextPrefs,
   loadBleedTextPrefs,
+  resolveNavInvert,
   resolveTextInvert,
 } from "./bleed-text-prefs.js";
 import { applyBlockTypography, applyTypographyRules } from "./typography.js";
@@ -4957,6 +4958,8 @@ let mediaCensorFrameEls = [];
 let mediaCensorRevealOpenProgress = 0;
 /** @type {ReturnType<typeof requestAnimationFrame> | null} */
 let mediaCensorRevealAnimFrame = null;
+/** True while same-object hover exit is de-pixelating media frames before teardown. */
+let mediaCensorDepartActive = false;
 let hoveredSameObjectMention = null;
 let hoveredSameObjectMentionId = null;
 /** Title-row hover only — does not include definition mentions. */
@@ -6516,7 +6519,6 @@ function syncMediaCensorFrameContent(frameEl, image) {
   frameEl.classList.remove("is-placeholder");
   if (frameEl.dataset.mediaCensorUrl !== resolved) {
     frameEl.dataset.mediaCensorUrl = resolved;
-    resetMediaCensorReveal();
     assignPreloadedTermImage(img, url);
   }
 
@@ -6574,7 +6576,90 @@ function runMediaCensorRevealAnimation() {
   mediaCensorRevealAnimFrame = requestAnimationFrame(frame);
 }
 
+function hasActiveMediaCensorFrames() {
+  return mediaCensorFrameEls.some(
+    (el) => el && !el.hidden && !el.classList.contains("is-placeholder")
+  );
+}
+
+/** Pixelate media frames when same-object hover begins (1 → 0 open progress). */
+function runMediaCensorArriveAnimation() {
+  stopMediaCensorRevealAnimation();
+  if (!shouldApplyMediaCensorPlaceholder()) return;
+
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const duration = reducedMotion ? 0 : LAYOUT.titleRowInlinePushMs;
+
+  if (!hasActiveMediaCensorFrames()) {
+    mediaCensorRevealOpenProgress = 0;
+    return;
+  }
+
+  if (duration <= 0) {
+    mediaCensorRevealOpenProgress = 0;
+    syncMediaCensorFrame();
+    return;
+  }
+
+  mediaCensorRevealOpenProgress = 1;
+  syncMediaCensorFramePixels();
+  const start = performance.now();
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = t * (2 - t);
+    mediaCensorRevealOpenProgress = 1 - eased;
+    syncMediaCensorFramePixels();
+    if (t < 1) {
+      mediaCensorRevealAnimFrame = requestAnimationFrame(frame);
+    } else {
+      mediaCensorRevealAnimFrame = null;
+      mediaCensorRevealOpenProgress = 0;
+      syncMediaCensorFrame();
+    }
+  };
+  mediaCensorRevealAnimFrame = requestAnimationFrame(frame);
+}
+
+/** De-pixelate media frames on same-object hover exit, then call onComplete. */
+function runMediaCensorDepartAnimation(onComplete) {
+  stopMediaCensorRevealAnimation();
+
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const duration = reducedMotion ? 0 : LAYOUT.titleRowInlinePushMs;
+
+  if (
+    !hasActiveMediaCensorFrames() ||
+    mediaCensorRevealOpenProgress >= 1 ||
+    duration <= 0
+  ) {
+    mediaCensorDepartActive = false;
+    onComplete?.();
+    return;
+  }
+
+  mediaCensorDepartActive = true;
+  const startProgress = mediaCensorRevealOpenProgress;
+  const start = performance.now();
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = t * (2 - t);
+    mediaCensorRevealOpenProgress = startProgress + (1 - startProgress) * eased;
+    syncMediaCensorFramePixels();
+    if (t < 1) {
+      mediaCensorRevealAnimFrame = requestAnimationFrame(frame);
+    } else {
+      mediaCensorRevealAnimFrame = null;
+      mediaCensorRevealOpenProgress = 1;
+      syncMediaCensorFrame();
+      mediaCensorDepartActive = false;
+      onComplete?.();
+    }
+  };
+  mediaCensorRevealAnimFrame = requestAnimationFrame(frame);
+}
+
 function clearMediaCensorFrames() {
+  if (mediaCensorDepartActive) return;
   resetMediaCensorReveal();
   for (const el of mediaCensorFrameEls) {
     el.hidden = true;
@@ -6718,23 +6803,32 @@ function clearSameObjectMentionHover() {
   hoveredSameObjectMentionId = null;
   armSameObjectHoverReenterGate();
 
+  let mediaDepartDone = false;
+  let censorExitDone = false;
+
   const finish = () => {
-    if (hoveredSameObjectMentionId) return;
+    if (!mediaDepartDone || !censorExitDone || hoveredSameObjectMentionId) return;
+    viewport?.classList.remove("is-page-censor-exiting");
     syncMediaCensorPlaceholder();
     if (!viewport?.classList.contains("is-term-switch-censor")) {
       pageCensorLayer?.replaceChildren();
     }
   };
 
+  runMediaCensorDepartAnimation(() => {
+    mediaDepartDone = true;
+    finish();
+  });
+
   if (!pageLineCount && !titleCensor) {
     clearRevealedMentionMarks();
-    viewport?.classList.remove("is-page-censor-exiting");
+    censorExitDone = true;
     finish();
     return;
   }
 
   runSameObjectMentionExitSequence(termId, () => {
-    viewport?.classList.remove("is-page-censor-exiting");
+    censorExitDone = true;
     finish();
   });
 }
@@ -6761,7 +6855,9 @@ function setSameObjectTermHover(termId, sourceEl = null) {
   }
   if (changed) {
     clearRevealedMentionMarks();
-    resetMediaCensorReveal();
+    stopMediaCensorRevealAnimation();
+    mediaCensorDepartActive = false;
+    mediaCensorRevealOpenProgress = 1;
     hoveredSameObjectMentionId = termId;
     const term = findTermById(termId);
     if (term?.name) boostTermImagePreloadForTerm(term.name);
@@ -6781,6 +6877,7 @@ function setSameObjectTermHover(termId, sourceEl = null) {
   requestAnimationFrame(() => {
     syncMediaCensorFrame();
     rebuildPageCensorOverlays();
+    if (changed) runMediaCensorArriveAnimation();
   });
 }
 
@@ -8942,6 +9039,8 @@ function pauseIdleGallery() {
 function clearBleedBackdropDarkInvert() {
   document.documentElement.classList.remove(
     "is-bleed-dark-invert-nav",
+    "is-bleed-dark-invert-nav-brand",
+    "is-bleed-dark-invert-nav-about",
     "is-bleed-dark-invert-title-row"
   );
 }
@@ -9143,31 +9242,39 @@ function syncBleedBackdropDarkInvert() {
     bleedBackdropEl.classList.contains("is-term-page") &&
     bleedBackdropEl.classList.contains("is-visible");
 
-  let invertNav = false;
+  let navInvert = "none";
   let invertTitleRow = false;
 
   if (isHoverBleed) {
+    const navSample = getSiteNavSampleViewportRect();
     const autoInvertNav = isBleedBackdropImageMostlyDarkInRect(
       img,
-      getSiteNavSampleViewportRect()
+      navSample
     );
     const autoInvertTitleRow = isBleedBackdropImageMostlyDarkInRect(
       img,
       getActiveTitleRowSampleViewportRect()
     );
     const textPrefs = getBleedTextPrefsForActiveTerm(getActiveBleedTextTerm());
-    invertNav = resolveTextInvert(textPrefs.navText, autoInvertNav);
+    navInvert = resolveNavInvert(textPrefs.navText, autoInvertNav, true);
     invertTitleRow = resolveTextInvert(textPrefs.titleRowText, autoInvertTitleRow);
   } else if (isTermPageBleed && isTermPageBleedImageInFrame()) {
-    const navSample = getTermPageNavBleedSampleViewportRect();
-    if (navSample) {
-      const autoInvertNav = isBleedBackdropImageMostlyDarkInRect(img, navSample);
-      const textPrefs = getBleedTextPrefsForActiveTerm(getActiveBleedTextTerm());
-      invertNav = resolveTextInvert(textPrefs.navText, autoInvertNav);
-    }
+    const navSample =
+      getTermPageNavBleedSampleViewportRect() ?? getSiteNavSampleViewportRect();
+    const autoInvertNav = isBleedBackdropImageMostlyDarkInRect(img, navSample);
+    const textPrefs = getBleedTextPrefsForActiveTerm(getActiveBleedTextTerm());
+    navInvert = resolveNavInvert(textPrefs.navText, autoInvertNav, true);
   }
 
-  document.documentElement.classList.toggle("is-bleed-dark-invert-nav", invertNav);
+  document.documentElement.classList.toggle("is-bleed-dark-invert-nav", navInvert === "full");
+  document.documentElement.classList.toggle(
+    "is-bleed-dark-invert-nav-brand",
+    navInvert === "brand"
+  );
+  document.documentElement.classList.toggle(
+    "is-bleed-dark-invert-nav-about",
+    navInvert === "about"
+  );
   document.documentElement.classList.toggle("is-bleed-dark-invert-title-row", invertTitleRow);
 }
 
@@ -11778,6 +11885,7 @@ function layoutTermPageDetailsImage(detailsTopInPage, term, rebuild = true) {
 
   if (rebuild) {
     termDetailsImageEl.innerHTML = renderTermPageImageSlot(image, 2);
+    applyTermPageImageObjectPositions(termDetailsImageEl, image);
   }
 
   termDetailsImageEl.querySelectorAll(".sun-term-page__image").forEach((el) => {
@@ -11976,6 +12084,7 @@ function updateTermPageScrollImages(
     }
     const slot = images[0] || null;
     termImagesEl.innerHTML = renderTermPageImageSlot(slot, 0);
+    applyTermPageImageObjectPositions(termImagesEl, slot);
     termImagesEl.querySelectorAll(".sun-term-page__image").forEach((el) => {
       el.style.height = `${imageHeight}px`;
       syncTermPageImageCensorHeight(el, imageHeight);
@@ -15404,6 +15513,29 @@ function updateTermPageBleedCaption(layout, image) {
  * `center top`.
  */
 const DEFAULT_BLEED_OBJECT_POSITION = "center top";
+
+/**
+ * Per-image framing for fold-2 / fold-3 inline term-page photos (`object-fit: cover`).
+ * Keyed by normalized `assets/...` URL. Default for all other images is
+ * `center top` (see `.sun-term-page.is-scroll-content .sun-term-page__images img`).
+ */
+const TERM_PAGE_IMAGE_OBJECT_POSITION = {
+  /** Esther Hayut portrait — face sits below the default top anchor. */
+  "assets/img/שלטון החוק/אסתר חיות.webp": "center 52%",
+};
+
+function resolveTermPageImageObjectPosition(url) {
+  const key = url && termImageUrlKey(url);
+  return (key && TERM_PAGE_IMAGE_OBJECT_POSITION[key]) || null;
+}
+
+function applyTermPageImageObjectPositions(containerEl, image) {
+  const img = containerEl?.querySelector?.("img.sun-term-page__image");
+  if (!img) return;
+  const pos = image?.url ? resolveTermPageImageObjectPosition(image.url) : null;
+  if (pos) img.style.objectPosition = pos;
+  else img.style.removeProperty("object-position");
+}
 
 /** Maximum upward bleed framing — negative offset by full nav height. */
 function getTermBleedMaxUpObjectPosition(horizontal = "center") {

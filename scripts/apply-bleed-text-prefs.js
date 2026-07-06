@@ -11,7 +11,7 @@ const ROOT = path.join(__dirname, "..");
 const PREFS_PATH = path.join(ROOT, "data", "bleed-text-prefs.json");
 const TERM_IMAGES_PATH = path.join(ROOT, "data", "term-images.json");
 
-const TEXT_MODES = new Set(["auto", "dark", "light"]);
+const TEXT_MODES = new Set(["auto", "dark", "light", "brand", "about"]);
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));

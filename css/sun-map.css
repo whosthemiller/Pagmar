@@ -102,7 +102,7 @@ body {
   background: var(--bg);
   font-family: var(--sun-prose-font);
   font-variation-settings: var(--sun-prose-variation, normal);
-  text-wrap: pretty;
+  text-wrap: balance;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -348,7 +348,7 @@ body,
   background: var(--bg);
   font-size: 0.95rem;
   pointer-events: none;
-  text-wrap: pretty;
+  text-wrap: balance;
 }
 
 /* Loading sits on top of the splash overlay (z-index: 200) so the censor
@@ -842,7 +842,7 @@ body,
   color: var(--ink);
   white-space: normal;
   overflow-wrap: anywhere;
-  text-wrap: pretty;
+  text-wrap: balance;
 }
 
 .sun-term-meta__heading {
@@ -917,7 +917,7 @@ body,
   color: var(--ink);
   direction: rtl;
   text-align: right;
-  text-wrap: pretty;
+  text-wrap: balance;
   hyphens: none;
 }
 
@@ -1016,7 +1016,7 @@ body,
   line-height: var(--term-page-label-line-height);
   color: var(--ink);
   white-space: normal;
-  text-wrap: pretty;
+  text-wrap: balance;
   hyphens: none;
 }
 
@@ -1775,6 +1775,22 @@ html.is-bleed-dark-invert-nav #site-nav {
   filter: invert(1);
 }
 
+html.is-bleed-dark-invert-nav-brand #site-nav .site-nav__brand,
+html.is-bleed-dark-invert-nav-brand #site-nav .site-nav__brand .site-nav__label,
+html.is-bleed-dark-invert-nav-brand #site-nav .site-nav__brand .letter-shuffle-char {
+  color: #ffffff;
+}
+
+html.is-bleed-dark-invert-nav-about #site-nav .site-nav__modes .site-nav__link,
+html.is-bleed-dark-invert-nav-about #site-nav .site-nav__modes .site-nav__label,
+html.is-bleed-dark-invert-nav-about #site-nav .site-nav__modes .site-nav__sep,
+html.is-bleed-dark-invert-nav-about #site-nav .site-nav__modes .letter-shuffle-char,
+html.is-bleed-dark-invert-nav-about #site-nav .site-nav__about,
+html.is-bleed-dark-invert-nav-about #site-nav .site-nav__about .site-nav__label,
+html.is-bleed-dark-invert-nav-about #site-nav .site-nav__about .letter-shuffle-char {
+  color: #ffffff;
+}
+
 .sun-viewport:not(.is-term-scroll-content):not(.is-term-page-bleed) > #sun-svg,
 .sun-viewport.is-title-row-bleed #sun-svg,
 .sun-viewport.is-title-row-inline #sun-svg {
@@ -1902,7 +1918,7 @@ img.sun-title-row-image__img.is-loaded {
   line-height: var(--term-page-caption-line-height);
   color: var(--ink);
   text-align: left;
-  text-wrap: pretty;
+  text-wrap: balance;
   hyphens: none;
 }
 
@@ -1925,7 +1941,7 @@ img.sun-title-row-image__img.is-loaded {
   font-weight: 500;
   line-height: var(--term-page-side-line-height);
   color: var(--ink);
-  text-wrap: pretty;
+  text-wrap: balance;
 }
 
 .sun-term-page__side-text {
@@ -1934,7 +1950,7 @@ img.sun-title-row-image__img.is-loaded {
   font-weight: 400;
   line-height: var(--term-page-side-line-height);
   color: var(--ink);
-  text-wrap: pretty;
+  text-wrap: balance;
   hyphens: none;
 }
 
@@ -1998,7 +2014,7 @@ img.sun-title-row-image__img.is-loaded {
   direction: rtl;
   text-align: right;
   white-space: normal;
-  text-wrap: pretty;
+  text-wrap: balance;
   hyphens: none;
 }
 
@@ -2015,7 +2031,7 @@ img.sun-title-row-image__img.is-loaded {
   direction: rtl;
   text-align: right;
   white-space: normal;
-  text-wrap: pretty;
+  text-wrap: balance;
   hyphens: none;
 }
 
@@ -2042,7 +2058,7 @@ img.sun-title-row-image__img.is-loaded {
   pointer-events: none;
   direction: rtl;
   text-align: right;
-  text-wrap: pretty;
+  text-wrap: balance;
   hyphens: none;
   color: var(--ink);
   font-family: var(--sun-mono-font);

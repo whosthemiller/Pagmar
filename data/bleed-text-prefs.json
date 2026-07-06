@@ -335,7 +335,7 @@
       "imageUrl": "assets/img/מחדל ה־7 באוקטובר/בית בו הוחזקו בני ערובה ישראליים ב־7 באוקטובר.webp"
     },
     "מחסום": {
-      "navText": "light",
+      "navText": "dark",
       "titleRowText": "auto",
       "imageUrl": "assets/img/מחסום/מחסום חיזמא.webp"
     },
@@ -485,7 +485,7 @@
       "imageUrl": "assets/img/ענישה/אסירים פלסטינים בכלא בדרום.webp"
     },
     "עקורים": {
-      "navText": "auto",
+      "navText": "about",
       "titleRowText": "auto",
       "imageUrl": "assets/img/עקורים/עקורים פלסטינים בעזה.webp"
     },
@@ -515,7 +515,7 @@
       "imageUrl": "assets/img/פיגוע/זירת פיגוע בצות תפוח.webp"
     },
     "פינוי": {
-      "navText": "auto",
+      "navText": "brand",
       "titleRowText": "auto",
       "imageUrl": "assets/img/פינוי/בית בקיבוץ בארי שנפגע במתקפת 7 באוקטובר.webp"
     },

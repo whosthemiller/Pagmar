@@ -171,7 +171,8 @@ function isMaavarPassagewayContext(text, start, end) {
   const after = text.slice(end).trimStart();
   const word = text.slice(start, end);
 
-  if (/^ל(קו|גבול|זירת|כך|מותר|שיקולים)/.test(after)) return false;
+  if (/^ל(קו|גבול|זירת|כך|מותר|שיקולים|מונח)/.test(after)) return false;
+  if (/^חלקי\s+למונח/.test(after)) return false;
   if (/^לו(?:[,.\s]|$)/.test(after)) return false;
   if (/^ל["״]/.test(after)) return false;
   if (/^אל\s/.test(after)) return false;
@@ -270,6 +271,129 @@ function isHaKibushLegalContext(text, start) {
   return /דיני\s+$/.test(before);
 }
 
+/** הסברה/ההסברה/… — homograph; pro-Palestinian or generic explanatory media are not Israeli hasbara. */
+const HASBARA_HOMOGRAPH_PHRASES = new Set([
+  "הסברה",
+  "ההסברה",
+  "בהסברה",
+  "והסברה",
+]);
+
+function isHasbaraHomographPhrase(phrase) {
+  return HASBARA_HOMOGRAPH_PHRASES.has((phrase || "").trim());
+}
+
+function isHasbaraIsraeliContext(text, start, end) {
+  const before = text.slice(Math.max(0, start - 24), start);
+  if (/(?:סרטוני|סרטי|חוברות)\s+$/.test(before)) return false;
+
+  const after = text.slice(end).trimStart();
+  if (/^פרו[\s־-]פלסטינ/.test(after)) return false;
+  return true;
+}
+
+/** תגובה/כתגובה/… — homograph; only military/security-response senses link as the term. */
+const TEGUVA_HOMOGRAPH_PHRASES = new Set([
+  "תגובה",
+  "התגובה",
+  "והתגובה",
+  "כתגובה",
+  "בתגובה",
+  "ובתגובה",
+  "לתגובה",
+]);
+
+function isTeguvaHomographPhrase(phrase) {
+  return TEGUVA_HOMOGRAPH_PHRASES.has((phrase || "").trim());
+}
+
+function isTeguvaMilitarySecurityContext(text, start, end) {
+  const after = text.slice(end).trimStart();
+
+  if (/^פוליטית/.test(after)) return false;
+  if (/^למרד/.test(after)) return false;
+  if (/^מוצדקת/.test(after)) return false;
+  if (/^ללחץ/.test(after)) return false;
+  if (/^לגלי/.test(after)) return false;
+  if (/^ספונטנית/.test(after)) return false;
+  if (/^מצילת/.test(after)) return false;
+  if (/^בזמן אמת/.test(after)) return false;
+  if (/^של מדינת/.test(after)) return false;
+
+  return true;
+}
+
+/** מבצע/מבצעים/… — homograph; שמבצעים = relative verb, כמבצעים = as perpetrators, not military מבצע. */
+const MIVTZA_HOMOGRAPH_PHRASES = new Set([
+  "מבצע",
+  "מבצעים",
+  "המבצע",
+  "המבצעים",
+  "במבצע",
+  "במבצעים",
+  "ומבצעים",
+]);
+
+function isMivtzaHomographPhrase(phrase) {
+  return MIVTZA_HOMOGRAPH_PHRASES.has((phrase || "").trim());
+}
+
+/** Plural מבצעים/המבצעים — link only with an explicit military collocate. */
+const MIVTZA_PLURAL_MILITARY_AFTER =
+  /^(?:צבאיים?|נקודתיים?|קצרים?|מיוחדים?|בעזה|בלבנון|בכפוף|בשמותיהם)/;
+
+function isMivtzaMilitaryOperationContext(text, start, end) {
+  const { wordStart, wordEnd, word } = getWordBounds(text, start, end);
+
+  if (/^שמבצע/.test(word)) return false;
+  if (/^כמבצע/.test(word)) return false;
+
+  const before = text.slice(Math.max(0, wordStart - 12), wordStart);
+  if (/גורמים\s+$/.test(before)) return false;
+
+  const after = text.slice(wordEnd).trimStart();
+  if (/^והקורבנות/.test(after)) return false;
+  if (/^פעולת(?:\s|[,.]|$)/.test(after)) return false;
+  if (/^ה(?:רצח|פעולה|יחיד|אירוע)(?:\s|[,.]|$)/.test(after)) return false;
+
+  if (/מבצעים$/.test(word)) {
+    return MIVTZA_PLURAL_MILITARY_AFTER.test(after);
+  }
+
+  return true;
+}
+
+/** Bare סכסוך/בסכסוך — homograph; generic armed conflict, not the catalog term הסכסוך. */
+const SICHSUCH_HOMOGRAPH_PHRASES = new Set(["סכסוך", "בסכסוך"]);
+
+function isSichsuchHomographPhrase(phrase) {
+  return SICHSUCH_HOMOGRAPH_PHRASES.has((phrase || "").trim());
+}
+
+function isSichsuchIsraeliPalestinianContext(text, start, end) {
+  const word = text.slice(start, end);
+  const after = text.slice(end).trimStart();
+  const before = text.slice(Math.max(0, start - 24), start);
+
+  if (/^(?:ה)?ישראלי(?:־|-)?פלסטיני/.test(after)) return true;
+
+  if (/^מזוין/.test(after)) return false;
+  if (/^ארוך/.test(after)) return false;
+  if (/^ופעולה/.test(after)) return false;
+  if (/^[\/]/.test(after)) return false;
+  if (/^בין\s/.test(after)) return false;
+  if (/^,\s*(?:רדיפה|או)/.test(after)) return false;
+  if (/^או\s/.test(after)) return false;
+  if (/^,\s*מבצע/.test(after)) return false;
+
+  if (/של\s+$/.test(before)) return false;
+  if (/בהקשר\s+של\s+$/.test(before)) return false;
+  if (/במסגרת\s+$/.test(before)) return false;
+  if (/אזורי\s+$/.test(before)) return false;
+
+  return word === "בסכסוך";
+}
+
 function findOccurrences(text, phrase) {
   if (!phrase || phrase.length < 1) return [];
   const positions = [];
@@ -288,7 +412,11 @@ function findOccurrences(text, phrase) {
       (!isSegrHomographPhrase(phrase) || isSegrBlockadeContext(text, idx, end)) &&
       (!isHargHomographPhrase(phrase) || !isHargCivilianCompoundContext(text, idx, end)) &&
       (!isYishuvHomographPhrase(phrase) || isYishuvimSettlementContext(text, idx, end)) &&
-      (!isHaKibushHomographPhrase(phrase) || !isHaKibushLegalContext(text, idx))
+      (!isHaKibushHomographPhrase(phrase) || !isHaKibushLegalContext(text, idx)) &&
+      (!isTeguvaHomographPhrase(phrase) || isTeguvaMilitarySecurityContext(text, idx, end)) &&
+      (!isMivtzaHomographPhrase(phrase) || isMivtzaMilitaryOperationContext(text, idx, end)) &&
+      (!isHasbaraHomographPhrase(phrase) || isHasbaraIsraeliContext(text, idx, end)) &&
+      (!isSichsuchHomographPhrase(phrase) || isSichsuchIsraeliPalestinianContext(text, idx, end))
     ) {
       positions.push({ start: peelHebrewPrefixes(text, idx), end });
     }
