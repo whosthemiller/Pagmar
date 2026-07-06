@@ -392,6 +392,33 @@ export function isTermNavigationTargetBlocked(termNameOrId) {
   return TERM_NAMES_WITHOUT_TEXT_LINKS.has(key) || TERM_IDS_WITHOUT_TEXT_LINKS.has(key);
 }
 
+/**
+ * Explicit in-text links for globally blocked terms — only on specific host fields.
+ * @type {Record<string, Record<string, { phrase: string, termId: string, objectId: string }[]>>}
+ */
+const TERM_FIELD_LINK_OVERRIDES = {
+  "TERM-115": {
+    emphasizes: [
+      { phrase: "שטחים", termId: "TERM-007", objectId: "OBJ-3" },
+      { phrase: "השטחים", termId: "TERM-007", objectId: "OBJ-3" },
+    ],
+  },
+};
+
+/** @returns {{ phrase: string, termId: string, objectId: string, navOverride: true }[]} */
+export function getTermFieldLinkOverridePatterns(hostTermId, fieldName) {
+  const entries = TERM_FIELD_LINK_OVERRIDES[hostTermId]?.[fieldName];
+  if (!entries?.length) return [];
+  return entries
+    .map((entry) => ({ ...entry, navOverride: true }))
+    .sort((a, b) => b.phrase.length - a.phrase.length);
+}
+
+export function isTermMentionNavigationAllowed(termId, mentionEl) {
+  if (mentionEl?.dataset?.navOverride === "1") return true;
+  return !isTermNavigationTargetBlocked(termId);
+}
+
 function isPhraseWithoutTextLinks(phrase) {
   return isTermNavigationTargetBlocked(phrase);
 }
@@ -401,6 +428,21 @@ const TERM_EXTRA_DEFINITION_PHRASES = {
   נהרג: ["הרג", "ההרג", "בהרג", "והרג"],
   "השטחים הכבושים": ["שטחים כבושים", "שטחים הכבושים"],
   הכיבוש: ["שטחים שנכבשו", "שטחים שנכבש"],
+  ימנים: [
+    "מחנה הימין",
+    "מחנה ימין",
+    "מחנה הימין־ביטחוני",
+    "מחנה הימין-ביטחוני",
+    "גוש הימין",
+    "הימין",
+    "ימין",
+    "בימין",
+    "וימין",
+    "מהימין",
+    "מימין",
+    "לימין",
+    "והימין",
+  ],
 };
 
 /**

@@ -128,14 +128,33 @@ function normalizeMatchChar(ch) {
   return ch;
 }
 
+/** Invisible chars inserted by applyBlockTypography (e.g. around maqaf). */
+function isIgnorableMatchChar(ch) {
+  return ch === "\u2060";
+}
+
 function compareAt(text, start, phrase) {
-  if (start + phrase.length > text.length) return false;
-  for (let i = 0; i < phrase.length; i++) {
-    if (normalizeMatchChar(text[start + i]) !== normalizeMatchChar(phrase[i])) {
-      return false;
-    }
+  let ti = start;
+  let pi = 0;
+  while (pi < phrase.length) {
+    while (ti < text.length && isIgnorableMatchChar(text[ti])) ti++;
+    if (ti >= text.length) return false;
+    if (normalizeMatchChar(text[ti]) !== normalizeMatchChar(phrase[pi])) return false;
+    ti++;
+    pi++;
   }
   return true;
+}
+
+function phraseMatchEnd(text, start, phrase) {
+  let ti = start;
+  let pi = 0;
+  while (pi < phrase.length) {
+    while (ti < text.length && isIgnorableMatchChar(text[ti])) ti++;
+    ti++;
+    pi++;
+  }
+  return ti;
 }
 
 /** Prepositional prefixes only — not מ, which is part of מלחמת. */
@@ -171,7 +190,7 @@ function isMaavarPassagewayContext(text, start, end) {
   const after = text.slice(end).trimStart();
   const word = text.slice(start, end);
 
-  if (/^ל(קו|גבול|זירת|כך|מותר|שיקולים|מונח)/.test(after)) return false;
+  if (/^ל(קו|גבול|זירת|כך|מותר|שיקולים|מונח|עימות)/.test(after)) return false;
   if (/^חלקי\s+למונח/.test(after)) return false;
   if (/^לו(?:[,.\s]|$)/.test(after)) return false;
   if (/^ל["״]/.test(after)) return false;
@@ -402,9 +421,12 @@ function findOccurrences(text, phrase) {
   while (start <= text.length - phrase.length) {
     const idx = text.indexOf(phrase[0], start);
     if (idx === -1) break;
-    const end = idx + phrase.length;
+    if (!compareAt(text, idx, phrase)) {
+      start = idx + 1;
+      continue;
+    }
+    const end = phraseMatchEnd(text, idx, phrase);
     if (
-      compareAt(text, idx, phrase) &&
       isLeftBoundary(text, idx) &&
       isRightBoundary(text, end) &&
       !isMilhamaConstructBeforeTerm(text, idx, end) &&
@@ -705,17 +727,25 @@ export function linkParagraphsToTerms(text, termPatterns, linkedTermIds = null, 
  * Other same-object terms are censored; cross-object terms use Narkis Asaf + underline (styled in CSS).
  * The host term itself is left unstyled.
  * @param {string} text
- * @param {{ phrase: string, termId: string, objectId: string }[]} termPatterns
+ * @param {{ phrase: string, termId: string, objectId: string, navOverride?: boolean }[]} termPatterns
  * @param {string} hostObjectId
  * @param {string} hostTermId
+ * @param {{ phrase: string, termId: string, objectId: string, navOverride?: boolean }[]} [extraPatterns]
  */
-export function annotateDefinitionMentions(text, termPatterns, hostObjectId, hostTermId) {
+export function annotateDefinitionMentions(
+  text,
+  termPatterns,
+  hostObjectId,
+  hostTermId,
+  extraPatterns = []
+) {
   if (!text) return "";
 
   const occupied = [];
   const matches = [];
+  const patterns = [...extraPatterns, ...termPatterns];
 
-  for (const { phrase, termId, objectId } of termPatterns) {
+  for (const { phrase, termId, objectId, navOverride } of patterns) {
     for (const { start, end } of findOccurrences(text, phrase)) {
       const range = { start, end };
       if (occupied.some((r) => rangesOverlap(r, range))) continue;
@@ -727,6 +757,7 @@ export function annotateDefinitionMentions(text, termPatterns, hostObjectId, hos
         phrase: text.slice(start, end),
         termId,
         sameObject: objectId === hostObjectId,
+        navOverride: Boolean(navOverride),
       });
     }
   }
@@ -738,7 +769,7 @@ export function annotateDefinitionMentions(text, termPatterns, hostObjectId, hos
 
   for (const match of matches) {
     let { start, end } = match;
-    if (match.sameObject) {
+    if (match.sameObject || match.navOverride) {
       ({ start, end } = expandRangeForWrappingQuotes(text, start, end, cursor));
     }
     html += escapeHtml(text.slice(cursor, start));
@@ -746,8 +777,9 @@ export function annotateDefinitionMentions(text, termPatterns, hostObjectId, hos
     const cls = match.sameObject
       ? "sun-def-mention sun-def-mention--same-object"
       : "sun-def-mention sun-def-mention--external";
+    const navAttr = match.navOverride ? ' data-nav-override="1"' : "";
     html +=
-      `<span class="${cls}" data-term-id="${escapeHtml(match.termId)}">${escaped}</span>`;
+      `<span class="${cls}" data-term-id="${escapeHtml(match.termId)}"${navAttr}>${escaped}</span>`;
     cursor = end;
   }
 

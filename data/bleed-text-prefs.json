@@ -25,7 +25,7 @@
       "imageUrl": "assets/img/אנרכיסטים/מחאה בנתיבי איילון לאחר פרישתו של ניצב עמי אשד.webp"
     },
     "אסירים": {
-      "navText": "auto",
+      "navText": "light",
       "titleRowText": "auto",
       "imageUrl": "assets/img/אסירים/חייל שומר על עצורים פלסטינים המיועדים לשחרור במסגרת הסכם החזרת החטופים בכלא קציעות בדרום הארץ.webp"
     },
@@ -270,7 +270,7 @@
       "imageUrl": "assets/img/ימנים/מנחם בגין.webp"
     },
     "כיבוש": {
-      "navText": "auto",
+      "navText": "light",
       "titleRowText": "auto",
       "imageUrl": "assets/img/כיבוש/חייל צה\"ל בפעולה מבצעית בחלחול.webp"
     },

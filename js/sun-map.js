@@ -502,6 +502,12 @@ const LAYOUT = {
   termPageCensoredPushSlack: 28,
   /** Duration for censored-row push during the Secolo phase of font scramble (ms). */
   termPageCensoredPushMs: 480,
+  /**
+   * Max lead (ms) before Secolo for censored-row + similar-label layout animation.
+   * Scales up with title length so longer terms start the row earlier and overlap
+   * less with the Secolo title write.
+   */
+  termPageCensoredPushLeadMs: 220,
   /** Width of the censored-sibling band — same grid span as the title-row image columns. */
   termPageCensoredRowColumns: 2,
   /** Vertical gap between wrapped censored-sibling rows (px). */
@@ -1093,6 +1099,8 @@ let termFontOverlayBaselineY = null;
 let termFontOverlayFrozenTop = null;
 /** Frozen overlay top (px) — Secolo start position (shared baseline, nudge 0). */
 let termFontOverlayFrozenTopStart = null;
+/** Frozen screen Y for overlay ink baseline during Secolo→Secolo text switch. */
+let termFontOverlayFrozenBaselineY = null;
 /** One-shot Roobert baseline nudge — avoids per-frame measure feedback oscillation. */
 let termFontOverlayRoobertCorrection = null;
 /** Frozen selected-term min screen Y at scrollTop = 0 (for pin threshold). */
@@ -3085,12 +3093,30 @@ function getTermSimilarLabelPinTopPx(
   viewportHeight = getLiveViewportHeight(),
   scrollTop = viewport?.scrollTop ?? 0
 ) {
+  const scrollLift = getTermHeaderPinScrollLiftPx(scrollTop, viewportHeight);
+  const labelHeight = termSimilarLabelEl?.offsetHeight || 22;
+
   if (termSimilarLabelRestTop != null) {
-    return (
-      termSimilarLabelRestTop -
-      getTermHeaderPinScrollLiftPx(scrollTop, viewportHeight)
-    );
+    return termSimilarLabelRestTop - scrollLift;
   }
+
+  const wrappedRestTop =
+    termPageWrappedGroupScreenAnchor?.labelRestTop ??
+    termPagePreservedWrapAnchor?.labelRestTop ??
+    null;
+  if (wrappedRestTop != null) {
+    return wrappedRestTop - scrollLift;
+  }
+
+  // Match updateTermPageSimilarLabel's scroll-lift path when the rest anchor
+  // was never captured (common on wrapped similar blocks).
+  if (scrollLift > 0.01 && termPageSiblingLayoutApplied) {
+    const censoredTop = getCensoredRowScreenTop();
+    if (censoredTop != null) {
+      return censoredTop - LAYOUT.termPageSimilarLabelGap - labelHeight;
+    }
+  }
+
   return getPinnedFocusRowTopPx(viewportHeight);
 }
 
@@ -4475,10 +4501,6 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   const layout = currentLayout;
   if (!layout) return;
 
-  // #region agent log
-  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:applyInstantSameGroupTermSwitch:entry',message:'same-group switch start',data:{prevIndex:focusState.clickedIndex,newIndex:newTermIndex,prevTerm:group.terms[focusState.clickedIndex]?.name,newTerm:group.terms[newTermIndex]?.name,fontSettled:termPageSelectedFontSettled,layoutAnim:termPageLayoutAnimActive,wrapped:isTermPageSimilarBlockWrapped(),hasWrapAnchor:hasTermPageWrappedGroupScreenAnchor(),scrollTop:viewport?.scrollTop??0},timestamp:Date.now(),hypothesisId:'A,B,E'})}).catch(()=>{});
-  // #endregion
-
   const preserveScrollTop = viewport?.scrollTop ?? 0;
   const resumeWithFontScramble =
     !termPageSelectedFontSettled ||
@@ -4591,11 +4613,6 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   focusState.termWidths = measureTermWidths(focusState.activeIndex);
   termPageSiblingRepackedForSwitch = group.terms.length > 1;
   repackTermPageSiblingsForSwitch(newTermIndex, prevTermIndex);
-  const switchLayoutEndXs = focusState.termEndXs.slice();
-
-  // #region agent log
-  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:applyInstantSameGroupTermSwitch:afterRepack',message:'after repack',data:{preserveWrapped:termPagePreserveWrappedBlockSwitch,endXs:focusState.termEndXs?.slice(),frozenXs:termPageSiblingFrozenXs?.slice(),siblingLayoutApplied:termPageSiblingLayoutApplied,fontSettled:termPageSelectedFontSettled},timestamp:Date.now(),hypothesisId:'A,C,D'})}).catch(()=>{});
-  // #endregion
 
   if (termPagePreserveWrappedBlockSwitch && isTermPageSimilarBlockWrapped()) {
     const selectedText = getSelectedTermTextEl();
@@ -4684,7 +4701,7 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   }
 
   const scrambleToken = termPageFontScrambleToken;
-  termPageSelectedFontSettled = false;
+  runInstantSameGroupSettle();
   refreshSwitchContent();
   const keepWrappedPreserve =
     termPagePreserveWrappedBlockSwitch && isTermPageSimilarBlockWrapped();
@@ -4692,17 +4709,6 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
   const overlayShown = showTermFontScrambleOverlay();
 
   if (!overlayShown) {
-    focusState.termEndXs = switchLayoutEndXs.slice();
-    applyFocusTermPositionsToDom();
-    termPageInlineTermSwitch = true;
-    try {
-      instantSettleSelectedTermAfterCut(layout);
-      if (!termPagePreserveWrappedBlockSwitch) {
-        restoreCensoredBarScreenBottoms(getFocusRayGroup(), preservedBarBottoms);
-      }
-    } finally {
-      termPageInlineTermSwitch = false;
-    }
     const settleToken = termPageFontScrambleToken;
     requestAnimationFrame(() => {
       if (settleToken !== termPageFontScrambleToken) return;
@@ -4713,84 +4719,6 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
     });
     return;
   }
-
-  const textSwitchDurationMs =
-    estimateFontScrambleDuration("typewriter-erase", oldText) +
-    estimateFontScrambleDuration("typewriter-erase", newText);
-  const textSwitchSecoloStartMs = estimateFontScrambleDuration(
-    "typewriter-erase",
-    oldText
-  );
-  const pushXs = switchLayoutEndXs.slice();
-  focusState.termEndXs = pushXs.slice();
-  applyFocusTermPositionsToDom();
-  freezeTermPageSiblingLayout();
-  refreshTermPageSiblingCensorBars();
-
-  let textSwitchOverlayDone = false;
-  let textSwitchPushDone = false;
-  let textSwitchHandoffStarted = false;
-
-  const tryCompleteTextSwitch = () => {
-    if (textSwitchHandoffStarted || !textSwitchOverlayDone || !textSwitchPushDone) {
-      return;
-    }
-    if (scrambleToken !== termPageFontScrambleToken) return;
-    textSwitchHandoffStarted = true;
-
-    stopTermPageLayoutAnimation();
-    if (focusState) {
-      focusState.termEndXs = switchLayoutEndXs.slice();
-      applyFocusTermPositionsToDom();
-    }
-    termPageCensoredPushProgress = 1;
-    termPageCensoredFrozenScreenAlign = null;
-    if (termPageCensoredPushTarget) {
-      applyTermPageCensoredPushFromTarget(termPageCensoredPushTarget, 1);
-    }
-    clearTermFontScrambleOverlay();
-
-    const finalZ = handoffSettledTermPageCensoredRow();
-    if (currentLayout) {
-      settleTermPageAfterFontScramble(currentLayout, finalZ ?? termPageScreenZ);
-    } else {
-      termPageSelectedFontSettled = true;
-    }
-    // #region agent log
-    const _dbgRay = getFocusRayGroup();
-    fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:textSwitchHandoff',message:'text switch handoff complete',data:{fontSettled:termPageSelectedFontSettled,endXs:focusState?.termEndXs?.slice(),frozenAlign:termPageCensoredFrozenScreenAlign,domXs:_dbgRay?[..._dbgRay.querySelectorAll('.sun-term')].map((el,i)=>({i,x:el.getAttribute('x'),transform:el.closest('.sun-term-wrap')?.getAttribute('transform'),font:el.style.fontFamily||'default',selected:el.closest('.sun-term-wrap')?.classList.contains('is-selected')})):null},timestamp:Date.now(),hypothesisId:'G',runId:'post-fix-4'})}).catch(()=>{});
-    // #endregion
-    if (
-      focusState?.phase === "locked" &&
-      currentLayout &&
-      termPageSelectedFontSettled
-    ) {
-      resyncTermPageScrollHeaderAfterSwitch(currentLayout);
-      syncTermHeaderPinState(currentLayout);
-    }
-    clearTermPagePreservedWrapAnchor();
-  };
-
-  termPageCensoredPushProgress = 0;
-  termPageCensoredPushTarget = null;
-  captureTermPageCensoredPushTarget(newText);
-  startTermPageLayoutAnimation(
-    scrambleToken,
-    pushXs,
-    pushXs,
-    textSwitchDurationMs,
-    textSwitchSecoloStartMs,
-    {
-      censorOnly: true,
-      onComplete: () => {
-        textSwitchPushDone = true;
-        tryCompleteTextSwitch();
-      },
-    }
-  );
-  // #region agent log
-  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:textSwitchLayoutAnim',message:'censor-only push anim',data:{pushXs,selectedIndex:newTermIndex,durationMs:textSwitchDurationMs,pushTarget:termPageCensoredPushTarget},timestamp:Date.now(),hypothesisId:'G',runId:'post-fix-4'})}).catch(()=>{});
-  // #endregion
 
   // Freeze the overlay's vertical anchor against the FINAL Secolo content so the
   // handoff to the real SVG title at the end lands with no baseline jump. The
@@ -4813,8 +4741,19 @@ function applyInstantSameGroupTermSwitch(newTermIndex) {
     onComplete: () => {
       if (scrambleToken !== termPageFontScrambleToken) return;
       clearTermFontScrambleOverlay();
-      textSwitchOverlayDone = true;
-      tryCompleteTextSwitch();
+      // The earlier rAF resync ran while `is-term-font-scrambling` was set, so it
+      // nulled the header rest anchor without being able to recapture it. Now that
+      // the overlay (and scramble class) is cleared and the page is still at scroll
+      // origin, recapture so later scrolling pins the group at the correct spot.
+      if (
+        focusState?.phase === "locked" &&
+        currentLayout &&
+        termPageSelectedFontSettled
+      ) {
+        resyncTermPageScrollHeaderAfterSwitch(currentLayout);
+        syncTermHeaderPinState(currentLayout);
+      }
+      clearTermPagePreservedWrapAnchor();
     },
   });
 
@@ -5029,6 +4968,17 @@ function clearTermPagePreservedWrapAnchor() {
 let termPageWrappedGroupScreenAnchor = null;
 let termPageApplyingWrappedGroupScreenAnchor = false;
 
+function syncTermSimilarLabelRestTopFromWrappedAnchor() {
+  const restTop =
+    termPageWrappedGroupScreenAnchor?.labelRestTop ??
+    termPagePreservedWrapAnchor?.labelRestTop ??
+    null;
+  if (restTop != null) {
+    termSimilarLabelRestTop = restTop;
+    termPageSimilarLabelAnchorStale = false;
+  }
+}
+
 function captureTermPageWrappedGroupScreenAnchor() {
   if (
     !isTermPageSimilarBlockWrapped() ||
@@ -5051,6 +5001,7 @@ function captureTermPageWrappedGroupScreenAnchor() {
     wasWrapped: true,
     rowCount: termPageCensoredWrapBlockMetrics.rowCount,
   };
+  syncTermSimilarLabelRestTopFromWrappedAnchor();
 }
 
 function applyTermPageWrappedGroupScreenAnchor(rayGroup = getFocusRayGroup()) {
@@ -6468,6 +6419,39 @@ function resetMediaCensorReveal() {
   mediaCensorRevealOpenProgress = 0;
 }
 
+function findMediaCensorSourceImage(image) {
+  const resolved = image?.url ? resolveTermImageUrl(image.url) : "";
+  if (!resolved) return null;
+
+  if (
+    termPageBleedImage?.url &&
+    resolveTermImageUrl(termPageBleedImage.url) === resolved &&
+    bleedBackdropImgEl instanceof HTMLImageElement
+  ) {
+    return bleedBackdropImgEl;
+  }
+
+  for (const imageEl of viewport?.querySelectorAll("img.sun-term-page__image") ?? []) {
+    if (!(imageEl instanceof HTMLImageElement)) continue;
+    const src = imageEl.getAttribute("src") || imageEl.dataset.src || "";
+    if (src && resolveTermImageUrl(src) === resolved) return imageEl;
+  }
+  return null;
+}
+
+function syncMediaCensorFrameObjectPosition(frameImg, sourceImg) {
+  if (!(frameImg instanceof HTMLImageElement)) return;
+  if (!(sourceImg instanceof HTMLImageElement)) {
+    frameImg.style.removeProperty("object-position");
+    return;
+  }
+  if (sourceImg.style.objectPosition) {
+    frameImg.style.objectPosition = sourceImg.style.objectPosition;
+  } else {
+    frameImg.style.removeProperty("object-position");
+  }
+}
+
 function applyMediaCensorFramePixelation(frameEl, openProgress) {
   const img = frameEl.querySelector(".sun-page-censor-media-frame__img");
   const canvas = frameEl.querySelector(".sun-page-censor-media-frame__pixel-canvas");
@@ -6496,7 +6480,8 @@ function applyMediaCensorFramePixelation(frameEl, openProgress) {
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  drawPixelatedCover(ctx, img, width, height, factor);
+  const { x: posX, y: posY } = getImageElementObjectPositionFraction(img, width, height);
+  drawPixelatedCover(ctx, img, width, height, factor, posX, posY);
 }
 
 function syncMediaCensorFrameContent(frameEl, image) {
@@ -6511,6 +6496,7 @@ function syncMediaCensorFrameContent(frameEl, image) {
     cancelTermImageLoad(img);
     img.removeAttribute("src");
     img.classList.remove("is-loaded", "is-pixelation-hidden");
+    img.style.removeProperty("object-position");
     const canvas = frameEl.querySelector(".sun-page-censor-media-frame__pixel-canvas");
     if (canvas instanceof HTMLCanvasElement) canvas.hidden = true;
     return;
@@ -6522,6 +6508,7 @@ function syncMediaCensorFrameContent(frameEl, image) {
     assignPreloadedTermImage(img, url);
   }
 
+  syncMediaCensorFrameObjectPosition(img, findMediaCensorSourceImage(image));
   applyMediaCensorFramePixelation(frameEl, mediaCensorRevealOpenProgress);
 }
 
@@ -6644,6 +6631,7 @@ function runMediaCensorDepartAnimation(onComplete) {
     const t = Math.min(1, (now - start) / duration);
     const eased = t * (2 - t);
     mediaCensorRevealOpenProgress = startProgress + (1 - startProgress) * eased;
+    syncMediaCensorFrame();
     syncMediaCensorFramePixels();
     if (t < 1) {
       mediaCensorRevealAnimFrame = requestAnimationFrame(frame);
@@ -6669,7 +6657,7 @@ function clearMediaCensorFrames() {
 }
 
 function syncMediaCensorFrame(layout = currentLayout) {
-  if (!shouldApplyMediaCensorPlaceholder()) {
+  if (!shouldApplyMediaCensorPlaceholder() && !mediaCensorDepartActive) {
     clearMediaCensorFrames();
     return;
   }
@@ -6681,7 +6669,7 @@ function syncMediaCensorFrame(layout = currentLayout) {
   const scrollTop = viewport?.scrollTop ?? 0;
   const screenRects = collectTermPageVisibleImageScreenRects(viewportHeight, scrollTop);
   if (!screenRects.length) {
-    clearMediaCensorFrames();
+    if (!mediaCensorDepartActive) clearMediaCensorFrames();
     return;
   }
 
@@ -6927,7 +6915,7 @@ function bindSameObjectMentionHover() {
       if (focusState?.phase !== "locked" || isTermNavigating()) return;
       markSameObjectHoverScrollActivity();
       syncSameObjectHoverDuringScroll();
-      if (shouldApplyMediaCensorPlaceholder()) syncMediaCensorFrame();
+      if (shouldApplyMediaCensorPlaceholder() || mediaCensorDepartActive) syncMediaCensorFrame();
     },
     { passive: true }
   );
@@ -10547,17 +10535,12 @@ function parseObjectPositionFraction(value) {
   };
 }
 
-/** Crop fractions matching the bleed `<img>` current `object-position`. */
-function getBleedBackdropObjectPositionFraction() {
-  const img = bleedBackdropImgEl;
-  const container = bleedBackdropEl;
+/** Crop fractions matching an `<img>` current `object-position` in a box. */
+function getImageElementObjectPositionFraction(img, boxW, boxH, fallback = "center top") {
   const objectPosition =
     (typeof img?.style.objectPosition === "string" && img.style.objectPosition.trim()) ||
     (img ? getComputedStyle(img).objectPosition : "") ||
-    "center top";
-
-  const boxW = container?.clientWidth ?? 0;
-  const boxH = container?.clientHeight ?? 0;
+    fallback;
   if (
     img &&
     boxW > 0 &&
@@ -10575,6 +10558,17 @@ function getBleedBackdropObjectPositionFraction() {
     );
   }
   return parseObjectPositionFraction(objectPosition);
+}
+
+/** Crop fractions matching the bleed `<img>` current `object-position`. */
+function getBleedBackdropObjectPositionFraction() {
+  const img = bleedBackdropImgEl;
+  const container = bleedBackdropEl;
+  return getImageElementObjectPositionFraction(
+    img,
+    container?.clientWidth ?? 0,
+    container?.clientHeight ?? 0
+  );
 }
 
 /**
@@ -12429,7 +12423,9 @@ function clearTermFontScrambleOverlay() {
   termFontOverlayBaselineY = null;
   termFontOverlayFrozenTop = null;
   termFontOverlayFrozenTopStart = null;
+  termFontOverlayFrozenBaselineY = null;
   termFontOverlayRoobertCorrection = null;
+  termPageLayoutAnimCensorOnly = false;
   if (termFontOverlayEl) {
     termFontOverlayEl.hidden = true;
     termFontOverlayEl.setAttribute("aria-hidden", "true");
@@ -12474,20 +12470,30 @@ function smoothstep01(t) {
   return x * x * (3 - 2 * x);
 }
 
-/** Push runs during the Secolo phase — starts when scramble switches to Secolo. */
+/** Layout push progress — normally starts before Secolo on longer titles (see lead). */
 function getTermPageCensoredPushProgress(
   elapsedMs,
   fontScrambleDurationMs,
-  secoloStartMs = termPageCensoredPushSecoloStartMs
+  layoutAnimStartMs = termPageCensoredPushSecoloStartMs
 ) {
-  const pushElapsed = Math.max(0, elapsedMs - secoloStartMs);
-  const secoloPhaseMs = Math.max(0, fontScrambleDurationMs - secoloStartMs);
+  const pushElapsed = Math.max(0, elapsedMs - layoutAnimStartMs);
+  const secoloPhaseMs = Math.max(0, fontScrambleDurationMs - layoutAnimStartMs);
   const capMs =
     secoloPhaseMs > 0
       ? Math.min(LAYOUT.termPageCensoredPushMs, secoloPhaseMs)
       : LAYOUT.termPageCensoredPushMs;
   const linearT = capMs > 0 ? Math.min(1, pushElapsed / capMs) : 1;
   return smoothstep01(linearT);
+}
+
+/** When the censored row + similar label should start moving (may lead Secolo on long titles). */
+function getTermPageLayoutAnimStartMs(secoloStartMs, text) {
+  const maxLead = LAYOUT.termPageCensoredPushLeadMs ?? 0;
+  if (!maxLead || secoloStartMs <= 0) return secoloStartMs;
+  const n = [...text].length;
+  const leadScale = clamp((n - 8) / 12, 0, 1);
+  const leadMs = Math.round(maxLead * leadScale);
+  return Math.max(0, secoloStartMs - leadMs);
 }
 
 /** Gap from Secolo Z to censored-row right edge; slack fades out so the final frame matches settle. */
@@ -12517,7 +12523,7 @@ function captureTermPageCensoredPushTarget(text) {
   syncTermFontOverlayPosition();
   const targetZ = termFontOverlayTermEl.getBoundingClientRect().left;
 
-  mountFontScrambleTerm(termFontOverlayTermEl, text, "roobert", { scrambling: true });
+  mountFontScrambleTerm(termFontOverlayTermEl, text, "secolo");
   syncTermFontOverlayPosition();
 
   if (wasHidden) {
@@ -12567,7 +12573,7 @@ function applyTermPageCensoredPushFromTarget(
 
   const t = Math.max(0, Math.min(1, progress));
 
-  // Roobert phase — keep censored siblings frozen; push only during Secolo.
+  // Before push begins, keep censored siblings frozen at their home-row position.
   if (t <= 0) {
     termPageScreenZ = null;
     applyTermPageCensoredRayOffset(0, 0);
@@ -12853,7 +12859,9 @@ function handoffSettledTermPageCensoredRow() {
     wrap?.querySelector(".sun-term-hit"),
     wrap?.querySelector(".sun-term-censor")
   );
-  snapOverlayToSettledSvgBaseline();
+  if (!termPageLayoutAnimCensorOnly) {
+    snapOverlayToSettledSvgBaseline();
+  }
 
   const settledZ = getSecoloTitleScreenZ(rayGroup, textEl);
   if (settledZ == null) return preservedScreenZ;
@@ -12995,6 +13003,8 @@ function getSecoloTitleNudgePx() {
 function getTermFontOverlayNudgeProgress() {
   if (!isTermFontScrambleOverlayVerticalLock()) return 1;
   if (isOverlayUsingRoobertFont(termFontOverlayTermEl)) return 0;
+  // Secolo→Secolo text switch: title ink stays Secolo — use settled nudge throughout.
+  if (termPageLayoutAnimCensorOnly) return 1;
   return clamp(termPageCensoredPushProgress, 0, 1);
 }
 
@@ -13138,6 +13148,20 @@ function measureTermFontOverlayTopForBaselineY(baselineY, overlayTermEl = termFo
   return top;
 }
 
+/** Mount-aware snap: set overlay top in the DOM and verify ink baseline matches target. */
+function snapOverlayTopToBaselineY(baselineY, overlayTermEl = termFontOverlayTermEl) {
+  if (!Number.isFinite(baselineY) || !overlayTermEl || !termFontOverlayEl) return null;
+  let top = measureTermFontOverlayTopForBaselineY(baselineY, overlayTermEl);
+  if (!Number.isFinite(top)) return null;
+  termFontOverlayEl.style.top = `${top}px`;
+  const trueBaseline = getOverlayTrueBaselineScreenY(overlayTermEl);
+  if (trueBaseline != null && Math.abs(trueBaseline - baselineY) >= 0.5) {
+    top += baselineY - trueBaseline;
+    termFontOverlayEl.style.top = `${top}px`;
+  }
+  return top;
+}
+
 /** True while scramble overlay cells still render Roobert (erase leg). */
 function isOverlayUsingRoobertFont(overlayTermEl = termFontOverlayTermEl) {
   if (!overlayTermEl?.children?.length) return false;
@@ -13203,7 +13227,9 @@ function syncTermFontOverlayPosition({ releaseVerticalLock = false, secoloInkBle
   const bounds = getTermTextScreenBounds(rayGroup, textEl);
   if (!bounds) return;
 
-  const inSecoloPhase = isTermFontScrambleSecoloPhase();
+  const inSecoloPhase =
+    isTermFontScrambleSecoloPhase() ||
+    (termPageLayoutAnimActive && termPageLayoutAnimCensorOnly);
   const anchorHeight = getFontScrambleAnchorHeight();
   const svgWidth = Math.max(bounds.maxX - bounds.minX, 1);
   const overlayWidth = inSecoloPhase
@@ -13215,11 +13241,18 @@ function syncTermFontOverlayPosition({ releaseVerticalLock = false, secoloInkBle
   termFontOverlayEl.style.height = `${anchorHeight}px`;
 
   const useFrozenTop =
-    termFontOverlayFrozenTop != null && !releaseVerticalLock;
+    (termFontOverlayFrozenTop != null || termFontOverlayFrozenBaselineY != null) &&
+    !releaseVerticalLock;
 
   let top = null;
   const usingRoobertFont = isOverlayUsingRoobertFont(termFontOverlayTermEl);
-  if (useFrozenTop) {
+  if (
+    useFrozenTop &&
+    termPageLayoutAnimCensorOnly &&
+    termFontOverlayFrozenTop != null
+  ) {
+    top = termFontOverlayFrozenTop;
+  } else if (useFrozenTop) {
     const topEnd = termFontOverlayFrozenTop;
     const topStart =
       termFontOverlayFrozenTopStart != null
@@ -13255,10 +13288,13 @@ function syncTermFontOverlayPosition({ releaseVerticalLock = false, secoloInkBle
 
   // Secolo phase: lock overlay ink onto the rising baseline target (Roobert uses
   // transform instead so per-frame top measure cannot oscillate).
+  // Same-font text switch: frozen top already matches settled ink — skip per-frame
+  // baseline chase while typewriter cells change width (causes visible Y jitter).
   if (
     useFrozenTop &&
     isTermFontScrambleOverlayVerticalLock() &&
     !usingRoobertFont &&
+    !termPageLayoutAnimCensorOnly &&
     termFontOverlayTermEl.childElementCount > 0
   ) {
     const targetBaseline = getTermFontOverlayBaselineTargetY(rayGroup, textEl);
@@ -13338,6 +13374,7 @@ function showTermFontScrambleOverlay() {
   setFontScrambleScale(getMapTypographyScale());
   termFontOverlayFrozenTop = null;
   termFontOverlayFrozenTopStart = null;
+  termFontOverlayFrozenBaselineY = null;
   termFontOverlayRoobertCorrection = null;
   termFontOverlayTermEl.replaceChildren();
   termFontOverlayEl.hidden = false;
@@ -13909,9 +13946,6 @@ function repackTermPageSiblingsForSwitch(newTermIndex, prevTermIndex = -1) {
     termPagePreserveWrappedBlockSwitch ||
     isTermPageSimilarBlockWrapped();
 
-  // #region agent log
-  fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:repackTermPageSiblingsForSwitch',message:'repack computed',data:{newTermIndex,prevTermIndex,wrapped,endXs,widths,domXs:[...rayGroup.querySelectorAll('.sun-term')].map((el,i)=>({i,x:el.getAttribute('x'),font:el.style.fontFamily||'default',w:el.getBBox?.().width}))},timestamp:Date.now(),hypothesisId:'A,D'})}).catch(()=>{});
-  // #endregion
   const preserveWrappedLayout =
     termPagePreserveWrappedBlockSwitch && Boolean(termPageCensoredWrapOffsets?.size);
   const wraps = [...rayGroup.querySelectorAll(".sun-term-wrap")];
@@ -14009,9 +14043,6 @@ function applyFocusTermPageLayout() {
   const selectedIndex = getFocusSelectedTermIndex();
 
   if (!termPageSelectedFontSettled && !termPageLayoutAnimActive) {
-    // #region agent log
-    fetch('http://127.0.0.1:7933/ingest/fb504b08-0904-4101-83ce-4ba6fe92a73c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'fa6952'},body:JSON.stringify({sessionId:'fa6952',location:'sun-map.js:applyFocusTermPageLayout:restoreFrozen',message:'restoring frozen sibling xs',data:{frozenXs:termPageSiblingFrozenXs?.slice(),currentEndXs:focusState.termEndXs?.slice(),selectedIndex:getFocusSelectedTermIndex(),siblingLayoutApplied:termPageSiblingLayoutApplied},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
     restoreFrozenTermPageSiblingXs();
     return;
   }
@@ -14184,7 +14215,15 @@ function getCensoredRowScreenBottom() {
 
 /** Fixed backdrop band from viewport top (under nav) through pinned similar label + censored row (screen px). */
 function getPinnedSimilarGroupBackdropBand(pinTop, labelHeight) {
-  const labelBottom = pinTop + labelHeight;
+  const liveLabelTop = termSimilarLabelEl?.getBoundingClientRect().top;
+  const effectivePinTop =
+    termSimilarLabelEl &&
+    !termSimilarLabelEl.hidden &&
+    Number.isFinite(liveLabelTop) &&
+    liveLabelTop > 0
+      ? liveLabelTop
+      : pinTop;
+  const labelBottom = effectivePinTop + labelHeight;
   const censoredBottom = getCensoredRowScreenBottom();
   const bottom = Math.max(labelBottom, censoredBottom ?? labelBottom);
   const top = 0;
@@ -15420,13 +15459,15 @@ function updateTermPageSimilarLabel(layout) {
     rowLooksAligned &&
     naturalTop != null &&
     termPageSiblingLayoutApplied &&
-    !hasTermPageWrappedGroupScreenAnchor() &&
     (termSimilarLabelRestTop == null ||
       termPageSimilarLabelAnchorStale ||
       Math.abs((termSimilarLabelRestTop ?? 0) - naturalTop) > 1.5)
   ) {
     termSimilarLabelRestTop = naturalTop;
     termPageSimilarLabelAnchorStale = false;
+    if (termPageWrappedGroupScreenAnchor) {
+      termPageWrappedGroupScreenAnchor.labelRestTop = naturalTop;
+    }
   }
 
   const pinned = isTermCensoredGroupPinned(scrollTop, viewportHeight);
@@ -15522,6 +15563,9 @@ const DEFAULT_BLEED_OBJECT_POSITION = "center top";
 const TERM_PAGE_IMAGE_OBJECT_POSITION = {
   /** Esther Hayut portrait — face sits below the default top anchor. */
   "assets/img/שלטון החוק/אסתר חיות.webp": "center 52%",
+  /** Ohad Hapoel at High Court — shirt text is the subject; lift off benches above. */
+  "assets/img/אנרכיסטים/אוהד הפועל תל אביב בדיון בבג\"ץ על החולצה נגד המשטרה.webp":
+    "center 44%",
 };
 
 function resolveTermPageImageObjectPosition(url) {
@@ -15875,6 +15919,7 @@ function runSelectedTermFontScramble(onComplete) {
     TERM_FONT_SCRAMBLE_MODE,
     originalText
   );
+  const layoutAnimStartMs = getTermPageLayoutAnimStartMs(secoloStartMs, originalText);
   const layoutTargets = computeTermPageLayoutTargets();
   const startXs = termPageSiblingFrozenXs?.slice() ?? focusState.termEndXs.slice();
   const endXs = layoutTargets?.endXs ?? startXs.slice();
@@ -15952,10 +15997,16 @@ function runSelectedTermFontScramble(onComplete) {
   }
   syncTermFontOverlayPosition();
 
-  startTermPageLayoutAnimation(scrambleToken, startXs, endXs, durationMs, secoloStartMs);
+  startTermPageLayoutAnimation(
+    scrambleToken,
+    startXs,
+    endXs,
+    durationMs,
+    layoutAnimStartMs
+  );
   updateCensoredAlignmentDuringFontScramble();
   if (!termPagePreserveWrappedBlockSwitch) {
-    scheduleSimilarLabelScramble(secoloStartMs);
+    scheduleSimilarLabelScramble(layoutAnimStartMs);
   }
 }
 

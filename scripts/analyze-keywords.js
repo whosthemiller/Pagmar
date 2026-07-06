@@ -439,7 +439,7 @@ function isMaavarPassagewayContext(text, start, end) {
   const after = text.slice(end).trimStart();
   const word = text.slice(start, end);
 
-  if (/^ל(קו|גבול|זירת|כך|מותר|שיקולים)/.test(after)) return false;
+  if (/^ל(קו|גבול|זירת|כך|מותר|שיקולים|מונח|עימות)/.test(after)) return false;
   if (/^לו(?:[,.\s]|$)/.test(after)) return false;
   if (/^ל["״]/.test(after)) return false;
   if (/^אל\s/.test(after)) return false;

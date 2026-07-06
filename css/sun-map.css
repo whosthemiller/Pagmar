@@ -1186,7 +1186,9 @@ body,
 .sun-term-page__definition .sun-def-mention,
 .sun-term-page__side-text .sun-def-mention,
 .sun-term-page__label-row-text .sun-def-mention,
-.sun-term-page__label-nav-panel-text .sun-def-mention {
+.sun-term-page__label-nav-panel-text .sun-def-mention,
+.sun-term-page__caption .sun-def-mention,
+.sun-term-bleed-caption .sun-def-mention {
   position: relative;
   font-size: calc(1em - 0.5pt);
   text-decoration: underline;
@@ -1232,7 +1234,9 @@ body,
 .sun-term-page__side-text .sun-def-mention--external,
 .sun-term-page__label-row-text .sun-def-mention--external,
 .sun-term-page__label-nav-panel-text .sun-def-mention--external,
-.sun-term-meta__value .sun-def-mention--external {
+.sun-term-meta__value .sun-def-mention--external,
+.sun-term-page__caption .sun-def-mention--external,
+.sun-term-bleed-caption .sun-def-mention--external {
   cursor: pointer;
   pointer-events: auto;
   text-decoration: underline;
@@ -1242,7 +1246,9 @@ body,
 .sun-term-page__side-text .sun-def-mention--same-object,
 .sun-term-page__label-row-text .sun-def-mention--same-object,
 .sun-term-page__label-nav-panel-text .sun-def-mention--same-object,
-.sun-term-meta__value .sun-def-mention--same-object {
+.sun-term-meta__value .sun-def-mention--same-object,
+.sun-term-page__caption .sun-def-mention--same-object,
+.sun-term-bleed-caption .sun-def-mention--same-object {
   color: transparent;
   -webkit-text-fill-color: transparent;
   text-decoration: none;
@@ -1266,6 +1272,11 @@ body,
   box-decoration-break: clone;
   padding-inline: 1px;
   margin-inline: -1px;
+}
+
+.sun-term-page__caption .sun-def-mention--same-object,
+.sun-term-bleed-caption .sun-def-mention--same-object {
+  background-size: 100% calc(1lh * 14 / 16 + 1px);
 }
 
 .sun-viewport.is-same-object-mention-hover .sun-def-mention--same-object,
@@ -2115,6 +2126,10 @@ img.sun-title-row-image__img.is-loaded {
 
 .sun-home-scroll-hint.is-visible {
   opacity: 1;
+}
+
+body:has(.sun-app.is-about-active) .sun-home-scroll-hint {
+  display: none;
 }
 
 .sun-home-scroll-hint[hidden] {

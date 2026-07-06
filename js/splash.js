@@ -55,6 +55,7 @@ const imageBandEl = splashEl?.querySelector(".splash__image-band");
 const imageEl = splashEl?.querySelector(".splash__image");
 const canvasEl = splashEl?.querySelector(".splash__pixel-canvas");
 const scrollHintTextEl = splashEl?.querySelector(".splash__scroll-hint-text");
+const warningTextEl = splashEl?.querySelector(".splash__warning-text");
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -318,6 +319,7 @@ export function dismissSplash(options = {}) {
   beginScrollHandoff(options.scrollDeltaY ?? 0);
 
   startContinuousScramble(scrollHintTextEl);
+  startContinuousScramble(warningTextEl);
 
   splashEl.classList.add("is-dismissed");
   splashEl.setAttribute("aria-hidden", "true");
@@ -325,6 +327,7 @@ export function dismissSplash(options = {}) {
   window.setTimeout(() => {
     endScrollHandoff();
     abortLetterShuffle(scrollHintTextEl);
+    abortLetterShuffle(warningTextEl);
     splashEl.hidden = true;
     globalThis.__SPLASH_DISMISSED__ = true;
     globalThis.dispatchEvent(new CustomEvent("splash-dismissed"));
