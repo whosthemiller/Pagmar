@@ -8685,7 +8685,6 @@ function bindTermPageBackHome() {
   });
   termBackHomeEl.addEventListener("click", (event) => {
     event.preventDefault();
-    if (isTermNavigating() || isPageNavTransitionActive()) return;
     if (textEl) stopLetterShuffle(textEl);
     handleMapNav("home");
   });
@@ -16723,7 +16722,15 @@ function runTermDirectNav(showDestination, enterView, timing = PAGE_TERM_EXIT_TI
  */
 function navigateTermToHome() {
   stabilizeFocusForNav();
-  if (!focusState || focusState.phase !== "locked") return false;
+  if (!focusState) {
+    syncNavAfterPageEnter();
+    return true;
+  }
+  if (focusState.phase === "unfocusing") {
+    applyUnfocusPendingOptions({});
+    return true;
+  }
+  if (focusState.phase !== "locked") return false;
   if (isPageNavTransitionActive()) return false;
 
   releaseSiblingTermCensorHold();
@@ -20041,16 +20048,15 @@ function applyArcWheelDelta(
   deltaY,
   { fromSplashHandoff = false, isMouseWheel = false, wheelLegacyDeltaY = null } = {}
 ) {
-  if (!currentLayout || isFocusActive() || isTermNavigating()) return false;
+  if (!currentLayout) return false;
 
+  // Timeline uses its own year scroll — don't let stale term focus block it.
   if (isOverviewTimelineMode() && yearScroll) {
-    yearScroll.handleWheel(deltaY, {
-      isMouseWheel,
-      wheelLegacyDeltaY,
-      discreteWheel: true,
-    });
+    yearScroll.handleWheel(deltaY);
     return true;
   }
+
+  if (isFocusActive() || isTermNavigating()) return false;
 
   if (isOverviewTagsMode()) {
     return false;
@@ -20295,6 +20301,7 @@ function bindWheelScroll() {
       }
 
       if (
+        !isOverviewTimelineMode() &&
         isViewportTermScrollable() &&
         isFocusActive() &&
         !isTermNavigating() &&

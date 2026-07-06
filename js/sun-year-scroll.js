@@ -99,7 +99,6 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
   let lastFastWheelAt = 0;
   let lastFastDirection = 0;
   let yearSnapFrame = null;
-  let yearSnapAnimTarget = null;
   let yearMomentumFrame = null;
   let yearSnapDebounceTimer = null;
   let boundsMin = minYear;
@@ -130,7 +129,6 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
       cancelAnimationFrame(yearSnapFrame);
       yearSnapFrame = null;
     }
-    yearSnapAnimTarget = null;
   }
 
   function cancelYearMomentum() {
@@ -204,13 +202,11 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
 
     if (distance < 0.0005) {
       yearScrollOffset = end;
-      yearSnapAnimTarget = null;
       notifyChange();
       return;
     }
 
     cancelYearMomentum();
-    yearSnapAnimTarget = end;
     const startTime = performance.now();
     const durationMs =
       distance < 0.55
@@ -227,7 +223,6 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
       } else {
         yearScrollOffset = end;
         yearSnapFrame = null;
-        yearSnapAnimTarget = null;
         notifyChange();
       }
     }
@@ -246,14 +241,9 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     animateYearSnapTo(nearest);
   }
 
-  function getStepBaseYear() {
-    if (yearSnapAnimTarget != null) return yearSnapAnimTarget;
-    return Math.round(yearScrollOffset);
-  }
-
   function stepAdjacentYear(deltaY) {
     const direction = Math.sign(deltaY) || 1;
-    const base = getStepBaseYear();
+    const base = Math.round(yearScrollOffset);
     const target = clamp(base - direction, boundsMin, boundsMax);
 
     if (target === base && Math.abs(yearScrollOffset - base) < 0.001) {
@@ -264,51 +254,25 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     return true;
   }
 
-  function stepOneYear(deltaY) {
-    const direction = Math.sign(deltaY) || 1;
-    const base = getStepBaseYear();
-    cancelYearSnapAnimation();
-    clearTimeout(yearSnapDebounceTimer);
-
-    const target = clamp(base - direction, boundsMin, boundsMax);
-    if (target === base && Math.abs(yearScrollOffset - base) < 0.001) {
-      return false;
-    }
-
-    animateYearSnapTo(target);
-    lastFastWheelAt = performance.now();
-    lastFastDirection = direction;
-    lastWheelAt = performance.now();
-    return true;
-  }
-
-  function handleFastWheel(deltaY, { skipCooldown = false } = {}) {
+  function handleFastWheel(deltaY) {
     const now = performance.now();
     const direction = Math.sign(deltaY) || 1;
 
     if (
-      !skipCooldown &&
       now - lastFastWheelAt < cfg.yearFastScrollCooldownMs &&
       direction === lastFastDirection
     ) {
       return;
     }
 
-    stepOneYear(direction * 120);
-  }
+    cancelYearSnapAnimation();
+    clearTimeout(yearSnapDebounceTimer);
 
-  /**
-   * Physical mouse wheel — one legacy notch (±120) = one year transition.
-   * macOS can emit tiny pixel `deltaY` while keeping legacy `wheelDeltaY` in
-   * 120-step notches; accelerated bursts may report ±240/±360 in one event but
-   * each impulse still advances only one year.
-   */
-  function handleMouseWheel(wheelLegacyDeltaY) {
-    const absLegacy = Math.abs(wheelLegacyDeltaY);
-    if (absLegacy <= 0) return false;
-    const direction = Math.sign(wheelLegacyDeltaY) || 1;
-    stepOneYear(direction * 120);
-    return true;
+    if (!stepAdjacentYear(deltaY)) return;
+
+    lastFastWheelAt = now;
+    lastFastDirection = direction;
+    lastWheelAt = now;
   }
 
   function handleFineWheel(deltaY) {
@@ -363,32 +327,12 @@ export function createYearScrollController({ minYear, maxYear, onChange, config 
     yearMomentumFrame = requestAnimationFrame(tick);
   }
 
-  function handleWheel(
-    deltaY,
-    { isMouseWheel = false, wheelLegacyDeltaY = null, discreteWheel = false } = {}
-  ) {
+  function handleWheel(deltaY) {
     pushWheelHistory(deltaY);
-
-    const legacyNotch =
-      typeof wheelLegacyDeltaY === "number" &&
-      wheelLegacyDeltaY !== 0 &&
-      wheelLegacyDeltaY % 120 === 0;
-
-    if (
-      discreteWheel &&
-      (isMouseWheel || legacyNotch) &&
-      handleMouseWheel(wheelLegacyDeltaY ?? deltaY)
-    ) {
-      return;
-    }
-
-    if (isMouseWheel && handleMouseWheel(wheelLegacyDeltaY ?? deltaY)) {
-      return;
-    }
 
     const mode = classifyWheelMode(deltaY, wheelHistory, peakMarker, cfg);
     if (mode === "fast") {
-      handleFastWheel(deltaY, { skipCooldown: discreteWheel });
+      handleFastWheel(deltaY);
       return;
     }
 
