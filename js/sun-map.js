@@ -18385,6 +18385,10 @@ async function renderIncremental(layout, frameBudgetMs = 10) {
 function clearTermHover() {
   if (hoveredWrap?.isConnected) {
     stopLetterShuffle(getLetterShuffleTarget(hoveredWrap));
+    hoveredWrap.classList.remove("is-hovered");
+  }
+  if (hoveredRay?.isConnected) {
+    hoveredRay.classList.remove("is-term-hover");
   }
   hoveredRay = null;
   hoveredWrap = null;
@@ -18414,6 +18418,10 @@ function setTermHover(ray, wrap, { scramble = true } = {}) {
   cancelCensorUncensorSequence();
   if (hoveredRay === ray && hoveredWrap === wrap) return;
   clearTermHover();
+  // Drop stale hover classes when pointer hops between siblings on the same row.
+  for (const staleWrap of ray.querySelectorAll(".sun-term-wrap.is-hovered")) {
+    if (staleWrap !== wrap) staleWrap.classList.remove("is-hovered");
+  }
   hoveredRay = ray;
   hoveredWrap = wrap;
   if (isOverviewTimelineMode()) {
@@ -19018,7 +19026,7 @@ function bindTermHover() {
     if (wrap && (!related || !wrap.contains(related))) {
       if (lastPointer.known) {
         const stillOver = findOverviewHoverTargetAtPointer(lastPointer.x, lastPointer.y);
-        if (stillOver?.wrap === wrap) return;
+        if (stillOver) return;
       }
       clearOverviewTermHover();
     }

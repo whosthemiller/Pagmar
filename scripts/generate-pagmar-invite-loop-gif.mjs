@@ -18,7 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const FONT_PATH = path.join(ROOT, "assets/fonts/RoobertHebrewCollectionVF-TRIAL.ttf");
 
-const LINES = ["מגישה פגמ״ר", "כיתה 128", "מחר ב\u05be12:00", "תבואו (:"];
+const LINES = ["מגישה פגמ״ר", "כיתה 128", "מחר ב\u05be17:30", "תבואו (:"];
 const FULL_TEXT = LINES.join("\n");
 
 const SHUFFLE_CHARSET =
