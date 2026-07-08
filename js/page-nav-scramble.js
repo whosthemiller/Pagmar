@@ -87,6 +87,9 @@ export function setPageNavViewSwitchSync(handler) {
 let exitTimerId = null;
 /** @type {number | null} */
 let enterTimerId = null;
+/** Pending enter-settle completion — must run if the enter timer is flushed early. */
+/** @type {(() => void) | null} */
+let pendingEnterComplete = null;
 /** @type {Element[]} */
 let exitContentElements = [];
 /** @type {Set<Element>} */
@@ -144,11 +147,21 @@ function clearExitTimer() {
   }
 }
 
-function clearEnterTimer() {
+function cancelEnterTimer() {
   if (enterTimerId != null) {
     clearTimeout(enterTimerId);
     enterTimerId = null;
   }
+}
+
+function abandonPendingEnterComplete() {
+  pendingEnterComplete = null;
+}
+
+/** Cancel the enter timer without running its unlock callback (replaced by a new enter). */
+function clearEnterTimer() {
+  cancelEnterTimer();
+  abandonPendingEnterComplete();
 }
 
 /** @param {Element[]} elements */
@@ -219,12 +232,17 @@ function settleAllContinuous(onComplete) {
 /** @param {() => void} [onComplete] @param {number} [enterMs] */
 function scheduleEnterSettle(onComplete, enterMs = PAGE_ROUTE_TIMING.enterMs) {
   clearEnterTimer();
-  enterTimerId = window.setTimeout(() => {
-    enterTimerId = null;
+  pendingEnterComplete = () => {
     settleAllContinuous(() => {
       clearSiteNavShuffleUnderlines();
       onComplete?.();
     });
+  };
+  enterTimerId = window.setTimeout(() => {
+    enterTimerId = null;
+    const complete = pendingEnterComplete;
+    pendingEnterComplete = null;
+    complete?.();
   }, enterMs);
 }
 
@@ -362,6 +380,15 @@ export function runPageNavScrambleTransition(
         onEnterComplete?.();
         return;
       }
+      if (enterView === "overview") {
+        // Tags/timeline enter can stall settle (timeline rebuilds SVG labels every
+        // frame; tags grid scramble can outlive the visible beat). Keep the visual
+        // scramble, but unlock navigation immediately — same pattern as index.
+        scrambleEnterView(enterView, undefined, enterMs);
+        pageNavTransitionActive = false;
+        onEnterComplete?.();
+        return;
+      }
       const finish = () => {
         pageNavTransitionActive = false;
         onEnterComplete?.();
@@ -408,6 +435,8 @@ export function scramblePageView(view, onComplete) {
 export function cancelPageNavScramble() {
   pageNavTransitionActive = false;
   indexEnterScrambleActive = false;
+  // Drop pending unlock — cancel itself already clears the nav lock.
+  abandonPendingEnterComplete();
   cleanupPageScramble();
 }
 

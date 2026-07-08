@@ -72,13 +72,20 @@ function parseCsv(text) {
   );
 }
 
+/** ASCII/curly quotes → Hebrew geresh (׳) / gershayim (״). */
+function normalizeHebrewPunctuation(text) {
+  return String(text ?? "")
+    .replace(/[\u0027\u2018\u2019\u201B\u2032]/g, "\u05F3")
+    .replace(/[\u0022\u201C\u201D\u201E\u201F\u00AB\u00BB\u2033]/g, "\u05F4");
+}
+
 function rowsToObjects(rows) {
   if (!rows.length) return [];
   const header = rows[0];
   return rows.slice(1).map((values) => {
     const record = {};
     for (let i = 0; i < header.length; i++) {
-      record[header[i]] = values[i] || "";
+      record[header[i]] = normalizeHebrewPunctuation(values[i] || "");
     }
     return record;
   });

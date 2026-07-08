@@ -16854,11 +16854,14 @@ function beginOverviewClose({ snap = false } = {}) {
   // scramble is the animation. Snap the overview state closed — the exact mirror
   // of the open direction (tags scramble out, grid hides, sun snaps to home and
   // scrambles in) with no mid-transition gap where the tags vanish.
+  // Timeline snap (e.g. → index/about) also takes this path — tear down tick
+  // labels here, since setOverviewTarget(0) is skipped and would not hide them.
   cancelOverviewAnimation();
   overviewTarget = 0;
   overviewProgress = 0;
   hideTimelineEventHint({ immediate: true });
   hideTimelineScrollHint();
+  stopTimelineTicksLoop();
   syncOverviewTermsGridVisibility();
   refreshMapLayoutFromViewport();
   if (currentLayout) render(currentLayout);
@@ -17146,6 +17149,12 @@ function openTermFromTimeline(termId) {
  * @param {string} termId
  */
 function openTermViaHome(termId) {
+  // Enter scramble can leave a stale page-nav lock after tags/timeline look ready
+  // (settle may never finish while the ring re-renders). Once overview is open,
+  // don't block term clicks behind that lock.
+  if (isPageNavTransitionActive() && isInOverview()) {
+    cancelPageNavScramble();
+  }
   if (isPageNavTransitionActive() || isFocusActive() || isTermNavigating()) return;
   if (isAtHomeView()) {
     openTermById(termId);
@@ -17960,7 +17969,8 @@ function timelineTicksFrame(now) {
   timelineTicksRafId = null;
 
   if (!isTimelineTicksLoopDesired()) {
-    pauseTimelineTicksLoop();
+    // Tear down ticks + year/title labels — pause alone leaves labels on screen.
+    stopTimelineTicksLoop();
     return;
   }
 
@@ -18349,7 +18359,8 @@ function finalizeRender(layout) {
   if (isTimelineTicksLoopDesired()) {
     startTimelineTicksLoop();
   } else {
-    pauseTimelineTicksLoop();
+    // Hide year/title tick labels when leaving timeline (pause keeps them).
+    stopTimelineTicksLoop();
   }
 }
 

@@ -1,5 +1,6 @@
 /**
  * Hebrew typography rules for all site text:
+ * - Hebrew punctuation: ASCII/curly quotes → geresh (׳) / gershayim (״).
  * - No orphan words: the last two words in each line stay together.
  * - Maqaf (־) and hyphens stay with both adjacent words (never alone at line
  *   start or end). Em dash (—) may end a wrapped line only when followed by a
@@ -13,13 +14,32 @@ const WORD_JOINER = "\u2060";
 const MAQAF = "\u05BE";
 const EM_DASH = "\u2014";
 const EN_DASH = "\u2013";
+const GERESH = "\u05F3"; // ׳
+const GERSHAYIM = "\u05F4"; // ״
 const HYPHEN_CHARS = `-${MAQAF}`;
 /** Dashes that must not be orphaned at line end (excludes em dash). */
 const SPACED_DASH_KEEP_WITH_NEXT = `${HYPHEN_CHARS}${EN_DASH}`;
 /** Em/en dash glued to both neighbors (year and number ranges). */
 const TIGHT_RANGE_DASH = `${EM_DASH}${EN_DASH}`;
 
+/** ASCII/curly single quotes and apostrophes → Hebrew geresh. */
+const SINGLE_QUOTE_RE = /[\u0027\u2018\u2019\u201B\u2032]/g;
+/** ASCII/curly/guillemet double quotes → Hebrew gershayim. */
+const DOUBLE_QUOTE_RE = /[\u0022\u201C\u201D\u201E\u201F\u00AB\u00BB\u2033]/g;
+
 const SENTENCE_END_RE = /[.?!…׃]$/u;
+
+/**
+ * Normalize Latin/curly quotation marks to Hebrew geresh / gershayim.
+ * Apply to any user-facing Hebrew copy so punctuation stays consistent
+ * even when source text still uses ASCII or smart quotes.
+ */
+export function normalizeHebrewPunctuation(text) {
+  if (!text) return text;
+  return text
+    .replace(SINGLE_QUOTE_RE, GERESH)
+    .replace(DOUBLE_QUOTE_RE, GERSHAYIM);
+}
 
 const CLOSING_TRAIL_CHARS = new Set([
   ")",
@@ -118,12 +138,15 @@ function applyLineTypography(line) {
 }
 
 /**
- * Apply orphan and hyphen rules to plain text.
+ * Apply orphan, hyphen, and Hebrew-punctuation rules to plain text.
  * Handles line breaks (\n) as separate typography units.
  */
 export function applyTypographyRules(text) {
   if (!text) return text;
-  return text.split("\n").map(applyLineTypography).join("\n");
+  return normalizeHebrewPunctuation(text)
+    .split("\n")
+    .map(applyLineTypography)
+    .join("\n");
 }
 
 /**
@@ -134,7 +157,9 @@ export function applyTypographyRules(text) {
 export function applyBlockTypography(text, options = {}) {
   if (!text) return text;
   const { ensurePeriod = true } = options;
-  const collapsed = text.trim().replace(/\s*\n+\s*/g, " ");
+  const collapsed = normalizeHebrewPunctuation(text)
+    .trim()
+    .replace(/\s*\n+\s*/g, " ");
   const normalized = ensurePeriod ? ensureSentenceEnding(collapsed) : collapsed;
   return applyLineTypography(normalized);
 }
