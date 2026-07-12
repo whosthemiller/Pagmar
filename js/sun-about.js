@@ -6,7 +6,7 @@ import {
 import { syncGridCssVars } from "./grid-metrics.js";
 import { applyTypographyRules } from "./typography.js";
 
-const BRAND_PHRASE = "טרמינולוגיה פוליטית";
+const BRAND_PHRASE = "אינדקס המחיקה";
 
 const INTRO_PARAGRAPHS = [
   `${BRAND_PHRASE} הוא אינדקס אינטראקטיבי של מושגים בעלי משמעויות פרשנויות לשוניות שונות בשיח הפוליטי בישראל. הוא בוחן כיצד מילים אינן רק מתארות מציאות, אלא גם מעצבות אותה.`,

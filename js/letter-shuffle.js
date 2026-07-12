@@ -1,7 +1,6 @@
-const SVG_NS = "http://www.w3.org/2000/svg";
+import { randomScrambleGlyph } from "./scramble-glyphs.js";
 
-const SHUFFLE_CHARSET =
-  "אבגדהוזחטיכלמנסעפצקרשתABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*?";
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 const CONFIG = {
   cycles: 4,
@@ -92,7 +91,7 @@ function measureGraphemeWidths(text, font) {
 }
 
 function randomGlyph() {
-  return SHUFFLE_CHARSET[Math.floor(Math.random() * SHUFFLE_CHARSET.length)];
+  return randomScrambleGlyph();
 }
 
 function isTermMetaShuffleEl(root) {

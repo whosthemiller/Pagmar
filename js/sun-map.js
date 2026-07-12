@@ -205,44 +205,22 @@ const LOADING_WORK_WEIGHT = {
   finish: 6,
 };
 
-/** Millisecond estimates mirrored from init() — used only to derive a constant bar rate. */
-const LOADING_ESTIMATE_MS = {
-  dataFetch: 2000,
-  setup: [1400, 900],
-  rebuild: 5000,
-  titleRow: 500,
-  warmImage: 800,
-  buffer: 1500,
-};
-
 const LOADING_BAR_CAP_BEFORE_DONE = 0.94;
-/** Minimum time the censor intro stays visible before revealing the splash. */
-const LOADING_MIN_VISIBLE_MS = 2200;
+/** Hold the bare title readable before the censor bar starts filling. */
+const LOADING_READ_DELAY_MS = 500;
+/** Wall-clock duration for a full 0→1 fill at a constant rate (after the read delay). */
+const LOADING_FILL_MS = 2000;
+const LOADING_DISPLAY_RATE = 1 / LOADING_FILL_MS;
 
 const loadingWork = {
   total: 1,
   done: 0,
   display: 0,
-  displayRate: 0.94 / 10000,
   label: "טוען נתונים…",
   raf: 0,
   rafLastTime: 0,
   startedAt: 0,
 };
-
-function computeLoadingEstimatedMs(setupSteps = 2) {
-  const setupMs = LOADING_ESTIMATE_MS.setup
-    .slice(0, setupSteps)
-    .reduce((sum, ms) => sum + ms, 0);
-  return (
-    LOADING_ESTIMATE_MS.dataFetch +
-    setupMs +
-    LOADING_ESTIMATE_MS.rebuild +
-    LOADING_ESTIMATE_MS.titleRow +
-    LOADING_ESTIMATE_MS.warmImage +
-    LOADING_ESTIMATE_MS.buffer
-  );
-}
 
 function resetLoadingWork(setupSteps = 2) {
   loadingWork.total =
@@ -253,8 +231,6 @@ function resetLoadingWork(setupSteps = 2) {
     LOADING_WORK_WEIGHT.warmImage +
     LOADING_WORK_WEIGHT.finish;
   loadingWork.done = 0;
-  const estimatedMs = computeLoadingEstimatedMs(setupSteps);
-  loadingWork.displayRate = LOADING_BAR_CAP_BEFORE_DONE / estimatedMs;
 }
 
 function setLoadingWorkLabel(label) {
@@ -309,27 +285,23 @@ function stopLoadingDisplayTick() {
   loadingWork.rafLastTime = 0;
 }
 
-/** Keep the censor intro visible for at least LOADING_MIN_VISIBLE_MS. */
-function waitForLoadingMinimum() {
-  const start = loadingWork.startedAt || performance.now();
-  stopLoadingDisplayTick();
+/** Wait until the censor bar reaches 1 at the same constant fill rate. */
+function waitForLoadingBarComplete() {
+  ensureLoadingDisplayTick();
 
   return new Promise((resolve) => {
-    const step = (now) => {
-      const elapsed = now - start;
-      const t = Math.min(1, elapsed / LOADING_MIN_VISIBLE_MS);
-      loadingWork.display = t;
-      updateLoadingProgress(t);
-
-      if (elapsed < LOADING_MIN_VISIBLE_MS) {
-        requestAnimationFrame(step);
-      } else {
+    const check = () => {
+      if (loadingWork.display >= 1) {
         loadingWork.display = 1;
         updateLoadingProgress(1);
+        stopLoadingDisplayTick();
         resolve();
+        return;
       }
+      ensureLoadingDisplayTick();
+      requestAnimationFrame(check);
     };
-    requestAnimationFrame(step);
+    requestAnimationFrame(check);
   });
 }
 
@@ -341,14 +313,19 @@ function ensureLoadingDisplayTick() {
     const dt = now - loadingWork.rafLastTime;
     loadingWork.rafLastTime = now;
 
-    const maxDisplay =
-      loadingWork.done >= loadingWork.total ? 1 : LOADING_BAR_CAP_BEFORE_DONE;
-    if (loadingWork.display < maxDisplay) {
-      loadingWork.display = Math.min(
-        maxDisplay,
-        loadingWork.display + loadingWork.displayRate * dt
-      );
+    const elapsed = now - (loadingWork.startedAt || now);
+    // Keep the title readable for LOADING_READ_DELAY_MS before the bar moves.
+    if (elapsed >= LOADING_READ_DELAY_MS) {
+      const maxDisplay =
+        loadingWork.done >= loadingWork.total ? 1 : LOADING_BAR_CAP_BEFORE_DONE;
+      if (loadingWork.display < maxDisplay) {
+        loadingWork.display = Math.min(
+          maxDisplay,
+          loadingWork.display + LOADING_DISPLAY_RATE * dt
+        );
+      }
     }
+
     updateLoadingProgress(loadingWork.display, loadingWork.label);
 
     const stillLoading = loadingWork.done < loadingWork.total;
@@ -20439,7 +20416,7 @@ async function warmInitialViewImages(layout) {
 
 function updateLoadingProgress(ratio, label) {
   const pct = clamp(ratio, 0, 1) * 100;
-  // Label stays fixed ("טרמינולוגיה פוליטית"); the censor bar conveys progress.
+  // Label stays fixed ("אינדקס המחיקה"); the censor bar conveys progress.
   void label;
   if (loadingBarFillEl) loadingBarFillEl.style.width = `${pct}%`;
   if (loadingProgressEl) loadingProgressEl.textContent = "";
@@ -20447,7 +20424,7 @@ function updateLoadingProgress(ratio, label) {
 
 function finishLoadingWithScramble() {
   advanceLoadingWork(LOADING_WORK_WEIGHT.finish, "מוכן");
-  return waitForLoadingMinimum().then(
+  return waitForLoadingBarComplete().then(
     () =>
       new Promise((resolve) => {
         loadingEl?.classList.add("hidden");

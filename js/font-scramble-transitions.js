@@ -1,5 +1,7 @@
-const SHUFFLE_CHARSET =
-  "אבגדהוזחטיכלמנסעפצקרשתABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*?";
+import {
+  SCRAMBLE_CHARSET,
+  randomScrambleGlyph,
+} from "./scramble-glyphs.js";
 
 /** @typedef {"roobert" | "secolo"} FontKind */
 
@@ -142,7 +144,24 @@ function getMeasureCtx() {
 }
 
 function randomGlyph() {
-  return SHUFFLE_CHARSET[Math.floor(Math.random() * SHUFFLE_CHARSET.length)];
+  return randomScrambleGlyph();
+}
+
+/** Show a scramble noise glyph (or space). Visibility uses 0/1 for typewriter hide/show. */
+function paintScrambleCell(glyph, cell, final, { visible = true, scrambling = true } = {}) {
+  const isSpace = final === " " || final === "\u00a0";
+  if (!visible) {
+    glyph.textContent = final;
+    cell.style.opacity = "0";
+    return;
+  }
+  if (!scrambling || isSpace) {
+    glyph.textContent = final;
+    cell.style.opacity = "1";
+    return;
+  }
+  glyph.textContent = randomGlyph();
+  cell.style.opacity = "1";
 }
 
 function shuffleIndices(count) {
@@ -392,7 +411,7 @@ function getRoobertScrambleMinCellWidth() {
   if (roobertScrambleMinCellWidth != null) return roobertScrambleMinCellWidth;
   roobertScrambleMinCellWidth = Math.max(
     4,
-    ...[...SHUFFLE_CHARSET].map(
+    ...[...SCRAMBLE_CHARSET].map(
       (ch) => measureGraphemeWidths(ch, FONT_SPECS.roobert)[0]
     )
   );
@@ -587,8 +606,7 @@ function setCharsScramble(state, fontKind) {
   const scrambling = true;
   state.chars.forEach(({ glyph, cell, final }, index) => {
     applyCharForFont(glyph, fontKind, state.widthSets, index, scrambling);
-    glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
-    cell.style.opacity = "1";
+    paintScrambleCell(glyph, cell, final, { scrambling: true });
   });
   syncTermLockWidth(state.root, state.chars);
 }
@@ -634,12 +652,7 @@ function runSettleReveal(state, fontKind) {
       state.chars.forEach(({ glyph, cell, final }, index) => {
         const scrambling = frame < settleFrames[index];
         applyCharForFont(glyph, fontKind, state.widthSets, index, scrambling);
-        if (frame >= settleFrames[index] || final === " " || final === "\u00a0") {
-          glyph.textContent = final;
-        } else {
-          glyph.textContent = randomGlyph();
-        }
-        cell.style.opacity = "1";
+        paintScrambleCell(glyph, cell, final, { scrambling });
       });
       syncTermLockWidth(state.root, state.chars);
       frame += 1;
@@ -700,11 +713,9 @@ async function runMode(state, mode) {
         state.chars.forEach(({ glyph, cell, final }, index) => {
           applyCharForFont(glyph, state.fromFont, state.widthSets, index);
           if (index < step) {
-            glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
-            cell.style.opacity = "1";
-          } else if (index >= step) {
-            glyph.textContent = final;
-            cell.style.opacity = "0";
+            paintScrambleCell(glyph, cell, final, { scrambling: true });
+          } else {
+            paintScrambleCell(glyph, cell, final, { visible: false });
           }
         });
         syncTermLockWidth(state.root, state.chars);
@@ -727,11 +738,11 @@ async function runMode(state, mode) {
         state.chars.forEach(({ glyph, cell, final }, index) => {
           applyCharForFont(glyph, state.toFont, state.widthSets, index);
           if (index < step) {
-            glyph.textContent = final;
-            cell.style.opacity = "1";
+            paintScrambleCell(glyph, cell, final, { scrambling: false });
+          } else if (index === step) {
+            paintScrambleCell(glyph, cell, final, { scrambling: true });
           } else {
-            glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
-            cell.style.opacity = index === step ? "1" : "0";
+            paintScrambleCell(glyph, cell, final, { visible: false });
           }
         });
         syncTermLockWidth(state.root, state.chars);
@@ -752,12 +763,10 @@ async function runMode(state, mode) {
           const remaining = index >= n - step;
           if (written) {
             applyCharForFont(glyph, state.toFont, state.widthSets, index);
-            glyph.textContent = final;
-            cell.style.opacity = "1";
+            paintScrambleCell(glyph, cell, final, { scrambling: false });
           } else if (remaining) {
             applyCharForFont(glyph, state.fromFont, state.widthSets, index);
-            glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
-            cell.style.opacity = "1";
+            paintScrambleCell(glyph, cell, final, { scrambling: true });
           } else {
             cell.style.opacity = "0";
           }
@@ -798,20 +807,19 @@ async function runMode(state, mode) {
         const { glyph, cell, final } = state.chars[charIndex];
         for (let f = 0; f < TIMING.charFlipScrambleFrames; f++) {
           applyCharForFont(glyph, state.fromFont, state.widthSets, charIndex);
-          glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
-          cell.style.opacity = "1";
+          paintScrambleCell(glyph, cell, final, { scrambling: true });
           await new Promise((r) => {
             state.timerId = window.setTimeout(r, TIMING.frameMs);
           });
           if (!isActiveState(state)) return;
         }
         applyCharForFont(glyph, state.toFont, state.widthSets, charIndex);
-        glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
+        paintScrambleCell(glyph, cell, final, { scrambling: true });
         syncTermLockWidth(state.root, state.chars);
         await new Promise((r) => {
           state.timerId = window.setTimeout(r, TIMING.frameMs);
         });
-        glyph.textContent = final;
+        paintScrambleCell(glyph, cell, final, { scrambling: false });
         await new Promise((r) => {
           state.timerId = window.setTimeout(r, TIMING.charFlipGapMs);
         });
@@ -898,11 +906,9 @@ async function runTextSwitchErase(state, fromText, fontKind) {
     state.chars.forEach(({ glyph, cell, final }, index) => {
       applyCharForFont(glyph, fontKind, state.widthSets, index);
       if (index < step) {
-        glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
-        cell.style.opacity = "1";
+        paintScrambleCell(glyph, cell, final, { scrambling: true });
       } else {
-        glyph.textContent = final;
-        cell.style.opacity = "0";
+        paintScrambleCell(glyph, cell, final, { visible: false });
       }
     });
     syncTermLockWidth(state.root, state.chars);
@@ -932,11 +938,11 @@ async function runTextSwitchWrite(state, toText, fontKind) {
     state.chars.forEach(({ glyph, cell, final }, index) => {
       applyCharForFont(glyph, fontKind, state.widthSets, index);
       if (index < step) {
-        glyph.textContent = final;
-        cell.style.opacity = "1";
+        paintScrambleCell(glyph, cell, final, { scrambling: false });
+      } else if (index === step) {
+        paintScrambleCell(glyph, cell, final, { scrambling: true });
       } else {
-        glyph.textContent = final === " " || final === "\u00a0" ? final : randomGlyph();
-        cell.style.opacity = index === step ? "1" : "0";
+        paintScrambleCell(glyph, cell, final, { visible: false });
       }
     });
     syncTermLockWidth(state.root, state.chars);

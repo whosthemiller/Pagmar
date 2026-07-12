@@ -2,6 +2,7 @@ import { syncGridCssVars } from "./grid-metrics.js";
 import { getMapTypographyScale } from "./viewport-layout.js";
 import { packColumnsBalanced } from "./terms-column-packer.js";
 import { beginCensorUncensor, finishCensorUncensor } from "./censor-scramble-rgb.js";
+import { randomScrambleGlyph } from "./scramble-glyphs.js";
 
 const LINE_HEIGHT = 23;
 const FONT_SIZE = 14;
@@ -38,8 +39,6 @@ const CENSOR_WRITE_MAX_S = 1.75;
 const CENSOR_WRITE_PX_PER_STEP = 8;
 const CENSOR_WRITE_MIN_STEPS = 6;
 const CENSOR_WRITE_MAX_STEPS = 40;
-const INDEX_SCRAMBLE_CHARSET =
-  "אבגדהוזחטיכלמנסעפצקרשתABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*?";
 const INDEX_SCRAMBLE_FRAME_MS = 20;
 const INDEX_SCRAMBLE_CYCLES = 5;
 const INDEX_SCRAMBLE_STAGGER_MS = 14;
@@ -63,10 +62,6 @@ let pendingPointer = null;
 /** @type {{ x: number, y: number, t: number }} */
 let lastPointerSample = { x: 0, y: 0, t: 0 };
 let pointerVelocity = 0;
-
-function randomScrambleGlyph() {
-  return INDEX_SCRAMBLE_CHARSET[Math.floor(Math.random() * INDEX_SCRAMBLE_CHARSET.length)];
-}
 
 function buildSettleFrames(charCount) {
   const order = Array.from({ length: charCount }, (_, i) => i);

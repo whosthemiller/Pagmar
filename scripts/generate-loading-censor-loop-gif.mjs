@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const FONT_PATH = path.join(ROOT, "assets/fonts/RoobertHebrewCollectionVF-TRIAL.ttf");
-const LABEL = "טרמינולוגיה פוליטית";
+const LABEL = "אינדקס המחיקה";
 const SUBTITLE = "מגישה את הפגמ״ר שלי ביום רביעי בכיתה 128";
 const SUBTITLE_INVITE = "מוזמנות ומוזמנים (:";
 

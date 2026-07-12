@@ -22,7 +22,7 @@ const LINES = ["מגישה פגמ״ר", "כיתה 128", "מחר ב\u05be17:30", 
 const FULL_TEXT = LINES.join("\n");
 
 const SHUFFLE_CHARSET =
-  "אבגדהוזחטיכלמנסעפצקרשתABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*?";
+  "אבגדהוזחטיכלמנסעפצקרשתךםןףץ0123456789!@#$%&*?׳״.,;:־-()[]";
 
 const TYPEWRITER = {
   frameMs: 20,

@@ -22,7 +22,7 @@ const BLEED = {
 const TERM_IMAGES_URL = "../data/term-images.json";
 const SPLASH_CONFIG_URL = "../data/splash-images.json";
 
-const INTRO_LINK_TEXT = "טרמינולוגיה פוליטית";
+const INTRO_LINK_TEXT = "אינדקס המחיקה";
 const INTRO_REST_TEXT =
   "הוא אינדקס אינטראקטיבי של מושגים בעלי פרשנויות לשוניות שונות בשיח הפוליטי בישראל. האתר בוחן כיצד מילים שונות המתייחסות לאותה מציאות יכולות לעצב תפיסות שונות שלה, וכיצד המאבק על הנרטיב מתנהל גם דרך השפה עצמה.";
 
