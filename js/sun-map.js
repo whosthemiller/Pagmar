@@ -205,12 +205,10 @@ const LOADING_WORK_WEIGHT = {
   finish: 6,
 };
 
-const LOADING_BAR_CAP_BEFORE_DONE = 0.94;
 /** Hold the bare title readable before the censor bar starts filling. */
 const LOADING_READ_DELAY_MS = 500;
-/** Wall-clock duration for a full 0→1 fill at a constant rate (after the read delay). */
-const LOADING_FILL_MS = 2000;
-const LOADING_DISPLAY_RATE = 1 / LOADING_FILL_MS;
+/** Ease the visible bar toward real work progress (ms time-constant). */
+const LOADING_DISPLAY_SMOOTH_MS = 140;
 
 const loadingWork = {
   total: 1,
@@ -220,6 +218,8 @@ const loadingWork = {
   raf: 0,
   rafLastTime: 0,
   startedAt: 0,
+  /** Open async segment — drives soft in-flight progress until it finishes. */
+  activeSegment: null,
 };
 
 function resetLoadingWork(setupSteps = 2) {
@@ -231,6 +231,25 @@ function resetLoadingWork(setupSteps = 2) {
     LOADING_WORK_WEIGHT.warmImage +
     LOADING_WORK_WEIGHT.finish;
   loadingWork.done = 0;
+  loadingWork.activeSegment = null;
+}
+
+/**
+ * Real load ratio. An open segment contributes soft asymptotic progress so the
+ * bar keeps moving during long awaits, but never claims the segment's full
+ * weight (or the reserved `finish` weight) until that work actually completes.
+ */
+function getLoadingTargetRatio() {
+  if (loadingWork.total <= 0) return 0;
+  let done = loadingWork.done;
+  const seg = loadingWork.activeSegment;
+  if (seg) {
+    const elapsed = performance.now() - seg.startedAt;
+    // ~63% of the soft ceiling after 1.6s; never reaches the full segment weight.
+    const soft = (1 - Math.exp(-elapsed / 1600)) * 0.9;
+    done = Math.max(done, seg.startDone + seg.weight * soft);
+  }
+  return Math.min(1, done / loadingWork.total);
 }
 
 function setLoadingWorkLabel(label) {
@@ -251,10 +270,16 @@ function yieldToMain() {
 
 function beginLoadingSegment(label, weight) {
   const startDone = loadingWork.done;
+  loadingWork.activeSegment = {
+    startDone,
+    weight,
+    startedAt: performance.now(),
+  };
   if (label) loadingWork.label = label;
   ensureLoadingDisplayTick();
 
   return () => {
+    loadingWork.activeSegment = null;
     loadingWork.done = Math.min(startDone + weight, loadingWork.total);
     setLoadingWorkLabel(label);
   };
@@ -285,24 +310,21 @@ function stopLoadingDisplayTick() {
   loadingWork.rafLastTime = 0;
 }
 
-/** Wait until the censor bar reaches 1 at the same constant fill rate. */
-function waitForLoadingBarComplete() {
-  ensureLoadingDisplayTick();
-
+function waitForLoadingReadDelay() {
+  const elapsed = performance.now() - (loadingWork.startedAt || performance.now());
+  const remaining = LOADING_READ_DELAY_MS - elapsed;
+  if (remaining <= 0) return Promise.resolve();
   return new Promise((resolve) => {
-    const check = () => {
-      if (loadingWork.display >= 1) {
-        loadingWork.display = 1;
-        updateLoadingProgress(1);
-        stopLoadingDisplayTick();
-        resolve();
-        return;
-      }
-      ensureLoadingDisplayTick();
-      requestAnimationFrame(check);
-    };
-    requestAnimationFrame(check);
+    window.setTimeout(resolve, remaining);
   });
+}
+
+/** Snap the bar to 100% the moment real work is done, then continue. */
+async function completeLoadingBar() {
+  await waitForLoadingReadDelay();
+  loadingWork.display = 1;
+  updateLoadingProgress(1);
+  stopLoadingDisplayTick();
 }
 
 function ensureLoadingDisplayTick() {
@@ -310,19 +332,19 @@ function ensureLoadingDisplayTick() {
 
   const tick = (now) => {
     if (!loadingWork.rafLastTime) loadingWork.rafLastTime = now;
-    const dt = now - loadingWork.rafLastTime;
+    const dt = Math.max(0, now - loadingWork.rafLastTime);
     loadingWork.rafLastTime = now;
 
     const elapsed = now - (loadingWork.startedAt || now);
     // Keep the title readable for LOADING_READ_DELAY_MS before the bar moves.
     if (elapsed >= LOADING_READ_DELAY_MS) {
-      const maxDisplay =
-        loadingWork.done >= loadingWork.total ? 1 : LOADING_BAR_CAP_BEFORE_DONE;
-      if (loadingWork.display < maxDisplay) {
-        loadingWork.display = Math.min(
-          maxDisplay,
-          loadingWork.display + LOADING_DISPLAY_RATE * dt
-        );
+      const target = getLoadingTargetRatio();
+      if (target >= 1) {
+        loadingWork.display = 1;
+      } else if (loadingWork.display < target) {
+        const alpha = 1 - Math.exp(-dt / LOADING_DISPLAY_SMOOTH_MS);
+        loadingWork.display += (target - loadingWork.display) * alpha;
+        if (target - loadingWork.display < 0.001) loadingWork.display = target;
       }
     }
 
@@ -20422,24 +20444,20 @@ function updateLoadingProgress(ratio, label) {
   if (loadingProgressEl) loadingProgressEl.textContent = "";
 }
 
-function finishLoadingWithScramble() {
+async function finishLoadingWithScramble() {
   advanceLoadingWork(LOADING_WORK_WEIGHT.finish, "מוכן");
-  return waitForLoadingBarComplete().then(
-    () =>
-      new Promise((resolve) => {
-        loadingEl?.classList.add("hidden");
-        // Splash dismissal owns the visible nav entrance (typewriter scramble).
-        // While the splash is still up, keep the nav hidden so its text is never
-        // seen before the entrance animation plays; the splash-dismissed handler
-        // reveals + types it. If it already played, nothing more to do here.
-        if (navTypewriterEntered || isSplashAwaitingEntrance()) {
-          resolve();
-          return;
-        }
-        revealSiteNav();
-        runNavEnterScramble(resolve);
-      })
-  );
+  // Real work is done — fill the bar to 100% and leave immediately (no fake crawl).
+  await completeLoadingBar();
+  loadingEl?.classList.add("hidden");
+  // Splash dismissal owns the visible nav entrance (typewriter scramble).
+  // While the splash is still up, keep the nav hidden so its text is never
+  // seen before the entrance animation plays; the splash-dismissed handler
+  // reveals + types it. If it already played, nothing more to do here.
+  if (navTypewriterEntered || isSplashAwaitingEntrance()) return;
+  await new Promise((resolve) => {
+    revealSiteNav();
+    runNavEnterScramble(resolve);
+  });
 }
 
 function findTermByName(termName) {
@@ -20634,24 +20652,31 @@ async function init() {
   bindSplashWheelHandoff();
   bindSplashNavEntrance();
   try {
+    resetLoadingWork(2);
     loadingWork.startedAt = performance.now();
     loadingWork.display = 0;
     updateLoadingProgress(0, "טוען נתונים…");
     ensureLoadingDisplayTick();
-    await loadImageCacheVersions();
-    clearPreloadedTermImageCache();
-    const [data, termImages, loadedTermYearIndex] = await Promise.all([
-      loadSemanticData(),
-      loadTermImages(),
-      loadTermYears(),
-      loadTimelineEvents(),
-      loadBleedTextPrefs(),
-    ]);
+
+    const [data, termImages, loadedTermYearIndex] = await runLoadingSegmentAsync(
+      "טוען נתונים…",
+      LOADING_WORK_WEIGHT.dataFetch * 2,
+      2000,
+      async () => {
+        await loadImageCacheVersions();
+        clearPreloadedTermImageCache();
+        return Promise.all([
+          loadSemanticData(),
+          loadTermImages(),
+          loadTermYears(),
+          loadTimelineEvents(),
+          loadBleedTextPrefs(),
+        ]);
+      }
+    );
     const imageUrls = collectTermImageUrls(termImages).map((url) =>
       resolveTermDisplayImageUrl(url)
     );
-    resetLoadingWork(2);
-    advanceLoadingWork(LOADING_WORK_WEIGHT.dataFetch * 2, "טוען נתונים…");
 
     await runLoadingSegmentAsync("מעבד נתונים…", LOADING_WORK_WEIGHT.setup, 1400, async () => {
       termImagesByName = termImages;
