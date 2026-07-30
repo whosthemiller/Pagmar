@@ -1,4 +1,4 @@
-const IDLE_MS = 5 * 60 * 1000;
+const IDLE_MS = 2 * 60 * 1000;
 
 /** @type {ReturnType<typeof setTimeout> | null} */
 let idleRefreshTimer = null;
